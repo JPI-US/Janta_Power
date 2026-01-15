@@ -227,7 +227,7 @@ pub mod motion {
             self.relay.set_high().unwrap_or_default();
 
             let correction_factor = 1.231;
-            let steps = (15.0 / -360.0) * (25600.0 * 50.0 * 84.0)
+            let steps = (15.0 / -360.0) * (25600.0 * 50.0 * 84.0);
             log::info!("Steps Needed: {}", steps);
             log::info!("Steps Needed: {}", steps as i64);
             self.move_by(steps as i64);
