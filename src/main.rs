@@ -25,7 +25,7 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 // Encoder save to NVS version
-const ENC_SNAPSHOT_VERSION: u32 = 1.02; //Keep updating this version when you change the encoder snapshot logic
+const ENC_SNAPSHOT_VERSION: u32 = 1; //Keep updating this version when you change the encoder snapshot logic
 const NVS_KEY_ENC_SNAPSHOT_VERSION: &str = "enc_snapshot_v";
 const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
 
