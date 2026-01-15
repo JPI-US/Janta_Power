@@ -24,51 +24,11 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-// Constants (Note to self: add these to .env file once done making one)
-const WIFI_CONNECT_DELAY_SECS: u64 = 20;
-const TRACKING_LOOP_SLEEP_SECS: u64 = 300;
-const OTA_CHECK_DELAY_SECS: u64 = 3;
-
-const MQTT_BROKER_URL: &str = "mqttS://mqtt.jantaus.com:9443";
-const MQTT_CLIENT_ID: &str = "device1A_pub";
-
-const DEFAULT_VERSION: &str = "1.0.4";
-const HEADING_TAG: &str = "heading";
-
-// ======== Encoder snapshot contract (Stage 0) ========
-// If you ever change meanings / units, bump this version and ignore old snapshots on boot.
-const ENC_SNAPSHOT_VERSION: u32 = 1;
-
-// NVS keys for resuming position after reboot (incremental encoder; tower is non-backdrivable).
+// Encoder save to NVS version
+const ENC_SNAPSHOT_VERSION: u32 = 1.02; //Keep updating this version when you change the encoder snapshot logic
 const NVS_KEY_ENC_SNAPSHOT_VERSION: &str = "enc_snapshot_v";
 const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
-// Optional keys we may add later:
-// const NVS_KEY_ENC_ZERO_OFFSET: &str = "enc_zero_offset";
-// const NVS_KEY_SNAPSHOT_STATE: &str = "enc_snap_state";
 
-// Home (limit switch) tolerance band for "did we actually return to 0?"
-// This is ticks, in the adjusted coordinate system (0 at limit switch).
-const ENC_HOME_TOL_TICKS: i32 = 50;
-
-const DEFAULT_MQTT_USER: &str = "device1A";
-const DEFAULT_MQTT_PASS: &str = "device1A";
-const DEFAULT_WIFI_SSID: &str = "Power2";
-const DEFAULT_WIFI_PASS: &str = "@Powerfuture22";
-const DEFAULT_TZ_OFFSET_HOURS: i32 = -5;
-
-const DEFAULT_TOWER_LATITUDE: f64 = 32.797868;
-const DEFAULT_TOWER_LONGITUDE: f64 = -96.835597;
-const DEFAULT_TOWER_ID: u32 = 1;
-
-
-// This function must be provided when using embassy-sync/embassy-time-driver
-//Fixes the ldproxy linker error in 'tower'
-#[no_mangle]
-pub extern "C" fn __pender() {
-    // Keep it empty
-}
-
-// MAIN FUNCTION
 fn main() -> anyhow::Result<()> {
     
     // SYSTEM INITIALIZATION
@@ -295,55 +255,84 @@ fn main() -> anyhow::Result<()> {
         encoderA,                  // Encoder A
         encoderB,                  // Encoder B
     );
-    
-    motion.init();
-    led.display_healthy();
-    motion.run();
+   
+    motion.init();          // Initialize motor driver parameters
+    led.display_healthy();  // Show healthy LED status
+    motion.run();           // Ensure motor driver is in a ready state
 
-     
-    // HEADING INITIALIZATION
-
-    let heading_tag = HEADING_TAG;
-    let mut actual_heading: f32 = 90.0;
-
-    match nvs.set_u32(heading_tag, actual_heading.to_bits()) {
-        Ok(_) => info!("heading updated"),
-        Err(e) => error!("heading not updated {:?}", e),
-    };
-
-    match nvs.get_u32(heading_tag).unwrap() {
+    // Restore heading (do NOT overwrite on every boot).
+    let heading_tag = "heading";
+    let mut actual_heading: f32 = match nvs.get_u32(heading_tag)? {
         Some(v) => {
-            info!("{:?} = {:?}", heading_tag, v);
-            actual_heading = f32::from_bits(v);
+            info!("Restored heading from NVS: {}={}", heading_tag, f32::from_bits(v));
+            f32::from_bits(v)
         }
-        None => info!("{:?} not found", heading_tag),
+        None => {
+            // First boot / no stored heading yet
+            let default_heading: f32 = 90.0;
+            match nvs.set_u32(heading_tag, default_heading.to_bits()) {
+                Ok(_) => info!("Initialized heading in NVS: {}={}", heading_tag, default_heading),
+                Err(e) => warn!("Failed to initialize heading in NVS: {:?}", e),
+            }
+            default_heading
+        }
     };
+
+    // Restore encoder adjusted ticks snapshot (version-gated).
+    let mut restored_from_snapshot = false;
+    if let Some(v) = nvs.get_u32(NVS_KEY_ENC_SNAPSHOT_VERSION)? {
+        if v == ENC_SNAPSHOT_VERSION {
+            if let Some(enc_ticks_adj) = nvs.get_i32(NVS_KEY_ENC_TICKS_ADJ)? {
+                // Choose the zero offset so that: adjusted = raw - offset == enc_ticks_adj
+                // => offset = raw - enc_ticks_adj
+                let raw = motion.encoder_ticks_raw();
+                motion.set_encoder_zero_offset(raw - enc_ticks_adj);
+                info!(
+                    "Restored encoder snapshot from NVS: {}={} (v={})",
+                    NVS_KEY_ENC_TICKS_ADJ, enc_ticks_adj, v
+                );
+                restored_from_snapshot = true;
+            } else {
+                warn!("Encoder snapshot version present but {} missing", NVS_KEY_ENC_TICKS_ADJ);
+            }
+        } else {
+            warn!(
+                "Encoder snapshot version mismatch: stored={}, expected={}",
+                v, ENC_SNAPSHOT_VERSION
+            );
+        }
+    } else {
+        info!("No encoder snapshot found in NVS; will home normally.");
+    }
+
+    // Keep Motion's internal position consistent for logs/logic.
+    motion.update_position(actual_heading);
 
     let mut mb = PinDriver::input(peripherals.pins.gpio5).unwrap();  // Maintenance Button
     let mut eb = PinDriver::input(peripherals.pins.gpio4).unwrap();  // East Button
     let mut wb = PinDriver::input(peripherals.pins.gpio6).unwrap();  // West Button
 
-     
-    // HOMING SEQUENCE
-    // todo!("Implement an encoder to re-position in case of power failure");
-
-    let limit_sw_status = motion.find_limit_switch_cw();
-    match limit_sw_status {
-        true => log::info!("Limit switch has returned true"),
-        false => {
-            log::error!("Limit switch has returned false, limit switch could not be found");
-            loop {
-                if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
-                    log::error!("Failed to publish critical error message: {:?}", e);
+    // --- Homing ---
+    // If we restored from snapshot, we can skip homing to save time/wear.
+    // If snapshot wasn't available/valid, fall back to the existing homing behavior.
+    if !restored_from_snapshot {
+        let limit_sw_status = motion.find_limit_switch_cw();
+        match limit_sw_status{
+            true => log::info!("Limit switch has returned true"),
+            false => {
+                log::error!("Limit switch has returned false, limit switch could not be found");
+                loop{
+                    if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
+                        log::error!("Failed to publish critical error message: {:?}", e);
+                    }
+                    thread::sleep(Duration::from_secs(900));// Loop every 15 minutes
                 }
-                thread::sleep(Duration::from_secs(900)); // Loop every 15 minutes
             }
         }
+        thread::sleep(Duration::from_secs(5)); // 
+    } else {
+        log::info!("Skipping homing: restored heading+encoder snapshot from NVS");
     }
-    thread::sleep(Duration::from_secs(5));
-
-     
-    // MAIN TRACKING LOOP
 
     loop {
         let st_now = SystemTime::now();
@@ -377,8 +366,7 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => warn!("Failed to store heading in NVS: {:?}", e),
             }
 
-            // ======== Stage 2: persist encoder snapshot (non-backdrivable tower) ========
-            // Convention: adjusted ticks are 0 at the limit switch, CW positive.
+            // ======== Encoder snapshot save to NVS ========
             let enc_ticks_adj = motion.encoder_ticks_adjusted();
             if let Err(e) = nvs.set_u32(NVS_KEY_ENC_SNAPSHOT_VERSION, ENC_SNAPSHOT_VERSION) {
                 warn!(
@@ -412,13 +400,11 @@ fn main() -> anyhow::Result<()> {
         payload = format!("The current firmware version is: {}", current_version.to_string());
         mqtt.publish("device1A/firmware/version", payload.as_bytes())?;
         
-        std::thread::sleep(Duration::from_secs(TRACKING_LOOP_SLEEP_SECS)); // 5-minute cycle
+        std::thread::sleep(Duration::from_secs(300)); // 5-minute cycle  
+
     }
 }
 
- 
-// BOOT DIAGNOSTIC FUNCTION
- 
 fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt) -> bool {
     info!("Starting boot validation in 5 seconds...");
     thread::sleep(Duration::from_secs(5));
@@ -469,5 +455,5 @@ fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt) -> bool {
             }
         }
     }
-    return false;
+    return false; 
 }
