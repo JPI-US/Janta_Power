@@ -42,6 +42,8 @@ pub mod motion {
         lmsw_last_state_pressed: bool,
         lmsw_last_change: Instant,
         lmsw_zeroed_this_press: bool,
+        // captured when the limit switch is hit (before we re-zero).
+        last_home_error_ticks: Option<i32>,
     }
 
     // CW: direction
@@ -76,6 +78,7 @@ pub mod motion {
                 lmsw_last_state_pressed: false,
                 lmsw_last_change: now,
                 lmsw_zeroed_this_press: false,
+                last_home_error_ticks: None,
             }
         }
 
@@ -101,9 +104,37 @@ pub mod motion {
             self.encoder.position()
         }
 
-        // Stage 3: restore the software zero offset so adjusted ticks can be reconstructed after reboot.
+        // Restore the software zero offset so adjusted ticks can be reconstructed after reboot.
         pub fn set_encoder_zero_offset(&mut self, zero_offset: i32) {
             self.encoder_zero_offset = zero_offset;
+        }
+
+        // retrieve and clear the most recent home error
+        pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
+            self.last_home_error_ticks.take()
+        }
+
+        // so `run()` may not be executing and we still want adjusted ticks to be 0 at home
+        fn force_zero_if_limit_switch_pressed(&mut self) {
+            if self.lmsw.is_low() {
+                // Capture drift before re-zeroing (based on current offset)
+                let home_error = self.encoder_ticks_adjusted();
+                self.last_home_error_ticks = Some(home_error);
+
+                // Make adjusted ticks 0 at the switch
+                self.encoder_zero_offset = self.encoder.position();
+
+                // Keep the debouncer state consistent (pressed + already zeroed for this press)
+                self.lmsw_last_state_pressed = true;
+                self.lmsw_last_change = Instant::now();
+                self.lmsw_zeroed_this_press = true;
+
+                log::info!(
+                    "Limit switch active: forced encoder zero (home_error_ticks={}, offset={})",
+                    home_error,
+                    self.encoder_zero_offset
+                );
+            }
         }
 
         pub fn init(&mut self) {
@@ -130,8 +161,7 @@ pub mod motion {
                     let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
                     self.encoder.poll();
 
-                    // Reset encoder count to 0 when the limit switch is pressed (edge-triggered + debounced).
-                    //
+                    // Reset encoder count to 0 when the limit switch is pressed (edge-triggered + debounced)
                     // The switch is active-low in this codebase (pressed => is_low()).
                     let pressed = self.lmsw.is_low();
                     let now = Instant::now();
@@ -149,9 +179,16 @@ pub mod motion {
                         && !self.lmsw_zeroed_this_press
                         && self.lmsw_last_change.elapsed() >= Duration::from_millis(30)
                     {
+                        // Capture how far off we were from "perfect home" right before we re-zero.
+                        let home_error = self.encoder_ticks_adjusted();
+                        self.last_home_error_ticks = Some(home_error);
                         self.encoder_zero_offset = self.encoder.position();
                         self.lmsw_zeroed_this_press = true;
-                        log::info!("Limit switch pressed: encoder zeroed (offset={})", self.encoder_zero_offset);
+                        log::info!(
+                            "Limit switch pressed: home_error_ticks={}, encoder zeroed (offset={})",
+                            home_error,
+                            self.encoder_zero_offset
+                        );
                     }
                     
                     if t0.elapsed() >= Duration::from_millis(100) {
@@ -181,6 +218,7 @@ pub mod motion {
             if self.lmsw.is_low() {
                 log::info!("Found Limit Switch, Heading : 90");
                 self.update_position(90.0);
+                self.force_zero_if_limit_switch_pressed();
                 return true;
             }
 
@@ -209,6 +247,7 @@ pub mod motion {
                 log::info!("Found Limit Switch, Heading : 90");
                 self.update_position(90.0);
                 self.relay.set_low().unwrap_or_default();
+                self.force_zero_if_limit_switch_pressed();
                 return true;
             }
             log::error!("Limit Switch was not found!");
@@ -220,6 +259,7 @@ pub mod motion {
             
             if self.lmsw.is_low() {
                 self.update_position(90.0);
+                self.force_zero_if_limit_switch_pressed();
                 return true;
             }
             
@@ -247,6 +287,7 @@ pub mod motion {
             if max_steps > 0 {
                 self.update_position(90.0);
                 self.relay.set_low().unwrap_or_default();
+                self.force_zero_if_limit_switch_pressed();
                 return true;
             }
             false
@@ -268,6 +309,9 @@ pub mod motion {
             self.update_position(location);
             log::info!("{},", clock.after_sunrise());
             if clock.after_sunrise() && !clock.after_sunset() {
+                // If we're starting the day already at home, ensure encoder ticks are zeroed
+                // even though the motor isn't running yet.
+                self.force_zero_if_limit_switch_pressed();
                 let sun = NOAASun {
                     year: clock.get_year(),
                     doy: clock.get_day() as u16,
@@ -355,6 +399,8 @@ pub mod motion {
             else {// Sunset Operation 
                 if location == 90.0 {
                     log::info!("Already reached sleep position");
+                    // Ensure encoder ticks are truly 0 at home while we sleep.
+                    self.force_zero_if_limit_switch_pressed();
 
                     // Track start time
                     let mut last_check = Instant::now();
@@ -401,7 +447,27 @@ pub mod motion {
                     log::info!("Moving to sleep position...");
                     let limit_sw_status = self.find_limit_switch_cw(); // change to ccw for waco
                     match limit_sw_status{
-                        true => log::info!("Limit switch has returned true"),
+                        true => {
+                            log::info!("Limit switch has returned true");
+
+                            // Stage 4: publish + persist daily home error (ticks) if we captured it.
+                            if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
+                                let payload = format!("{}", home_error_ticks);
+                                if let Err(e) = mqtt.publish("device1A/tower/home_error_ticks", payload.as_bytes()) {
+                                    log::error!("Failed to publish home_error_ticks: {:?}", e);
+                                } else {
+                                    log::info!("Published home_error_ticks={}", home_error_ticks);
+                                }
+
+                                if let Err(e) = nvs.set_i32("home_error_ticks", home_error_ticks) {
+                                    log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
+                                } else {
+                                    log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
+                                }
+                            } else {
+                                log::warn!("No home_error_ticks captured on this homing run");
+                            }
+                        },
                         false => {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
