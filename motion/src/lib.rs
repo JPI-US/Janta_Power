@@ -12,26 +12,39 @@ pub mod motion {
     use semver::Version;
     use std::{thread, panic};
 
-    #[derive(PartialEq)]
-    enum TrackingState {
-        L1,
-        L2,
-        L3,
+    #[derive(PartialEq, Copy, Clone)]
+    pub enum MotionMode {
+        // Stepper-only movement (open-loop).
+        StepperOnly,
+        // Stepper movement with encoder-based guardrails (stall detection, snapshots, etc.).
+        EncoderGuarded,
+    }
+
+    #[derive(Debug, PartialEq, Copy, Clone)]
+    pub enum MoveOutcome {
+        Completed,
+        AbortedPowerMissing,
+        AbortedStall,
     }
 
     pub fn calculate_steps(offset: f32) -> i64 {
         return ((offset / 360.0) * (25600.0 * 50.0 * 84.0)) as i64;
     }
 
+    // Encoder calibration (output shaft): 348,323 ticks per full revolution.
+    const ENC_TICKS_PER_REV: f32 = 348_323.0;
+    const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
+
     pub struct Motion<'a> {
         location: f32,
-        tracking_state: TrackingState,
+        motion_mode: MotionMode,
         speed: f32,
         acceleration: u16,
         motor: Driver,
         motor_device:
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
         motor_clock: OperatingSystemClock,
+        // Legacy / unused after removing fine-adjust logic; keep for now to minimize churn.
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
@@ -44,6 +57,17 @@ pub mod motion {
         lmsw_zeroed_this_press: bool,
         // captured when the limit switch is hit (before we re-zero).
         last_home_error_ticks: Option<i32>,
+
+        // ======== Stage 2: stall detector (log-only for now) ========
+        motor_power_on: bool,
+        stall_last_check: Instant,
+        stall_step_pos_at_last_enc_change: i64,
+        stall_last_enc_ticks_seen: i32,
+        stall_reported: bool,
+        stall_consecutive: u8,
+
+        // ======== Stage 3: report last attempted move outcome ========
+        last_move_outcome: Option<MoveOutcome>,
     }
 
     // CW: direction
@@ -64,7 +88,7 @@ pub mod motion {
             let now = Instant::now();
             Motion {
                 location: 0.0,
-                tracking_state: TrackingState::L1,
+                motion_mode: MotionMode::EncoderGuarded,
                 speed: 43000.0,
                 acceleration: 25600,
                 motor: Driver::new(),
@@ -79,11 +103,32 @@ pub mod motion {
                 lmsw_last_change: now,
                 lmsw_zeroed_this_press: false,
                 last_home_error_ticks: None,
+
+                motor_power_on: true,
+                stall_last_check: now,
+                stall_step_pos_at_last_enc_change: 0,
+                stall_last_enc_ticks_seen: 0,
+                stall_reported: false,
+                stall_consecutive: 0,
+
+                last_move_outcome: None,
             }
         }
 
         pub fn update_position(&mut self, location: f32) {
             self.location = location;
+        }
+
+        pub fn set_motion_mode(&mut self, mode: MotionMode) {
+            self.motion_mode = mode;
+        }
+
+        pub fn motion_mode(&self) -> MotionMode {
+            self.motion_mode
+        }
+
+        pub fn set_motor_power_on(&mut self, power_on: bool) {
+            self.motor_power_on = power_on;
         }
 
         pub fn location(&mut self) -> f32 {
@@ -109,9 +154,47 @@ pub mod motion {
             self.encoder_zero_offset = zero_offset;
         }
 
+        /// Convert current encoder position into a heading (degrees), assuming:
+        /// - The limit switch (home) corresponds to `home_heading_deg`
+        /// - Positive encoder ticks correspond to increasing heading CW
+        pub fn heading_from_encoder_ticks(&self, home_heading_deg: f32) -> f32 {
+            let deg = (self.encoder_ticks_adjusted() as f32) / ENC_TICKS_PER_DEG;
+            (home_heading_deg + deg).rem_euclid(360.0)
+        }
+
         // retrieve and clear the most recent home error
         pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
             self.last_home_error_ticks.take()
+        }
+
+        pub fn take_last_move_outcome(&mut self) -> Option<MoveOutcome> {
+            self.last_move_outcome.take()
+        }
+
+        /// Tiny diagnostic move: step a small amount and check whether encoder ticks change.
+        ///
+        /// Intended for "encoder might be unplugged / recovered" probing. This does NOT use
+        /// ticks as a servo; it simply checks for *any* tick movement.
+        pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
+            let start_ticks = self.encoder_ticks_adjusted();
+            self.relay.set_high().unwrap_or_default();
+            let outcome = self.move_by(probe_steps);
+            self.relay.set_low().unwrap_or_default();
+
+            if outcome != MoveOutcome::Completed {
+                log::warn!("Encoder probe aborted: {:?}", outcome);
+                return false;
+            }
+
+            let end_ticks = self.encoder_ticks_adjusted();
+            let moved = end_ticks != start_ticks;
+            log::info!(
+                "Encoder probe complete: start_ticks={} end_ticks={} moved={}",
+                start_ticks,
+                end_ticks,
+                moved
+            );
+            moved
         }
 
         // so `run()` may not be executing and we still want adjusted ticks to be 0 at home
@@ -143,23 +226,100 @@ pub mod motion {
             self.motor.set_acceleration(self.acceleration.into());
         }
 
-        pub fn move_by(&mut self, location: i64) {
+        pub fn move_by(&mut self, location: i64) -> MoveOutcome {
+            // Reset stall detector baseline for this move so we don't accidentally compare
+            // against stale values from a previous run.
+            let now = Instant::now();
+            self.stall_last_check = now;
+            self.stall_step_pos_at_last_enc_change = self.motor.current_position();
+            self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
+            self.stall_reported = false;
+            self.stall_consecutive = 0;
+
             self.motor.move_by(location);
-            self.run();
+            let outcome = self.run();
+            self.last_move_outcome = Some(outcome);
+            outcome
         }
 
-        pub fn move_by_ticks(&mut self, location: i64) {
+        pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
+            let now = Instant::now();
+            self.stall_last_check = now;
+            self.stall_step_pos_at_last_enc_change = self.motor.current_position();
+            self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
+            self.stall_reported = false;
+            self.stall_consecutive = 0;
+
             self.motor.move_by(location);
-            self.run();
+            let outcome = self.run();
+            self.last_move_outcome = Some(outcome);
+            outcome
         }
         
 
-        pub fn run(&mut self) {
+        pub fn run(&mut self) -> MoveOutcome {
             let mut t0 = Instant::now();
             loop {
                 if self.motor.is_running() {
                     let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
-                    self.encoder.poll();
+                    let _ = self.encoder.poll();
+
+                    // ======== Stage 3: immediate abort when power is missing (EncoderGuarded only) ========
+                    if self.motion_mode == MotionMode::EncoderGuarded && !self.motor_power_on {
+                        log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
+                        let pos = self.motor.current_position();
+                        self.motor.set_current_position(pos); // hard stop
+                        return MoveOutcome::AbortedPowerMissing;
+                    }
+
+                    // ======== Stage 2: Stall detector (L2 only, log-only) ========
+                    // Detect "motor stepping but encoder not moving" at a fixed cadence.
+                    if self.motion_mode == MotionMode::EncoderGuarded
+                        && self.stall_last_check.elapsed() >= Duration::from_millis(250)
+                    {
+                        // Your logs show that the encoder can take ~20k stepper steps before the first tick changes.
+                        // So we detect stall based on "too many steps with NO encoder tick change", not based on
+                        // whether ticks change in a short time window.
+                        const MAX_STEPS_WITHOUT_ENC_CHANGE: i64 = 120_000;
+
+                        let step_pos = self.motor.current_position();
+                        let enc_pos = self.encoder_ticks_adjusted();
+
+                        if enc_pos != self.stall_last_enc_ticks_seen {
+                            // Encoder moved -> reset baseline.
+                            self.stall_last_enc_ticks_seen = enc_pos;
+                            self.stall_step_pos_at_last_enc_change = step_pos;
+                            self.stall_reported = false;
+                            self.stall_consecutive = 0;
+                        }
+
+                        let steps_since_enc_change =
+                            (step_pos - self.stall_step_pos_at_last_enc_change).abs();
+                        let stalled = steps_since_enc_change >= MAX_STEPS_WITHOUT_ENC_CHANGE;
+
+                        if stalled && !self.stall_reported {
+                            log::warn!(
+                                "STALL_DETECTED power_on={} steps_since_enc_change={} step_pos={} enc_pos={} (threshold={})",
+                                self.motor_power_on,
+                                steps_since_enc_change,
+                                step_pos,
+                                enc_pos,
+                                MAX_STEPS_WITHOUT_ENC_CHANGE
+                            );
+                            self.stall_reported = true;
+                        }
+
+                        // Stage 3: abort the move once we've exceeded the allowed step budget without
+                        // any encoder tick change.
+                        if stalled {
+                            log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
+                            let pos = self.motor.current_position();
+                            self.motor.set_current_position(pos); // hard stop
+                            return MoveOutcome::AbortedStall;
+                        }
+
+                        self.stall_last_check = Instant::now();
+                    }
 
                     // Reset encoder count to 0 when the limit switch is pressed (edge-triggered + debounced)
                     // The switch is active-low in this codebase (pressed => is_low()).
@@ -207,6 +367,7 @@ pub mod motion {
                     break;
                 }
             }
+            MoveOutcome::Completed
         }
 
         pub fn flip_relay(&mut self) {
@@ -229,8 +390,10 @@ pub mod motion {
             let steps = (15.0 / 360.0) * (25600.0 * 50.0 * 84.0);
             log::info!("Steps Needed: {}", steps);
             log::info!("Steps Needed: {}", steps as i64);
-            self.move_by(steps as i64);
-            self.run();    // Blocking 
+            if self.move_by(steps as i64) != MoveOutcome::Completed {
+                self.relay.set_low().unwrap_or_default();
+                return false;
+            }
             log::info!("Done moving 15 Degress clockwise");
             
             log::info!("Now, looking for the limit switch");
@@ -238,7 +401,10 @@ pub mod motion {
             let mut max_steps = calculate_steps(-360.0);
             while (max_steps < 0 && self.lmsw.is_high()) {
                 let step_movement = calculate_steps(-1.0);
-                self.move_by(step_movement);
+                if self.move_by(step_movement) != MoveOutcome::Completed {
+                    self.relay.set_low().unwrap_or_default();
+                    return false;
+                }
                 max_steps -= step_movement;
             }
 
@@ -270,15 +436,20 @@ pub mod motion {
             let steps = (15.0 / -360.0) * (25600.0 * 50.0 * 84.0);
             log::info!("Steps Needed: {}", steps);
             log::info!("Steps Needed: {}", steps as i64);
-            self.move_by(steps as i64);
-            self.run();    // Blocking 
+            if self.move_by(steps as i64) != MoveOutcome::Completed {
+                self.relay.set_low().unwrap_or_default();
+                return false;
+            }
             log::info!("Done moving 15 Degress clockwise");
             log::info!("Now, looking for the limit switch");
 
             let mut max_steps = calculate_steps(360.0); // full CW
             while (max_steps > 0 && self.lmsw.is_high()) {
                 let step_movement = calculate_steps(1.0); // Move 1 deg at a time
-                self.move_by(step_movement);
+                if self.move_by(step_movement) != MoveOutcome::Completed {
+                    self.relay.set_low().unwrap_or_default();
+                    return false;
+                }
                 max_steps -= step_movement;
             }
 
@@ -299,7 +470,7 @@ pub mod motion {
             &mut self,
             clock: &mut Clock<I2C>,
             location: f32,
-            balance: i32,
+            _balance: i32,
             mqtt: &mut Mqtt,
             current_version: Version,
             nvs: &mut EspNvs<T>,
@@ -327,74 +498,38 @@ pub mod motion {
                 log::info!("Actual Location: {}", location);
                 log::info!("Angle Offset: {}", angle_offset);
                 log::info!("Sun Angle: {}", sun.azimuth_in_deg());
-                if angle_offset.abs() > 5.0 {
-                    self.relay.set_high().unwrap_or_default();
-                    self.tracking_state = TrackingState::L1;
-                }
-                if angle_offset.abs() <= 5.0 && self.tracking_state == TrackingState::L1 {
+                // Single-path daytime tracking:
+                // If we're within ±5°, do nothing. Otherwise execute a movement based on offset.
+                if angle_offset.abs() <= 5.0 {
                     let _ = self.relay.set_low().unwrap_or_default();
-                    return true; // New line
-                    //self.tracking_state = TrackingState::L2;
+                    return true;
                 }
-                match self.tracking_state {
-                    TrackingState::L1 => {
-                        let correction_factor = 1.3;
-                        log::info!("Tracking state L1");
-                        let steps = (angle_offset / 360.0) * (25600.0 * 50.0 * 84.0); // * correction_factor; // Change to -360 for waco 
-                        log::info!("Steps Needed: {}", steps as i64);
-                        self.move_by(steps as i64);
-                        self.run();    // Blocking 
-                        // log::info!("Angle Offset: {}", angle_offset);
-                        self.update_position((location as f64 + angle_offset) as f32);
-                        log::info!("Exiting Tracking state L1");
-                        self.relay.set_low().unwrap_or_default(); // New line
 
-                        //Publish message
-                        let payload = format!(
-                            "Current datetime: {}, and current tower angle: {}",
-                            formatted_time, 
-                            location as f64 + angle_offset
-                        );
-                        match mqtt.publish("device1A/data", payload.as_bytes()){
-                            Ok(_) => log::info!("Published data payload successfully"),
-                            Err(e) => log::error!("Failed to publish data payload: {:?}", e),
-                        }
-                        return false;
-                    }
-                    TrackingState::L2 => {
-                        log::info!("Tracking state L2");
-                        if angle_offset.abs() > 5.0 {
-                            self.prev_balance = 0;
-                            self.tracking_state = TrackingState::L1;
-                            return false;
-                        }
-                        if (balance - self.prev_balance).abs() < 75 {
-                            self.prev_balance = 0;
-                            self.tracking_state = TrackingState::L1;
-                            return true;
-                        } else {
-                            self.prev_balance = balance;
-                        }
-                        if balance <= -10 {
-                            let steps = (-0.5 / 360.0) * (25600.0 * 50.0 * 84.0);
-                            self.move_by(steps as i64);
-                            self.run();
-                            self.update_position(location - 0.5);
-                            return false;
-                        } else if balance >= 10 {
-                            let steps = (0.5 / 360.0) * (25600.0 * 50.0 * 84.0);
-                            self.move_by(steps as i64);
-                            self.run();
-                            self.update_position(location + 0.5);
-                            return false;
-                        } else {
-                            self.prev_balance = 0;
-                            self.tracking_state = TrackingState::L1;
-                            return true;
-                        }
-                    }
-                    TrackingState::L3 => (), // Future tracking 
+                self.relay.set_high().unwrap_or_default();
+                log::info!("Tracking move (|offset| > 5°)");
+                let steps = (angle_offset / 360.0) * (25600.0 * 50.0 * 84.0);
+                log::info!("Steps Needed: {}", steps as i64);
+                let move_outcome = self.move_by(steps as i64);
+                if move_outcome != MoveOutcome::Completed {
+                    self.relay.set_low().unwrap_or_default();
+                    log::warn!("Tracking move aborted: {:?}", move_outcome);
+                    // Return true so main does NOT persist heading/snapshot for a move that did not happen.
+                    return true;
                 }
+                self.update_position((location as f64 + angle_offset) as f32);
+                self.relay.set_low().unwrap_or_default();
+
+                // Publish message
+                let payload = format!(
+                    "Current datetime: {}, and current tower angle: {}",
+                    formatted_time,
+                    location as f64 + angle_offset
+                );
+                match mqtt.publish("device1A/data", payload.as_bytes()) {
+                    Ok(_) => log::info!("Published data payload successfully"),
+                    Err(e) => log::error!("Failed to publish data payload: {:?}", e),
+                }
+                return false;
             } 
             else {// Sunset Operation 
                 if location == 90.0 {
@@ -482,10 +617,11 @@ pub mod motion {
                     return false;
                 }
             }
+            // Default fall-through (should generally be unreachable due to early returns above).
             true
             //note to self: maybe remove?
             /*else if clock.after_sunset() {
-                 if self.tracking_state != TrackingState::L3 {
+                 if false {
                     let angle_offset = 90.0 - location;
                     let steps = (angle_offset / 360.0) * (20000.0 * 50.0 * 84.0);
                     log::info!("Steps Needed: {}", steps);
@@ -495,7 +631,6 @@ pub mod motion {
                     self.run();
                     self.relay.set_low().unwrap_or_default();
                     self.update_position(90.0);
-                    self.tracking_state = TrackingState::L3;
                     return true; 
 
                     
@@ -507,4 +642,4 @@ pub mod motion {
     }
 }
 
-pub use motion::Motion;
+pub use motion::{Motion, MotionMode, MoveOutcome};
