@@ -52,9 +52,11 @@ where
     fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error> {
         // copied straight from AccelStepper::step2()
         // println!("{}", ctx.position);
-        self.set_output(if ctx.position > 0 { 0b10 } else { 0b00 });
-        self.set_output(if ctx.position > 0 { 0b11 } else { 0b01 });
-        std::thread::sleep(Duration::from_micros(1));
+        let _ = self.set_output(if ctx.position > 0 { 0b10 } else { 0b00 });
+        let _ = self.set_output(if ctx.position > 0 { 0b11 } else { 0b01 });
+        // Many stepper drivers require a minimum STEP high pulse width (often a few microseconds).
+        // Use a slightly more forgiving default to improve compatibility.
+        std::thread::sleep(Duration::from_micros(5));
         self.set_output(if ctx.position > 0 { 0b10 } else { 0b00 })
     }
 }
