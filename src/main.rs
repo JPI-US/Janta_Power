@@ -35,7 +35,7 @@ use esp_idf_svc::{
     ota::EspOta,
     sntp::{EspSntp, SyncStatus},
 };
-use motion::{MoveOutcome, Motion, MotionMode};
+use motion::{calculate_steps, MoveOutcome, Motion, MotionMode};
 use rgb_led::Led;
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
@@ -331,6 +331,21 @@ fn main() -> anyhow::Result<()> {
     // Keep Motion's internal position consistent for logs/logic.
     motion.update_position(actual_heading);
 
+    // ======== One-shot recovery move (bench / unstuck) ========
+    // If we're near a hard stop, we can safely back off before attempting any homing search.
+    // Convention for *current wiring*: positive step movement = physical CW.
+    const RECOVERY_MOVE_CW_ON_BOOT: bool = true;
+    const RECOVERY_MOVE_CW_DEG: f32 = 30.0;
+    if RECOVERY_MOVE_CW_ON_BOOT {
+        let steps = calculate_steps(RECOVERY_MOVE_CW_DEG);
+        log::warn!(
+            "RECOVERY_MOVE: moving {:.1}° CW (steps={}) before homing",
+            RECOVERY_MOVE_CW_DEG,
+            steps
+        );
+        let _ = motion.move_by(steps);
+    }
+
     let mut mb = PinDriver::input(peripherals.pins.gpio5).unwrap();  // Maintenance 
     let mut eb = PinDriver::input(peripherals.pins.gpio4).unwrap();  // East Button
     let mut wb = PinDriver::input(peripherals.pins.gpio6).unwrap();  // West Button
@@ -339,6 +354,7 @@ fn main() -> anyhow::Result<()> {
     // StepperOnly always homes. EncoderGuarded can skip homing if snapshot restored.
     // If snapshot wasn't available/valid, fall back to the existing homing behavior.
     if motion_mode == MotionMode::StepperOnly || !restored_from_snapshot {
+        // Convention for *current wiring*: positive step movement = physical CW.
         let limit_sw_status = motion.find_limit_switch_cw();
         match limit_sw_status{
             true => log::info!("Limit switch has returned true"),

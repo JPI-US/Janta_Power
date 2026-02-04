@@ -12,6 +12,25 @@ pub mod motion {
     use semver::Version;
     use std::{thread, panic};
 
+    // Stage 1–2 refactor: split encoder/homing/move execution into focused modules.
+    mod encoder;
+    mod homing;
+    mod move_exec;
+
+    // Motor movement constants.
+    //
+    // Keep these in one place so all step calculations stay consistent.
+    pub(crate) const MICROSTEPS: f64 = 25_600.0;
+    pub(crate) const GEAR_REDUCTION: f64 = 1.0;
+    pub(crate) const SLEW_BEARING: f64 = 84.0;
+    pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
+
+    // Stepper driver tuning knobs (steps/s and steps/s^2).
+    //
+    // Conservative defaults for the NEMA42 + PST2822PH combo based on your bench test.
+    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 5_000.0;
+    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 500;
+
     #[derive(PartialEq, Copy, Clone)]
     pub enum MotionMode {
         // Stepper-only movement (open-loop).
@@ -27,13 +46,9 @@ pub mod motion {
         AbortedStall,
     }
 
-    pub fn calculate_steps(offset: f32) -> i64 {
-        return ((offset / 360.0) * (25600.0 * 50.0 * 84.0)) as i64;
+    pub fn calculate_steps(offset_deg: f32) -> i64 {
+        ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
-
-    // Encoder calibration (output shaft): 348,323 ticks per full revolution.
-    const ENC_TICKS_PER_REV: f32 = 348_323.0;
-    const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
 
     pub struct Motion<'a> {
         location: f32,
@@ -89,8 +104,8 @@ pub mod motion {
             Motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
-                speed: 43000.0,
-                acceleration: 25600,
+                speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
+                acceleration: DEFAULT_ACCEL_STEPS_PER_S2,
                 motor: Driver::new(),
                 motor_device: StepAndDirection::new(step, direction),
                 motor_clock: OperatingSystemClock::new(),
@@ -135,333 +150,8 @@ pub mod motion {
             self.location
         }
 
-        pub fn switch_pressed(&mut self) -> bool {
-            self.lmsw.is_low()
-        }
-
-        // Convention: CW is positive; 0 ticks corresponds to the limit switch (home) after zeroing.
-        pub fn encoder_ticks_adjusted(&self) -> i32 {
-            self.encoder.position() - self.encoder_zero_offset
-        }
-
-        // Raw encoder ticks from the quadrature decoder (typically resets to 0 on reboot).
-        pub fn encoder_ticks_raw(&self) -> i32 {
-            self.encoder.position()
-        }
-
-        // Restore the software zero offset so adjusted ticks can be reconstructed after reboot.
-        pub fn set_encoder_zero_offset(&mut self, zero_offset: i32) {
-            self.encoder_zero_offset = zero_offset;
-        }
-
-        /// Convert current encoder position into a heading (degrees), assuming:
-        /// - The limit switch (home) corresponds to `home_heading_deg`
-        /// - Positive encoder ticks correspond to increasing heading CW
-        pub fn heading_from_encoder_ticks(&self, home_heading_deg: f32) -> f32 {
-            let deg = (self.encoder_ticks_adjusted() as f32) / ENC_TICKS_PER_DEG;
-            (home_heading_deg + deg).rem_euclid(360.0)
-        }
-
-        // retrieve and clear the most recent home error
-        pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
-            self.last_home_error_ticks.take()
-        }
-
-        pub fn take_last_move_outcome(&mut self) -> Option<MoveOutcome> {
-            self.last_move_outcome.take()
-        }
-
-        /// Tiny diagnostic move: step a small amount and check whether encoder ticks change.
-        ///
-        /// Intended for "encoder might be unplugged / recovered" probing. This does NOT use
-        /// ticks as a servo; it simply checks for *any* tick movement.
-        pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
-            let start_ticks = self.encoder_ticks_adjusted();
-            self.relay.set_high().unwrap_or_default();
-            let outcome = self.move_by(probe_steps);
-            self.relay.set_low().unwrap_or_default();
-
-            if outcome != MoveOutcome::Completed {
-                log::warn!("Encoder probe aborted: {:?}", outcome);
-                return false;
-            }
-
-            let end_ticks = self.encoder_ticks_adjusted();
-            let moved = end_ticks != start_ticks;
-            log::info!(
-                "Encoder probe complete: start_ticks={} end_ticks={} moved={}",
-                start_ticks,
-                end_ticks,
-                moved
-            );
-            moved
-        }
-
-        // so `run()` may not be executing and we still want adjusted ticks to be 0 at home
-        fn force_zero_if_limit_switch_pressed(&mut self) {
-            if self.lmsw.is_low() {
-                // Capture drift before re-zeroing (based on current offset)
-                let home_error = self.encoder_ticks_adjusted();
-                self.last_home_error_ticks = Some(home_error);
-
-                // Make adjusted ticks 0 at the switch
-                self.encoder_zero_offset = self.encoder.position();
-
-                // Keep the debouncer state consistent (pressed + already zeroed for this press)
-                self.lmsw_last_state_pressed = true;
-                self.lmsw_last_change = Instant::now();
-                self.lmsw_zeroed_this_press = true;
-
-                log::info!(
-                    "Limit switch active: forced encoder zero (home_error_ticks={}, offset={})",
-                    home_error,
-                    self.encoder_zero_offset
-                );
-            }
-        }
-
-        pub fn init(&mut self) {
-            self.motor.set_max_speed(self.speed);
-            self.motor.set_speed(self.speed);
-            self.motor.set_acceleration(self.acceleration.into());
-        }
-
-        pub fn move_by(&mut self, location: i64) -> MoveOutcome {
-            // Reset stall detector baseline for this move so we don't accidentally compare
-            // against stale values from a previous run.
-            let now = Instant::now();
-            self.stall_last_check = now;
-            self.stall_step_pos_at_last_enc_change = self.motor.current_position();
-            self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
-            self.stall_reported = false;
-            self.stall_consecutive = 0;
-
-            self.motor.move_by(location);
-            let outcome = self.run();
-            self.last_move_outcome = Some(outcome);
-            outcome
-        }
-
-        pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
-            let now = Instant::now();
-            self.stall_last_check = now;
-            self.stall_step_pos_at_last_enc_change = self.motor.current_position();
-            self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
-            self.stall_reported = false;
-            self.stall_consecutive = 0;
-
-            self.motor.move_by(location);
-            let outcome = self.run();
-            self.last_move_outcome = Some(outcome);
-            outcome
-        }
-        
-
-        pub fn run(&mut self) -> MoveOutcome {
-            let mut t0 = Instant::now();
-            loop {
-                if self.motor.is_running() {
-                    let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
-                    let _ = self.encoder.poll();
-
-                    // ======== Stage 3: immediate abort when power is missing (EncoderGuarded only) ========
-                    if self.motion_mode == MotionMode::EncoderGuarded && !self.motor_power_on {
-                        log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
-                        let pos = self.motor.current_position();
-                        self.motor.set_current_position(pos); // hard stop
-                        return MoveOutcome::AbortedPowerMissing;
-                    }
-
-                    // ======== Stage 2: Stall detector (L2 only, log-only) ========
-                    // Detect "motor stepping but encoder not moving" at a fixed cadence.
-                    if self.motion_mode == MotionMode::EncoderGuarded
-                        && self.stall_last_check.elapsed() >= Duration::from_millis(250)
-                    {
-                        // Your logs show that the encoder can take ~20k stepper steps before the first tick changes.
-                        // So we detect stall based on "too many steps with NO encoder tick change", not based on
-                        // whether ticks change in a short time window.
-                        const MAX_STEPS_WITHOUT_ENC_CHANGE: i64 = 120_000;
-
-                        let step_pos = self.motor.current_position();
-                        let enc_pos = self.encoder_ticks_adjusted();
-
-                        if enc_pos != self.stall_last_enc_ticks_seen {
-                            // Encoder moved -> reset baseline.
-                            self.stall_last_enc_ticks_seen = enc_pos;
-                            self.stall_step_pos_at_last_enc_change = step_pos;
-                            self.stall_reported = false;
-                            self.stall_consecutive = 0;
-                        }
-
-                        let steps_since_enc_change =
-                            (step_pos - self.stall_step_pos_at_last_enc_change).abs();
-                        let stalled = steps_since_enc_change >= MAX_STEPS_WITHOUT_ENC_CHANGE;
-
-                        if stalled && !self.stall_reported {
-                            log::warn!(
-                                "STALL_DETECTED power_on={} steps_since_enc_change={} step_pos={} enc_pos={} (threshold={})",
-                                self.motor_power_on,
-                                steps_since_enc_change,
-                                step_pos,
-                                enc_pos,
-                                MAX_STEPS_WITHOUT_ENC_CHANGE
-                            );
-                            self.stall_reported = true;
-                        }
-
-                        // Stage 3: abort the move once we've exceeded the allowed step budget without
-                        // any encoder tick change.
-                        if stalled {
-                            log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
-                            let pos = self.motor.current_position();
-                            self.motor.set_current_position(pos); // hard stop
-                            return MoveOutcome::AbortedStall;
-                        }
-
-                        self.stall_last_check = Instant::now();
-                    }
-
-                    // Reset encoder count to 0 when the limit switch is pressed (edge-triggered + debounced)
-                    // The switch is active-low in this codebase (pressed => is_low()).
-                    let pressed = self.lmsw.is_low();
-                    let now = Instant::now();
-                    if pressed != self.lmsw_last_state_pressed {
-                        self.lmsw_last_state_pressed = pressed;
-                        self.lmsw_last_change = now;
-                        // Allow re-zeroing after a release.
-                        if !pressed {
-                            self.lmsw_zeroed_this_press = false;
-                        }
-                    }
-
-                    // Simple time-based debounce: require stable pressed state for 30ms.
-                    if pressed
-                        && !self.lmsw_zeroed_this_press
-                        && self.lmsw_last_change.elapsed() >= Duration::from_millis(30)
-                    {
-                        // Capture how far off we were from "perfect home" right before we re-zero.
-                        let home_error = self.encoder_ticks_adjusted();
-                        self.last_home_error_ticks = Some(home_error);
-                        self.encoder_zero_offset = self.encoder.position();
-                        self.lmsw_zeroed_this_press = true;
-                        log::info!(
-                            "Limit switch pressed: home_error_ticks={}, encoder zeroed (offset={})",
-                            home_error,
-                            self.encoder_zero_offset
-                        );
-                    }
-                    
-                    if t0.elapsed() >= Duration::from_millis(100) {
-                        let position = self.encoder_ticks_adjusted();
-                        let step_pos = self.motor.current_position();
-                        let step_rem = self.motor.distance_to_go();
-                        log::info!(
-                            "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}",
-                            position,
-                            step_pos,
-                            step_rem
-                        );
-                        t0 = Instant::now();
-                    }
-                } else {
-                    break;
-                }
-            }
-            MoveOutcome::Completed
-        }
-
         pub fn flip_relay(&mut self) {
             self.relay.toggle().unwrap_or_default();
-        }
-
-        pub fn find_limit_switch_cw(&mut self) -> bool {
-           
-            if self.lmsw.is_low() {
-                log::info!("Found Limit Switch, Heading : 90");
-                self.update_position(90.0);
-                self.force_zero_if_limit_switch_pressed();
-                return true;
-            }
-
-            log::info!("Move 15 Degress clockwise first");
-            self.relay.set_high().unwrap_or_default();
-
-            let correction_factor = 1.231;
-            let steps = (15.0 / 360.0) * (25600.0 * 50.0 * 84.0);
-            log::info!("Steps Needed: {}", steps);
-            log::info!("Steps Needed: {}", steps as i64);
-            if self.move_by(steps as i64) != MoveOutcome::Completed {
-                self.relay.set_low().unwrap_or_default();
-                return false;
-            }
-            log::info!("Done moving 15 Degress clockwise");
-            
-            log::info!("Now, looking for the limit switch");
-
-            let mut max_steps = calculate_steps(-360.0);
-            while (max_steps < 0 && self.lmsw.is_high()) {
-                let step_movement = calculate_steps(-1.0);
-                if self.move_by(step_movement) != MoveOutcome::Completed {
-                    self.relay.set_low().unwrap_or_default();
-                    return false;
-                }
-                max_steps -= step_movement;
-            }
-
-            self.relay.set_low().unwrap_or_default();
-            if max_steps < 0 {
-                log::info!("Found Limit Switch, Heading : 90");
-                self.update_position(90.0);
-                self.relay.set_low().unwrap_or_default();
-                self.force_zero_if_limit_switch_pressed();
-                return true;
-            }
-            log::error!("Limit Switch was not found!");
-            return false;
-        }
-
-
-        pub fn find_limit_switch_ccw(&mut self) -> bool {
-            
-            if self.lmsw.is_low() {
-                self.update_position(90.0);
-                self.force_zero_if_limit_switch_pressed();
-                return true;
-            }
-            
-            log::info!("Move 15 Degress clockwise first");
-            self.relay.set_high().unwrap_or_default();
-
-            let correction_factor = 1.231;
-            let steps = (15.0 / -360.0) * (25600.0 * 50.0 * 84.0);
-            log::info!("Steps Needed: {}", steps);
-            log::info!("Steps Needed: {}", steps as i64);
-            if self.move_by(steps as i64) != MoveOutcome::Completed {
-                self.relay.set_low().unwrap_or_default();
-                return false;
-            }
-            log::info!("Done moving 15 Degress clockwise");
-            log::info!("Now, looking for the limit switch");
-
-            let mut max_steps = calculate_steps(360.0); // full CW
-            while (max_steps > 0 && self.lmsw.is_high()) {
-                let step_movement = calculate_steps(1.0); // Move 1 deg at a time
-                if self.move_by(step_movement) != MoveOutcome::Completed {
-                    self.relay.set_low().unwrap_or_default();
-                    return false;
-                }
-                max_steps -= step_movement;
-            }
-
-            self.relay.set_low().unwrap_or_default();
-
-            if max_steps > 0 {
-                self.update_position(90.0);
-                self.relay.set_low().unwrap_or_default();
-                self.force_zero_if_limit_switch_pressed();
-                return true;
-            }
-            false
         }
 
 
@@ -507,8 +197,8 @@ pub mod motion {
 
                 self.relay.set_high().unwrap_or_default();
                 log::info!("Tracking move (|offset| > 5°)");
-                let steps = (angle_offset / 360.0) * (25600.0 * 50.0 * 84.0);
-                log::info!("Steps Needed: {}", steps as i64);
+                let steps = (angle_offset / 360.0) * STEPS_PER_REV;
+                        log::info!("Steps Needed: {}", steps as i64);
                 let move_outcome = self.move_by(steps as i64);
                 if move_outcome != MoveOutcome::Completed {
                     self.relay.set_low().unwrap_or_default();
@@ -516,20 +206,20 @@ pub mod motion {
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
                     return true;
                 }
-                self.update_position((location as f64 + angle_offset) as f32);
+                        self.update_position((location as f64 + angle_offset) as f32);
                 self.relay.set_low().unwrap_or_default();
 
                 // Publish message
-                let payload = format!(
-                    "Current datetime: {}, and current tower angle: {}",
-                    formatted_time,
-                    location as f64 + angle_offset
-                );
+                        let payload = format!(
+                            "Current datetime: {}, and current tower angle: {}",
+                            formatted_time, 
+                            location as f64 + angle_offset
+                        );
                 match mqtt.publish("device1A/data", payload.as_bytes()) {
-                    Ok(_) => log::info!("Published data payload successfully"),
-                    Err(e) => log::error!("Failed to publish data payload: {:?}", e),
-                }
-                return false;
+                            Ok(_) => log::info!("Published data payload successfully"),
+                            Err(e) => log::error!("Failed to publish data payload: {:?}", e),
+                        }
+                        return false;
             } 
             else {// Sunset Operation 
                 if location == 90.0 {
@@ -623,7 +313,7 @@ pub mod motion {
             /*else if clock.after_sunset() {
                  if false {
                     let angle_offset = 90.0 - location;
-                    let steps = (angle_offset / 360.0) * (20000.0 * 50.0 * 84.0);
+                    let steps = (angle_offset / 360.0) * (20000.0 * gear_reduction * slew_bearing);
                     log::info!("Steps Needed: {}", steps);
                     log::info!("Steps Needed: {}", steps as i64);
                     self.move_by(steps as i64);
@@ -642,4 +332,4 @@ pub mod motion {
     }
 }
 
-pub use motion::{Motion, MotionMode, MoveOutcome};
+pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
