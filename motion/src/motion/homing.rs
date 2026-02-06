@@ -1,4 +1,4 @@
-// Limit-switch and homing related helpers for Motion (Stage 1 extraction).
+// Limit-switch and homing related helpers for Motion.
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 

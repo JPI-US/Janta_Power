@@ -1,8 +1,8 @@
-// Stepper movement execution + stall detector (Stage 2 extraction).
+// Stepper movement execution + stall detector.
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MotionMode, MoveOutcome};
+use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -27,7 +27,8 @@ impl Motion<'_> {
         self.stall_reported = false;
         self.stall_consecutive = 0;
 
-        self.motor.move_by(location);
+        let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
+        self.motor.move_by(signed_steps);
         let outcome = self.run();
         self.last_move_outcome = Some(outcome);
         outcome
@@ -41,7 +42,8 @@ impl Motion<'_> {
         self.stall_reported = false;
         self.stall_consecutive = 0;
 
-        self.motor.move_by(location);
+        let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
+        self.motor.move_by(signed_steps);
         let outcome = self.run();
         self.last_move_outcome = Some(outcome);
         outcome
@@ -54,7 +56,7 @@ impl Motion<'_> {
                 let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
                 let _ = self.encoder.poll();
 
-                // ======== Stage 3: immediate abort when power is missing (EncoderGuarded only) ========
+                // Immediate abort when power is missing (EncoderGuarded only).
                 if self.motion_mode == MotionMode::EncoderGuarded && !self.motor_power_on {
                     log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
                     let pos = self.motor.current_position();
@@ -62,7 +64,7 @@ impl Motion<'_> {
                     return MoveOutcome::AbortedPowerMissing;
                 }
 
-                // ======== Stage 2: Stall detector ========
+                // Stall detector.
                 // Detect "motor stepping but encoder not moving" at a fixed cadence.
                 if self.motion_mode == MotionMode::EncoderGuarded
                     && self.stall_last_check.elapsed() >= Duration::from_millis(250)
@@ -102,7 +104,7 @@ impl Motion<'_> {
                         self.stall_reported = true;
                     }
 
-                    // Stage 3: abort the move once we've exceeded the allowed step budget without
+                    // Abort the move once we've exceeded the allowed step budget without
                     // any encoder tick change.
                     if stalled {
                         log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
@@ -114,7 +116,7 @@ impl Motion<'_> {
                     self.stall_last_check = Instant::now();
                 }
 
-                // ======== Stage 4: home-error capture + zeroing on limit switch ========
+                // Home-error capture + zeroing on limit switch.
                 self.poll_limit_switch_zeroing();
 
                 if t0.elapsed() >= Duration::from_millis(100) {

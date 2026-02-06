@@ -10,9 +10,9 @@ pub mod motion {
     use wifi::wifi::{Wifi, WifiState};
     use ota::OtaUpdater;
     use semver::Version;
-    use std::{thread, panic};
+    use std::thread;
 
-    // Stage 1–2 refactor: split encoder/homing/move execution into focused modules.
+    // Split into focused modules: encoder, homing, move execution.
     mod encoder;
     mod homing;
     mod move_exec;
@@ -24,6 +24,10 @@ pub mod motion {
     pub(crate) const GEAR_REDUCTION: f64 = 1.0;
     pub(crate) const SLEW_BEARING: f64 = 84.0;
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
+
+    // If your mechanical CW/CCW is flipped vs software commands, toggle this.
+    // This inverts the sign of *all* step movements right before they are sent to the driver.
+    pub(crate) const INVERT_MOTOR_DIRECTION: bool = true;
 
     // Stepper driver tuning knobs (steps/s and steps/s^2).
     //
@@ -73,7 +77,7 @@ pub mod motion {
         // captured when the limit switch is hit (before we re-zero).
         last_home_error_ticks: Option<i32>,
 
-        // ======== Stage 2: stall detector (log-only for now) ========
+        // Stall detector state.
         motor_power_on: bool,
         stall_last_check: Instant,
         stall_step_pos_at_last_enc_change: i64,
@@ -81,7 +85,7 @@ pub mod motion {
         stall_reported: bool,
         stall_consecutive: u8,
 
-        // ======== Stage 3: report last attempted move outcome ========
+        // Report last attempted move outcome (read once via `take_last_move_outcome`).
         last_move_outcome: Option<MoveOutcome>,
     }
 
@@ -93,12 +97,12 @@ pub mod motion {
             let direction = PinDriver::output(p11).unwrap();
             let relay = PinDriver::output(p7).unwrap();
             let mut lmsw = PinDriver::input(p6).unwrap();
-            let encoderA = PinDriver::input(p47).unwrap();
-            let encoderB = PinDriver::input(p21).unwrap();
+            let encoder_a = PinDriver::input(p47).unwrap();
+            let encoder_b = PinDriver::input(p21).unwrap();
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
 
-            let encoder = IncrementalEncoder::<Rotary, _, _, HalfStep>::new(encoderA, encoderB);
+            let encoder = IncrementalEncoder::<Rotary, _, _, HalfStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
             Motion {
@@ -242,8 +246,8 @@ pub mod motion {
 
                             // Check to see if wifi is disconnected before OTA try
                             log::info!("Current wifi state: {:?}", wifi.state());
-                            if wifi.state() == WifiState::Disconnected{
-                                wifi.reconnect_if_disconnected();
+                            if wifi.state() == WifiState::Disconnected {
+                                let _ = wifi.reconnect_if_disconnected();
                             }
 
                             // Creates an instance of OTA crate and runs version compare
@@ -270,12 +274,12 @@ pub mod motion {
                     return true;
                 } else {
                     log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_cw(); // change to ccw for waco
+                    let limit_sw_status = self.find_limit_switch_ccw();
                     match limit_sw_status{
                         true => {
                             log::info!("Limit switch has returned true");
 
-                            // Stage 4: publish + persist daily home error (ticks) if we captured it.
+                            // Publish + persist daily home error (ticks) if we captured it.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if let Err(e) = mqtt.publish("device1A/tower/home_error_ticks", payload.as_bytes()) {
@@ -307,27 +311,6 @@ pub mod motion {
                     return false;
                 }
             }
-            // Default fall-through (should generally be unreachable due to early returns above).
-            true
-            //note to self: maybe remove?
-            /*else if clock.after_sunset() {
-                 if false {
-                    let angle_offset = 90.0 - location;
-                    let steps = (angle_offset / 360.0) * (20000.0 * gear_reduction * slew_bearing);
-                    log::info!("Steps Needed: {}", steps);
-                    log::info!("Steps Needed: {}", steps as i64);
-                    self.move_by(steps as i64);
-                    self.relay.set_high().unwrap_or_default();
-                    self.run();
-                    self.relay.set_low().unwrap_or_default();
-                    self.update_position(90.0);
-                    return true; 
-
-                    
-                }
-            }
-            true
-            */
         }
     }
 }

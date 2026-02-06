@@ -1,4 +1,4 @@
-// Encoder-related helpers for Motion (Stage 1 extraction).
+// Encoder-related helpers for Motion.
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
@@ -30,6 +30,12 @@ impl Motion<'_> {
     pub fn heading_from_encoder_ticks(&self, home_heading_deg: f32) -> f32 {
         let deg = (self.encoder_ticks_adjusted() as f32) / ENC_TICKS_PER_DEG;
         (home_heading_deg + deg).rem_euclid(360.0)
+    }
+
+    /// Convert a degrees delta into expected encoder ticks (output shaft).
+    /// Positive degrees correspond to positive encoder ticks (CW).
+    pub fn encoder_ticks_for_deg(&self, deg: f32) -> i32 {
+        (deg * ENC_TICKS_PER_DEG).round() as i32
     }
 
     /// Tiny diagnostic move: step a small amount and check whether encoder ticks change.
