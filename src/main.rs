@@ -31,7 +31,7 @@ use esp_idf_svc::{
     ota::EspOta,
     sntp::{EspSntp, SyncStatus},
 };
-use motion::{calculate_steps, MoveOutcome, Motion, MotionMode};
+use motion::{MoveOutcome, Motion, MotionMode};
 use rgb_led::Led;
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
@@ -329,95 +329,8 @@ fn main() -> anyhow::Result<()> {
 
     // ======== One-shot recovery move (bench / unstuck) ========
     // If we're near a hard stop, we can safely back off before attempting any homing search.
-    // Convention for *current wiring*: positive step movement = physical CW.
     if SWITCHBOARD.boot.recovery.enabled {
-        let cfg = &SWITCHBOARD.boot.recovery;
-        let tol_ticks = motion.encoder_ticks_for_deg(cfg.verify_tol_deg.abs()).abs();
-        let mut all_ok = true;
-
-        for (idx, mv) in cfg.moves.iter().enumerate() {
-            let move_n = idx + 1;
-            let signed_deg = mv.dir.apply_to_deg(mv.deg);
-            let steps = calculate_steps(signed_deg);
-
-            log::warn!(
-                "RECOVERY_MOVE_{}: dir={} deg={:.1} signed_deg={:+.1} steps={} tol_ticks={}",
-                move_n,
-                mv.dir.as_str(),
-                mv.deg,
-                signed_deg,
-                steps,
-                tol_ticks
-            );
-
-            let enc_start = motion.encoder_ticks_raw();
-            let outcome = motion.move_by(steps);
-            let enc_end = motion.encoder_ticks_raw();
-            let enc_delta = enc_end - enc_start;
-
-            if cfg.verify_with_encoder {
-                let expected_enc_delta = motion.encoder_ticks_for_deg(signed_deg);
-                let err_ticks = enc_delta - expected_enc_delta;
-                let reached = err_ticks.abs() <= tol_ticks;
-
-                if reached {
-                    log::warn!(
-                        "RECOVERY_MOVE_{} verify OK: outcome={:?} enc_start={} enc_end={} enc_delta={} expected_delta={} err_ticks={} tol_ticks={}",
-                        move_n,
-                        outcome,
-                        enc_start,
-                        enc_end,
-                        enc_delta,
-                        expected_enc_delta,
-                        err_ticks,
-                        tol_ticks
-                    );
-                } else {
-                    all_ok = false;
-                    log::error!(
-                        "RECOVERY_MOVE_{} verify FAILED: outcome={:?} enc_start={} enc_end={} enc_delta={} expected_delta={} err_ticks={} tol_ticks={}",
-                        move_n,
-                        outcome,
-                        enc_start,
-                        enc_end,
-                        enc_delta,
-                        expected_enc_delta,
-                        err_ticks,
-                        tol_ticks
-                    );
-                    if cfg.stop_on_verify_fail {
-                        // Safety: if we didn't reach the target (by encoder), don't continue to the next move.
-                        break;
-                    } else {
-                        log::warn!(
-                            "RECOVERY_STOP_ON_VERIFY_FAIL=false: continuing to next recovery move despite verify failure"
-                        );
-                    }
-                }
-            } else {
-                log::warn!(
-                    "RECOVERY_MOVE_{} complete (no verify): outcome={:?} enc_start={} enc_end={} enc_delta={}",
-                    move_n,
-                    outcome,
-                    enc_start,
-                    enc_end,
-                    enc_delta
-                );
-            }
-        }
-
-        log::warn!(
-            "RECOVERY_MOVES done: all_ok={} then {}",
-            all_ok,
-            if cfg.stop_after { "STOPPING" } else { "continuing" }
-        );
-
-        if cfg.stop_after {
-            log::warn!("STOP_AFTER_RECOVERY_MOVE=true: idling after recovery move (no homing/tracking)");
-            loop {
-                std::thread::sleep(Duration::from_secs(60));
-            }
-        }
+        app::boot_recovery::run(&mut motion, &SWITCHBOARD.boot.recovery);
     }
 
     let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
