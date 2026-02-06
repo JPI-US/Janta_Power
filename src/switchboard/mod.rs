@@ -207,3 +207,4 @@ pub const fn active(profile: Profile) -> Switchboard {
         Profile::Custom => custom(),
     }
 }
+

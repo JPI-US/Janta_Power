@@ -2,7 +2,7 @@ use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::MotionMode;
 use semver::Version;
 
-use crate::snapshot_store::SnapshotStore;
+use crate::state::SnapshotStore;
 
 /// One “normal mode” tracking tick: call Motion's tracking logic and persist stable results.
 ///

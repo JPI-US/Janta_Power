@@ -7,9 +7,9 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
-    snapshot_store::SnapshotStore,
+    infra,
+    state::SnapshotStore,
     switchboard::{Direction, EncoderRecoverySwitches},
-    telemetry,
 };
 
 const HOME_HEADING_DEG: f32 = 90.0;
@@ -51,7 +51,7 @@ impl EncoderFaultRecovery {
         }
 
         if !cfg.enabled {
-            telemetry::Telemetry::publish_critical_failure_loop(
+            infra::Telemetry::publish_critical_failure_loop(
                 mqtt,
                 b"Critical failure: encoder fault recovery disabled in switchboard!",
             );
@@ -115,7 +115,7 @@ impl EncoderFaultRecovery {
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         if !ok {
-            telemetry::Telemetry::publish_critical_failure_loop(
+            infra::Telemetry::publish_critical_failure_loop(
                 mqtt,
                 b"Critical failure: re-home after encoder recovery failed!",
             );
@@ -140,7 +140,7 @@ impl EncoderFaultRecovery {
             log::warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        telemetry::Telemetry::publish_firmware_version(mqtt, current_version);
+        infra::Telemetry::publish_firmware_version(mqtt, current_version);
         Ok(())
     }
 }

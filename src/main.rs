@@ -4,12 +4,11 @@ use clock::Clock;
 use log::*;
 use std::thread;
 
-mod snapshot_store;
-mod telemetry;
 mod config;
 mod switchboard;
-mod tracking_loop;
-mod encoder_fault;
+mod state;
+mod infra;
+mod app;
 
 // Provide __pender function for embassy_executor
 // This function is called by embassy_executor to wake tasks
@@ -41,13 +40,11 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::switchboard::{
-    Direction, MotionModePolicy, Profile, Switchboard,
-};
-use crate::encoder_fault::EncoderFaultRecovery;
+use crate::switchboard::{Direction, MotionModePolicy, Profile, Switchboard};
+use crate::app::encoder_fault::EncoderFaultRecovery;
 
 // ================= Compile-time switchboard =================
-// Choose ONE profile here; everything else is defined in `src/switchboard.rs`.
+// Choose ONE profile here; everything else is defined in `src/switchboard/`.
 const ACTIVE_PROFILE: Profile = Profile::Normal;
 const SWITCHBOARD: Switchboard = switchboard::active(ACTIVE_PROFILE);
 
@@ -299,7 +296,7 @@ fn main() -> anyhow::Result<()> {
     // ======== Select motion mode (StepperOnly vs EncoderGuarded) ========
     let motion_mode = match SWITCHBOARD.runtime.motion_mode {
         MotionModePolicy::FromNvsDefault(default) => {
-            snapshot_store::SnapshotStore::new(&mut nvs).load_tracking_mode_or_init(default)
+            state::SnapshotStore::new(&mut nvs).load_tracking_mode_or_init(default)
         }
         MotionModePolicy::Force(forced) => forced,
     };
@@ -315,14 +312,14 @@ fn main() -> anyhow::Result<()> {
 
     // Restore heading (do NOT overwrite on every boot).
     let mut actual_heading: f32 =
-        snapshot_store::SnapshotStore::new(&mut nvs).load_heading_or_init(90.0);
+        state::SnapshotStore::new(&mut nvs).load_heading_or_init(90.0);
     info!("Restored heading from NVS(90 Degrees + Distance by encoders): {}", actual_heading);
 
     // Restore encoder adjusted ticks snapshot (version-gated) in L2 only.
     let mut restored_from_snapshot = false;
     if motion_mode == MotionMode::EncoderGuarded {
         if let Some(enc_ticks_adj) =
-            snapshot_store::SnapshotStore::new(&mut nvs).load_encoder_snapshot()
+            state::SnapshotStore::new(&mut nvs).load_encoder_snapshot()
         {
             // Choose the zero offset so that: adjusted = raw - offset == enc_ticks_adj
             // => offset = raw - enc_ticks_adj
@@ -399,7 +396,7 @@ fn main() -> anyhow::Result<()> {
                         tol_ticks
                     );
                     if cfg.stop_on_verify_fail {
-                        // Safety: if we didn't reach phase 1 target (by encoder), don't continue to phase 2.
+                        // Safety: if we didn't reach the target (by encoder), don't continue to the next move.
                         break;
                     } else {
                         log::warn!(
@@ -456,7 +453,7 @@ fn main() -> anyhow::Result<()> {
                     "Homing FAILED (dir={}): limit switch could not be found",
                     SWITCHBOARD.boot.homing.dir.as_str()
                 );
-                telemetry::Telemetry::publish_critical_failure_loop(
+                infra::Telemetry::publish_critical_failure_loop(
                     &mut mqtt,
                     b"Critical failure: Limit switch failure!",
                 );
@@ -502,7 +499,7 @@ fn main() -> anyhow::Result<()> {
 
         // Perform solar tracking (normal path) if enabled.
         if SWITCHBOARD.runtime.tracking.enabled {
-            let outcome = tracking_loop::tick(
+            let outcome = app::tracking_loop::tick(
                 &mut motion,
                 &mut calculation,
                 &mut actual_heading,
@@ -526,7 +523,7 @@ fn main() -> anyhow::Result<()> {
             warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        telemetry::Telemetry::publish_firmware_version(&mut mqtt, &current_version);
+        infra::Telemetry::publish_firmware_version(&mut mqtt, &current_version);
         
         std::thread::sleep(Duration::from_secs(
             SWITCHBOARD.runtime.tracking.loop_sleep_secs,
@@ -574,7 +571,7 @@ fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt) -> bool {
         }
 
         // Try publishing a test message
-        if telemetry::Telemetry::publish_boot_check(mqtt) {
+        if infra::Telemetry::publish_boot_check(mqtt) {
             return true;
         }
         error!("MQTT publish failed immediately");

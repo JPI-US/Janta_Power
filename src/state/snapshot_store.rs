@@ -95,4 +95,3 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
     }
 }
 
-
