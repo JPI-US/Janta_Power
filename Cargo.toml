@@ -4,7 +4,7 @@ members = ["buttons", "rgb_led", "sensors", "clock", "wifi", "network", "ota"]
 [package]
 name = "tower"
 version = "0.1.0"
-authors = ["ms356 msalla@jantaus.com, abenezertsige <atsige@jantaus.com>"]
+authors = ["MuditUpadhyay04 <mupadhyay@jantaus.com> ms356 <msalla@jantaus.com>, abenezertsige <atsige@jantaus.com>"]
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
