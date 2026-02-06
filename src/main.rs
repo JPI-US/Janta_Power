@@ -1,16 +1,15 @@
-use std::{
-    str::FromStr,
-    time::{Duration, SystemTime, Instant},
-};
+use std::time::{Duration, SystemTime};
 use chrono::{DateTime, FixedOffset, Utc};
 use clock::Clock;
 use log::*;
 use std::thread;
-//use esp32_nimble::{enums::*, uuid128, BLEAdvertisedDevice, BLEDevice, BLEScan};
-use esp_idf_hal::{sys::esp_app_desc, task::current};
 
 mod snapshot_store;
 mod telemetry;
+mod config;
+mod switchboard;
+mod tracking_loop;
+mod encoder_fault;
 
 // Provide __pender function for embassy_executor
 // This function is called by embassy_executor to wake tasks
@@ -42,10 +41,19 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
+use crate::switchboard::{
+    Direction, MotionModePolicy, Profile, Switchboard,
+};
+use crate::encoder_fault::EncoderFaultRecovery;
+
+// ================= Compile-time switchboard =================
+// Choose ONE profile here; everything else is defined in `src/switchboard.rs`.
+const ACTIVE_PROFILE: Profile = Profile::Normal;
+const SWITCHBOARD: Switchboard = switchboard::active(ACTIVE_PROFILE);
+
 fn main() -> anyhow::Result<()> {
     // Required for ESP-IDF patches
     esp_idf_svc::sys::link_patches();
-    //esp_app_desc!(); // FIND PURPOSE ELSE DELETE
 
     // Initialize logger and system loop
     EspLogger::initialize_default();
@@ -63,8 +71,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Encoder pins (move them once; pass into Motion::new later)
-    let encoderA = peripherals.pins.gpio47;
-    let encoderB = peripherals.pins.gpio21;
+    let encoder_a = peripherals.pins.gpio47;
+    let encoder_b = peripherals.pins.gpio21;
 
     // Setting of sda and scl gpio pins as well as i2c
     let sda = peripherals.pins.gpio8;
@@ -76,11 +84,6 @@ fn main() -> anyhow::Result<()> {
 
     // Setting up i2c bus driver
     let bus: &'static _ = shared_bus::new_std!(I2cDriver = i2c).unwrap();
-    // let mut buttons = buttons::Buttons::new(
-    //     peripherals.pins.gpio5,
-    //     peripherals.pins.gpio4,
-    //     peripherals.pins.gpio6,
-    // );
 
     // ======== Static credentials: Initialization for wifi and mqtt ========
     // Write credentials into NVS (as raw bits)
@@ -219,7 +222,10 @@ fn main() -> anyhow::Result<()> {
 
     // Publishing a message about the current running version
     info!("The current firmware version is: {}", current_version.to_string());
-    let mut payload = format!("The current firmware version is: {}", current_version.to_string());
+    let payload = format!(
+        "The current firmware version is: {}",
+        current_version.to_string()
+    );
     mqtt.publish("device1A/firmware/version", payload.as_bytes())?;
 
     // Creates an instance of OTA crate
@@ -279,8 +285,8 @@ fn main() -> anyhow::Result<()> {
         peripherals.pins.gpio16,   // CW Motor
         peripherals.pins.gpio17,   // Relay 
         peripherals.pins.gpio14,   // Limit Switch 
-        encoderA,                  // Encoder A
-        encoderB,                  // Encoder B
+        encoder_a,                 // Encoder A
+        encoder_b,                 // Encoder B
     );
    
     motion.init();          // Initialize motor driver parameters
@@ -290,10 +296,13 @@ fn main() -> anyhow::Result<()> {
     // For later: motor power sense input. For now this is just a test knob.
     const POWER_ON: bool = true;
 
-    // ======== Select tracking mode (L1 legacy vs L2 current) ========
-    // Default to L2 (current) if not set.
-    let motion_mode = snapshot_store::SnapshotStore::new(&mut nvs)
-        .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+    // ======== Select motion mode (StepperOnly vs EncoderGuarded) ========
+    let motion_mode = match SWITCHBOARD.runtime.motion_mode {
+        MotionModePolicy::FromNvsDefault(default) => {
+            snapshot_store::SnapshotStore::new(&mut nvs).load_tracking_mode_or_init(default)
+        }
+        MotionModePolicy::Force(forced) => forced,
+    };
     motion.set_motion_mode(motion_mode);
     motion.set_motor_power_on(POWER_ON);
     info!(
@@ -334,52 +343,139 @@ fn main() -> anyhow::Result<()> {
     // ======== One-shot recovery move (bench / unstuck) ========
     // If we're near a hard stop, we can safely back off before attempting any homing search.
     // Convention for *current wiring*: positive step movement = physical CW.
-    const RECOVERY_MOVE_CW_ON_BOOT: bool = true;
-    const RECOVERY_MOVE_CW_DEG: f32 = 30.0;
-    if RECOVERY_MOVE_CW_ON_BOOT {
-        let steps = calculate_steps(RECOVERY_MOVE_CW_DEG);
+    if SWITCHBOARD.boot.recovery.enabled {
+        let cfg = &SWITCHBOARD.boot.recovery;
+        let tol_ticks = motion.encoder_ticks_for_deg(cfg.verify_tol_deg.abs()).abs();
+        let mut all_ok = true;
+
+        for (idx, mv) in cfg.moves.iter().enumerate() {
+            let move_n = idx + 1;
+            let signed_deg = mv.dir.apply_to_deg(mv.deg);
+            let steps = calculate_steps(signed_deg);
+
+            log::warn!(
+                "RECOVERY_MOVE_{}: dir={} deg={:.1} signed_deg={:+.1} steps={} tol_ticks={}",
+                move_n,
+                mv.dir.as_str(),
+                mv.deg,
+                signed_deg,
+                steps,
+                tol_ticks
+            );
+
+            let enc_start = motion.encoder_ticks_raw();
+            let outcome = motion.move_by(steps);
+            let enc_end = motion.encoder_ticks_raw();
+            let enc_delta = enc_end - enc_start;
+
+            if cfg.verify_with_encoder {
+                let expected_enc_delta = motion.encoder_ticks_for_deg(signed_deg);
+                let err_ticks = enc_delta - expected_enc_delta;
+                let reached = err_ticks.abs() <= tol_ticks;
+
+                if reached {
+                    log::warn!(
+                        "RECOVERY_MOVE_{} verify OK: outcome={:?} enc_start={} enc_end={} enc_delta={} expected_delta={} err_ticks={} tol_ticks={}",
+                        move_n,
+                        outcome,
+                        enc_start,
+                        enc_end,
+                        enc_delta,
+                        expected_enc_delta,
+                        err_ticks,
+                        tol_ticks
+                    );
+                } else {
+                    all_ok = false;
+                    log::error!(
+                        "RECOVERY_MOVE_{} verify FAILED: outcome={:?} enc_start={} enc_end={} enc_delta={} expected_delta={} err_ticks={} tol_ticks={}",
+                        move_n,
+                        outcome,
+                        enc_start,
+                        enc_end,
+                        enc_delta,
+                        expected_enc_delta,
+                        err_ticks,
+                        tol_ticks
+                    );
+                    if cfg.stop_on_verify_fail {
+                        // Safety: if we didn't reach phase 1 target (by encoder), don't continue to phase 2.
+                        break;
+                    } else {
+                        log::warn!(
+                            "RECOVERY_STOP_ON_VERIFY_FAIL=false: continuing to next recovery move despite verify failure"
+                        );
+                    }
+                }
+            } else {
+                log::warn!(
+                    "RECOVERY_MOVE_{} complete (no verify): outcome={:?} enc_start={} enc_end={} enc_delta={}",
+                    move_n,
+                    outcome,
+                    enc_start,
+                    enc_end,
+                    enc_delta
+                );
+            }
+        }
+
         log::warn!(
-            "RECOVERY_MOVE: moving {:.1}° CW (steps={}) before homing",
-            RECOVERY_MOVE_CW_DEG,
-            steps
+            "RECOVERY_MOVES done: all_ok={} then {}",
+            all_ok,
+            if cfg.stop_after { "STOPPING" } else { "continuing" }
         );
-        let _ = motion.move_by(steps);
+
+        if cfg.stop_after {
+            log::warn!("STOP_AFTER_RECOVERY_MOVE=true: idling after recovery move (no homing/tracking)");
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+            }
+        }
     }
 
-    let mut mb = PinDriver::input(peripherals.pins.gpio5).unwrap();  // Maintenance 
-    let mut eb = PinDriver::input(peripherals.pins.gpio4).unwrap();  // East Button
-    let mut wb = PinDriver::input(peripherals.pins.gpio6).unwrap();  // West Button
+    let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
+    let _eb = PinDriver::input(peripherals.pins.gpio4).unwrap(); // East Button
+    let _wb = PinDriver::input(peripherals.pins.gpio6).unwrap(); // West Button
 
     // --- Homing ---
     // StepperOnly always homes. EncoderGuarded can skip homing if snapshot restored.
     // If snapshot wasn't available/valid, fall back to the existing homing behavior.
-    if motion_mode == MotionMode::StepperOnly || !restored_from_snapshot {
-        // Convention for *current wiring*: positive step movement = physical CW.
-        let limit_sw_status = motion.find_limit_switch_cw();
-        match limit_sw_status{
-            true => log::info!("Limit switch has returned true"),
+    let should_home_by_mode = motion_mode == MotionMode::StepperOnly || !restored_from_snapshot;
+    if should_home_by_mode && SWITCHBOARD.boot.homing.enabled {
+        let limit_sw_status = match SWITCHBOARD.boot.homing.dir {
+            Direction::Cw => motion.find_limit_switch_cw(),
+            Direction::Ccw => motion.find_limit_switch_ccw(),
+        };
+        match limit_sw_status {
+            true => log::info!(
+                "Homing OK (dir={}): limit switch found",
+                SWITCHBOARD.boot.homing.dir.as_str()
+            ),
             false => {
-                log::error!("Limit switch has returned false, limit switch could not be found");
+                log::error!(
+                    "Homing FAILED (dir={}): limit switch could not be found",
+                    SWITCHBOARD.boot.homing.dir.as_str()
+                );
                 telemetry::Telemetry::publish_critical_failure_loop(
                     &mut mqtt,
                     b"Critical failure: Limit switch failure!",
                 );
             }
         }
-        thread::sleep(Duration::from_secs(5)); // 
+        thread::sleep(Duration::from_secs(5));
+    } else if should_home_by_mode {
+        log::warn!("Homing skipped: SWITCHBOARD.boot.homing.enabled=false");
     } else {
         log::info!("Skipping homing: restored heading+encoder snapshot from NVS");
     }
 
-    // ======== Stage 4: encoder-fault probe loop state ========
-    // If we stall (encoder unplugged), we pause normal tracking, probe periodically,
-    // and when the encoder is back we recompute heading from encoder ticks and resume.
-    let mut encoder_fault = false;
-    let mut next_probe_at: Option<Instant> = None;
+    // --- Encoder fault recovery ---
+    // If we stall (encoder unplugged), pause normal tracking and periodically probe for recovery.
+    let mut encoder_fault = EncoderFaultRecovery::new();
 
     loop {
-        let st_now = SystemTime::now();//new
-        let dt_now_utc: DateTime<Utc> = st_now.into();//new
+        let st_now = SystemTime::now();
+        let dt_now_utc: DateTime<Utc> = st_now.into();
         let local_time: DateTime<FixedOffset> = DateTime::from_naive_utc_and_offset(
         dt_now_utc.naive_utc(),
         FixedOffset::east_opt(timezone_offset_hours * 3600).unwrap());
@@ -391,148 +487,38 @@ fn main() -> anyhow::Result<()> {
 
         let now = std::time::Instant::now();  // Timer to measure how long this tracking loop iteration takes
 
-        // ======== Stage 4: encoder-fault probe loop (3 min) ========
-        // If we ever abort due to encoder stall, pause normal tracking and periodically probe
-        // for encoder recovery by issuing a tiny movement and checking for tick change.
-        const ENCODER_PROBE_INTERVAL: Duration = Duration::from_secs(180);
-        // Keep probe small: ~30k steps. Tune if needed.
-        const ENCODER_PROBE_STEPS: i64 = 30_000;
-        const HOME_HEADING_DEG: f32 = 90.0;
-
-        // If we're in encoder fault, skip tracking and only probe every few minutes.
-        if encoder_fault {
-            let now_i = Instant::now();
-            let should_probe = next_probe_at.map(|t| now_i >= t).unwrap_or(true);
-            if should_probe {
-                info!("Encoder fault: probing for recovery...");
-                let ok = motion.probe_encoder_motion(ENCODER_PROBE_STEPS);
-                if ok {
-                    info!("Encoder probe succeeded; recomputing heading from encoder and resuming tracking.");
-                    encoder_fault = false;
-                    next_probe_at = None;
-
-                    // IMPORTANT:
-                    // When encoder comes back, it may have missed ticks while unplugged.
-                    // If encoder-derived heading is wildly different from our last stable heading,
-                    // we should NOT persist a bogus value — instead, re-home to re-establish truth.
-                    fn angle_diff_deg(a: f32, b: f32) -> f32 {
-                        let mut d = (a - b).rem_euclid(360.0);
-                        if d > 180.0 {
-                            d = 360.0 - d;
-                        }
-                        d.abs()
-                    }
-                    const ENCODER_RECOVERY_MAX_DRIFT_DEG: f32 = 15.0;
-
-                    let candidate_heading = motion.heading_from_encoder_ticks(HOME_HEADING_DEG);
-                    let drift = angle_diff_deg(candidate_heading, actual_heading);
-                    info!(
-                        "Encoder recovered: candidate_heading={} prev_heading={} drift_deg={}",
-                        candidate_heading, actual_heading, drift
-                    );
-
-                    if drift <= ENCODER_RECOVERY_MAX_DRIFT_DEG {
-                        actual_heading = candidate_heading;
-                        motion.update_position(actual_heading);
-                        snapshot_store::SnapshotStore::new(&mut nvs).save_heading(actual_heading);
-                        if motion_mode == MotionMode::EncoderGuarded {
-                            snapshot_store::SnapshotStore::new(&mut nvs)
-                                .save_encoder_snapshot(motion.encoder_ticks_adjusted());
-                        }
-                    } else {
-                        warn!(
-                            "Encoder recovered but heading drift ({:.2}°) exceeds {:.2}°; re-homing to re-establish truth.",
-                            drift, ENCODER_RECOVERY_MAX_DRIFT_DEG
-                        );
-                        // Re-home (CW to limit switch). This is the only way to restore absolute truth
-                        // after encoder disconnect/missed ticks.
-                        let ok = motion.find_limit_switch_cw();
-                        if !ok {
-                            telemetry::Telemetry::publish_critical_failure_loop(
-                                &mut mqtt,
-                                b"Critical failure: re-home after encoder recovery failed!",
-                            );
-                        }
-                        actual_heading = HOME_HEADING_DEG;
-                        motion.update_position(actual_heading);
-                        snapshot_store::SnapshotStore::new(&mut nvs).save_heading(actual_heading);
-                        if motion_mode == MotionMode::EncoderGuarded {
-                            snapshot_store::SnapshotStore::new(&mut nvs)
-                                .save_encoder_snapshot(motion.encoder_ticks_adjusted());
-                        }
-                    }
-                    // Fall through to normal tracking in this same loop iteration.
-                } else {
-                    warn!(
-                        "Encoder probe failed; will retry in {:?}",
-                        ENCODER_PROBE_INTERVAL
-                    );
-                    next_probe_at = Some(now_i + ENCODER_PROBE_INTERVAL);
-
-                    // Still do housekeeping while we wait.
-                    if wifi.state() == WifiState::Disconnected {
-                        warn!("Wifi disconnected, attempting to reconnect...");
-                        wifi.reconnect_if_disconnected()?;
-                    }
-                    telemetry::Telemetry::publish_firmware_version(&mut mqtt, &current_version);
-                    std::thread::sleep(Duration::from_secs(30));
-                    continue;
-                }
-            } else {
-                let t = next_probe_at.unwrap();
-                let remaining = t.saturating_duration_since(now_i);
-                info!("Encoder fault: waiting {:?} until next probe...", remaining);
-
-                // Housekeeping
-                if wifi.state() == WifiState::Disconnected {
-                    warn!("Wifi disconnected, attempting to reconnect...");
-                    wifi.reconnect_if_disconnected()?;
-                }
-                telemetry::Telemetry::publish_firmware_version(&mut mqtt, &current_version);
-                std::thread::sleep(Duration::from_secs(30));
-                continue;
-            }
+        if encoder_fault.tick(
+            &SWITCHBOARD.runtime.encoder_recovery,
+            &mut motion,
+            motion_mode,
+            &mut actual_heading,
+            &mut nvs,
+            &mut mqtt,
+            &mut wifi,
+            &current_version,
+        )? {
+            continue;
         }
 
-        // Perform solar tracking (normal path)
-        let tracking_done = motion.set_tower_position(
-            &mut calculation,
-            actual_heading,
-            0,
-            &mut mqtt,
-            current_version.clone(),
-            &mut nvs,
-            &mut wifi,
-            current_datetime.clone(),
-        );
+        // Perform solar tracking (normal path) if enabled.
+        if SWITCHBOARD.runtime.tracking.enabled {
+            let outcome = tracking_loop::tick(
+                &mut motion,
+                &mut calculation,
+                &mut actual_heading,
+                &mut mqtt,
+                &current_version,
+                &mut nvs,
+                &mut wifi,
+                current_datetime.clone(),
+            );
 
-        // Persist only when a move actually completed successfully.
-        // This prevents “phantom saves” and prevents old headings from being overwritten on abort paths.
-        match motion.take_last_move_outcome() {
-            Some(MoveOutcome::Completed) => {
-                actual_heading = motion.location();
-                snapshot_store::SnapshotStore::new(&mut nvs).save_heading(actual_heading);
-                if motion_mode == MotionMode::EncoderGuarded {
-                    snapshot_store::SnapshotStore::new(&mut nvs)
-                        .save_encoder_snapshot(motion.encoder_ticks_adjusted());
-                }
-            }
-            Some(outcome @ (MoveOutcome::AbortedPowerMissing | MoveOutcome::AbortedStall)) => {
+            if outcome != MoveOutcome::Completed {
                 warn!("Last move aborted: {:?}", outcome);
-                if outcome == MoveOutcome::AbortedStall {
-                    encoder_fault = true;
-                    next_probe_at = Some(Instant::now() + ENCODER_PROBE_INTERVAL);
-                }
             }
-            None => {
-                if tracking_done {
-                    info!("No movement required (tracking_done=true)");
-                } else {
-                    // Defensive: if we ever return tracking_done=false but did not set a MoveOutcome,
-                    // we do NOT persist anything to avoid corrupting the snapshot.
-                    warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
-                }
-            }
+            encoder_fault.on_move_outcome(outcome, &SWITCHBOARD.runtime.encoder_recovery);
+        } else {
+            info!("Tracking disabled by SWITCHBOARD.runtime.tracking.enabled=false");
         }
 
         info!("Tracking loop duration (v1.0.4): {:?}", now.elapsed());
@@ -542,7 +528,9 @@ fn main() -> anyhow::Result<()> {
         }
         telemetry::Telemetry::publish_firmware_version(&mut mqtt, &current_version);
         
-        std::thread::sleep(Duration::from_secs(300)); // 5-minute cycle  
+        std::thread::sleep(Duration::from_secs(
+            SWITCHBOARD.runtime.tracking.loop_sleep_secs,
+        ));
 
     }
 }

@@ -3,7 +3,7 @@ use semver::Version;
 
 use network::mqtt::Mqtt;
 
-// Centralized MQTT topics (Stage 1 extraction).
+// Centralized MQTT topics.
 pub const TOPIC_BOOT: &str = "device1A/boot";
 pub const TOPIC_FIRMWARE_VERSION: &str = "device1A/firmware/version";
 pub const TOPIC_TOWER_STATUS: &str = "device1A/tower/status";

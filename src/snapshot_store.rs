@@ -3,7 +3,7 @@ use log::{info, warn};
 
 use motion::MotionMode;
 
-// NVS keys (Stage 1 extraction)
+// NVS keys used by the app.
 pub const NVS_KEY_TRACKING_MODE: &str = "tracking_mode"; // 1=L1 legacy, 2=L2 current
 pub const NVS_KEY_HEADING: &str = "heading";
 
