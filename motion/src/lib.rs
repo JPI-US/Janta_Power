@@ -32,8 +32,8 @@ pub mod motion {
     // Stepper driver tuning knobs (steps/s and steps/s^2).
     //
     // Conservative defaults for the NEMA42 + PST2822PH combo based on your bench test.
-    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 5_000.0;
-    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 500;
+    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 8_000.0;
+    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 900;
 
     #[derive(PartialEq, Copy, Clone)]
     pub enum MotionMode {
