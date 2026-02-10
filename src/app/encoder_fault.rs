@@ -8,7 +8,7 @@ use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
     infra,
-    state::SnapshotStore,
+    infra::SnapshotStore,
     switchboard::{Direction, EncoderRecoverySwitches},
 };
 
@@ -45,15 +45,18 @@ impl EncoderFaultRecovery {
         mqtt: &mut Mqtt,
         wifi: &mut Wifi<'_>,
         current_version: &Version,
+        publish_mqtt: bool,
+        persist_nvs: bool,
     ) -> anyhow::Result<bool> {
         if !self.active {
             return Ok(false);
         }
 
         if !cfg.enabled {
-            infra::Telemetry::publish_critical_failure_loop(
+            infra::Telemetry::critical_failure_loop(
                 mqtt,
                 b"Critical failure: encoder fault recovery disabled in switchboard!",
+                publish_mqtt,
             );
         }
 
@@ -66,7 +69,7 @@ impl EncoderFaultRecovery {
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
-            self.housekeeping(wifi, mqtt, current_version)?;
+            self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
         }
@@ -77,7 +80,7 @@ impl EncoderFaultRecovery {
             log::warn!("Encoder probe failed; will retry in {:?}", probe_interval);
             self.next_probe_at = Some(now_i + probe_interval);
 
-            self.housekeeping(wifi, mqtt, current_version)?;
+            self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
         }
@@ -98,9 +101,10 @@ impl EncoderFaultRecovery {
         if drift <= cfg.max_drift_deg {
             *actual_heading = candidate_heading;
             motion.update_position(*actual_heading);
-            SnapshotStore::new(nvs).save_heading(*actual_heading);
+            SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
             if motion_mode == MotionMode::EncoderGuarded {
-                SnapshotStore::new(nvs).save_encoder_snapshot(motion.encoder_ticks_adjusted());
+                SnapshotStore::new(nvs, persist_nvs)
+                    .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
             return Ok(false);
         }
@@ -115,17 +119,19 @@ impl EncoderFaultRecovery {
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         if !ok {
-            infra::Telemetry::publish_critical_failure_loop(
+            infra::Telemetry::critical_failure_loop(
                 mqtt,
                 b"Critical failure: re-home after encoder recovery failed!",
+                publish_mqtt,
             );
         }
 
         *actual_heading = HOME_HEADING_DEG;
         motion.update_position(*actual_heading);
-        SnapshotStore::new(nvs).save_heading(*actual_heading);
+        SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
         if motion_mode == MotionMode::EncoderGuarded {
-            SnapshotStore::new(nvs).save_encoder_snapshot(motion.encoder_ticks_adjusted());
+            SnapshotStore::new(nvs, persist_nvs)
+                .save_encoder_snapshot(motion.encoder_ticks_adjusted());
         }
         Ok(false)
     }
@@ -135,12 +141,13 @@ impl EncoderFaultRecovery {
         wifi: &mut Wifi<'_>,
         mqtt: &mut Mqtt,
         current_version: &Version,
+        publish_mqtt: bool,
     ) -> anyhow::Result<()> {
         if wifi.state() == WifiState::Disconnected {
             log::warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        infra::Telemetry::publish_firmware_version(mqtt, current_version);
+        infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
         Ok(())
     }
 }

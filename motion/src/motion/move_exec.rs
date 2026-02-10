@@ -67,6 +67,7 @@ impl Motion<'_> {
                 // Stall detector.
                 // Detect "motor stepping but encoder not moving" at a fixed cadence.
                 if self.motion_mode == MotionMode::EncoderGuarded
+                    && self.stall_detection_enabled
                     && self.stall_last_check.elapsed() >= Duration::from_millis(250)
                 {
                     // Stall threshold (no gearbox):

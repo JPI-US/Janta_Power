@@ -79,6 +79,7 @@ pub mod motion {
 
         // Stall detector state.
         motor_power_on: bool,
+        stall_detection_enabled: bool,
         stall_last_check: Instant,
         stall_step_pos_at_last_enc_change: i64,
         stall_last_enc_ticks_seen: i32,
@@ -87,6 +88,11 @@ pub mod motion {
 
         // Report last attempted move outcome (read once via `take_last_move_outcome`).
         last_move_outcome: Option<MoveOutcome>,
+
+        // Tracking soft limits (guardrail).
+        soft_limits_enabled: bool,
+        soft_limit_min_deg: f32,
+        soft_limit_max_deg: f32,
     }
 
     // CW: direction
@@ -124,6 +130,7 @@ pub mod motion {
                 last_home_error_ticks: None,
 
                 motor_power_on: true,
+                stall_detection_enabled: true,
                 stall_last_check: now,
                 stall_step_pos_at_last_enc_change: 0,
                 stall_last_enc_ticks_seen: 0,
@@ -131,11 +138,29 @@ pub mod motion {
                 stall_consecutive: 0,
 
                 last_move_outcome: None,
+
+                soft_limits_enabled: false,
+                soft_limit_min_deg: 0.0,
+                soft_limit_max_deg: 290.0,
             }
         }
 
         pub fn update_position(&mut self, location: f32) {
             self.location = location;
+        }
+
+        pub fn set_stall_detection_enabled(&mut self, enabled: bool) {
+            self.stall_detection_enabled = enabled;
+        }
+
+        pub fn stall_detection_enabled(&self) -> bool {
+            self.stall_detection_enabled
+        }
+
+        pub fn set_soft_limits(&mut self, enabled: bool, min_deg: f32, max_deg: f32) {
+            self.soft_limits_enabled = enabled;
+            self.soft_limit_min_deg = min_deg;
+            self.soft_limit_max_deg = max_deg;
         }
 
         pub fn set_motion_mode(&mut self, mode: MotionMode) {
@@ -170,6 +195,9 @@ pub mod motion {
             nvs: &mut EspNvs<T>,
             wifi: &mut Wifi<'_>,
             formatted_time: String,
+            publish_mqtt: bool,
+            persist_nvs: bool,
+            allow_ota: bool,
         ) -> bool {
             self.update_position(location);
             log::info!("{},", clock.after_sunrise());
@@ -188,9 +216,44 @@ pub mod motion {
                     sec: clock.get_seconds(),
                 };
                 log::info!("Tracking in progress");
-                let angle_offset = sun.azimuth_in_deg() - (location as f64);
+                let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
+
+                // Soft limits (guardrail): clamp target heading to avoid mechanical cable wrap / hard stops.
+                // We only apply this in daytime tracking moves.
+                let target_raw = (location as f64) + angle_offset_raw;
+                let target_clamped = if self.soft_limits_enabled {
+                    let min = self.soft_limit_min_deg as f64;
+                    let max = self.soft_limit_max_deg as f64;
+                    if target_raw < min {
+                        log::warn!(
+                            "SOFT_LIMIT clamp: target_raw={:.2} < min={:.2} -> clamping",
+                            target_raw,
+                            min
+                        );
+                        min
+                    } else if target_raw > max {
+                        log::warn!(
+                            "SOFT_LIMIT clamp: target_raw={:.2} > max={:.2} -> clamping",
+                            target_raw,
+                            max
+                        );
+                        max
+                    } else {
+                        target_raw
+                    }
+                } else {
+                    target_raw
+                };
+
+                let angle_offset = target_clamped - (location as f64);
                 log::info!("Actual Location: {}", location);
-                log::info!("Angle Offset: {}", angle_offset);
+                log::info!(
+                    "Angle Offset: {} (raw_offset={} target_raw={} target_clamped={})",
+                    angle_offset,
+                    angle_offset_raw,
+                    target_raw,
+                    target_clamped
+                );
                 log::info!("Sun Angle: {}", sun.azimuth_in_deg());
                 // Single-path daytime tracking:
                 // If we're within ±5°, do nothing. Otherwise execute a movement based on offset.
@@ -219,10 +282,14 @@ pub mod motion {
                             formatted_time, 
                             location as f64 + angle_offset
                         );
-                match mqtt.publish("device1A/data", payload.as_bytes()) {
-                            Ok(_) => log::info!("Published data payload successfully"),
-                            Err(e) => log::error!("Failed to publish data payload: {:?}", e),
-                        }
+                if publish_mqtt {
+                    match mqtt.publish("device1A/data", payload.as_bytes()) {
+                        Ok(_) => log::info!("Published data payload successfully"),
+                        Err(e) => log::error!("Failed to publish data payload: {:?}", e),
+                    }
+                } else {
+                    log::info!("MQTT publish disabled: skipping tracking data payload publish");
+                }
                         return false;
             } 
             else {// Sunset Operation 
@@ -241,7 +308,7 @@ pub mod motion {
                             log::info!("Sunrise detected, exiting sleep loop");
                             break;
                         }
-                        if last_check.elapsed() >= check_interval {
+                        if allow_ota && last_check.elapsed() >= check_interval {
                             log::info!("2 hours elapsed, checking for OTA");
 
                             // Check to see if wifi is disconnected before OTA try
@@ -266,6 +333,9 @@ pub mod motion {
 
                             last_check = Instant::now(); // reset the timer
                             //break;
+                        } else if !allow_ota && last_check.elapsed() >= check_interval {
+                            log::info!("OTA disabled: skipping periodic OTA check");
+                            last_check = Instant::now();
                         }
                         log::info!("Still waiting for sunrise...");
                         std::thread::sleep(std::time::Duration::from_secs(600)); // Prevent busy waiting
@@ -282,16 +352,24 @@ pub mod motion {
                             // Publish + persist daily home error (ticks) if we captured it.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
-                                if let Err(e) = mqtt.publish("device1A/tower/home_error_ticks", payload.as_bytes()) {
-                                    log::error!("Failed to publish home_error_ticks: {:?}", e);
+                                if publish_mqtt {
+                                    if let Err(e) = mqtt.publish("device1A/tower/home_error_ticks", payload.as_bytes()) {
+                                        log::error!("Failed to publish home_error_ticks: {:?}", e);
+                                    } else {
+                                        log::info!("Published home_error_ticks={}", home_error_ticks);
+                                    }
                                 } else {
-                                    log::info!("Published home_error_ticks={}", home_error_ticks);
+                                    log::info!("MQTT publish disabled: skipping home_error_ticks publish");
                                 }
 
-                                if let Err(e) = nvs.set_i32("home_error_ticks", home_error_ticks) {
-                                    log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
+                                if persist_nvs {
+                                    if let Err(e) = nvs.set_i32("home_error_ticks", home_error_ticks) {
+                                        log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
+                                    } else {
+                                        log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
+                                    }
                                 } else {
-                                    log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
+                                    log::warn!("NVS persist disabled: skipping home_error_ticks store");
                                 }
                             } else {
                                 log::warn!("No home_error_ticks captured on this homing run");
@@ -300,8 +378,12 @@ pub mod motion {
                         false => {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
-                                if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
-                                    log::error!("Failed to publish critical error message: {:?}", e);
+                                if publish_mqtt {
+                                    if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
+                                        log::error!("Failed to publish critical error message: {:?}", e);
+                                    }
+                                } else {
+                                    log::error!("Critical failure: Limit switch failure! (MQTT disabled)");
                                 }
                                 thread::sleep(Duration::from_secs(900));// Loop every 15 minutes
                             }
