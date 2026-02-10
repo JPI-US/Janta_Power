@@ -2,7 +2,7 @@ use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::MotionMode;
 use semver::Version;
 
-use crate::state::SnapshotStore;
+use crate::infra::SnapshotStore;
 
 /// One “normal mode” tracking tick: call Motion's tracking logic and persist stable results.
 ///
@@ -17,6 +17,9 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     nvs: &mut EspNvs<T>,
     wifi: &mut wifi::wifi::Wifi<'_>,
     current_datetime: String,
+    publish_mqtt: bool,
+    persist_nvs: bool,
+    allow_ota: bool,
 ) -> motion::MoveOutcome {
     let tracking_done = motion.set_tower_position(
         calculation,
@@ -27,6 +30,9 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
         nvs,
         wifi,
         current_datetime,
+        publish_mqtt,
+        persist_nvs,
+        allow_ota,
     );
 
     // Persist only when a move actually completed successfully.
@@ -34,9 +40,10 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     match motion.take_last_move_outcome() {
         Some(motion::MoveOutcome::Completed) => {
             *actual_heading = motion.location();
-            SnapshotStore::new(nvs).save_heading(*actual_heading);
+            SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
             if motion.motion_mode() == MotionMode::EncoderGuarded {
-                SnapshotStore::new(nvs).save_encoder_snapshot(motion.encoder_ticks_adjusted());
+                SnapshotStore::new(nvs, persist_nvs)
+                    .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
             motion::MoveOutcome::Completed
         }

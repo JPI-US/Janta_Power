@@ -43,6 +43,8 @@ pub struct RecoverySwitches {
     pub verify_tol_deg: f32,
     pub stop_on_verify_fail: bool,
     pub stop_after: bool,
+    /// If true, temporarily disable stall detection while running recovery moves.
+    pub disable_stall_detection: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -96,12 +98,63 @@ pub struct RuntimeSwitches {
     pub tracking: TrackingSwitches,
     pub motion_mode: MotionModePolicy,
     pub encoder_recovery: EncoderRecoverySwitches,
+    pub guardrails: GuardrailsSwitches,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Switchboard {
     pub boot: BootSwitches,
     pub runtime: RuntimeSwitches,
+    pub effects: EffectsSwitches,
+    pub admin: AdminSwitches,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GuardrailsSwitches {
+    /// Stall detector in move execution (EncoderGuarded only).
+    pub stall_detection_enabled: bool,
+    /// Clamp tracking target heading into [soft_limit_min_deg, soft_limit_max_deg].
+    pub soft_limits_enabled: bool,
+    pub soft_limit_min_deg: f32,
+    pub soft_limit_max_deg: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct EffectsSwitches {
+    /// If false, suppress MQTT publishes across the app (best-effort).
+    pub publish_mqtt: bool,
+    /// If false, suppress NVS writes across the app (best-effort).
+    pub persist_nvs: bool,
+    /// If false, suppress OTA checks (best-effort).
+    pub allow_ota: bool,
+    /// If false, skip first-boot validation/rollback logic.
+    pub allow_boot_validation: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AdminTestsSwitches {
+    /// Basic motor movement sanity checks (open-loop).
+    pub motor_test: bool,
+    /// Encoder sanity checks (tick direction / tick change).
+    pub encoder_test: bool,
+    /// NVS read/write verification test.
+    pub persistence_test: bool,
+    /// WiFi + MQTT connectivity and publish test.
+    pub wifi_mqtt_test: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AdminSwitches {
+    /// If false, Admin mode will refuse to start (even if `ACTIVE_MODE=Admin`).
+    pub enabled: bool,
+    /// If true, run the recovery move sequence when Admin mode starts.
+    pub run_recovery_on_start: bool,
+    /// If true, run homing when Admin mode starts.
+    pub run_homing_on_start: bool,
+    /// Which test cases are enabled in Admin mode.
+    pub tests: AdminTestsSwitches,
+    /// If true, stop/idle after running startup actions/tests (do not enter normal tracking loop).
+    pub stop_after: bool,
 }
 
 // =========================
@@ -138,6 +191,7 @@ pub const fn normal() -> Switchboard {
                 verify_tol_deg: 100.0,
                 stop_on_verify_fail: false,
                 stop_after: true,
+                disable_stall_detection: false,
             },
             homing: BootHomingSwitches {
                 enabled: true,
@@ -157,6 +211,31 @@ pub const fn normal() -> Switchboard {
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Ccw,
             },
+            guardrails: GuardrailsSwitches {
+                stall_detection_enabled: true,
+                soft_limits_enabled: false,
+                // Set the numbers now for convenience; flip `soft_limits_enabled` when ready.
+                soft_limit_min_deg: 0.0,
+                soft_limit_max_deg: 285.0,
+            },
+        },
+        effects: EffectsSwitches {
+            publish_mqtt: true,
+            persist_nvs: true,
+            allow_ota: true,
+            allow_boot_validation: true,
+        },
+        admin: AdminSwitches {
+            enabled: false,
+            run_recovery_on_start: false,
+            run_homing_on_start: false,
+            tests: AdminTestsSwitches {
+                motor_test: false,
+                encoder_test: false,
+                persistence_test: false,
+                wifi_mqtt_test: false,
+            },
+            stop_after: true,
         },
     }
 }
@@ -172,6 +251,7 @@ pub const fn diagnostic() -> Switchboard {
                 verify_tol_deg: 100.0,
                 stop_on_verify_fail: true,
                 stop_after: true,
+                disable_stall_detection: true,
             },
             homing: BootHomingSwitches {
                 enabled: true,
@@ -191,6 +271,31 @@ pub const fn diagnostic() -> Switchboard {
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Ccw,
             },
+            guardrails: GuardrailsSwitches {
+                stall_detection_enabled: false,
+                soft_limits_enabled: false,
+                soft_limit_min_deg: 0.0,
+                soft_limit_max_deg: 285.0,
+            },
+        },
+        effects: EffectsSwitches {
+            // Diagnostics usually want to avoid touching flash, but still allow MQTT for tests.
+            publish_mqtt: true,
+            persist_nvs: false,
+            allow_ota: false,
+            allow_boot_validation: false,
+        },
+        admin: AdminSwitches {
+            enabled: true,
+            run_recovery_on_start: false,
+            run_homing_on_start: false,
+            tests: AdminTestsSwitches {
+                motor_test: true,
+                encoder_test: true,
+                persistence_test: true,
+                wifi_mqtt_test: true,
+            },
+            stop_after: true,
         },
     }
 }
