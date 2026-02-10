@@ -14,6 +14,13 @@ pub fn run(motion: &mut Motion<'_>, cfg: &RecoverySwitches) {
     let tol_ticks = motion.encoder_ticks_for_deg(cfg.verify_tol_deg.abs()).abs();
     let mut all_ok = true;
 
+    // Bench convenience: optionally disable stall detection for recovery moves.
+    let prev_stall = motion.stall_detection_enabled();
+    if cfg.disable_stall_detection {
+        warn!("RECOVERY: disabling stall detection for recovery moves");
+        motion.set_stall_detection_enabled(false);
+    }
+
     for (idx, mv) in cfg.moves.iter().enumerate() {
         let move_n = idx + 1;
         let signed_deg = mv.dir.apply_to_deg(mv.deg);
@@ -88,6 +95,11 @@ pub fn run(motion: &mut Motion<'_>, cfg: &RecoverySwitches) {
         all_ok,
         if cfg.stop_after { "STOPPING" } else { "continuing" }
     );
+
+    // Restore stall detection to previous state.
+    if cfg.disable_stall_detection {
+        motion.set_stall_detection_enabled(prev_stall);
+    }
 
     if cfg.stop_after {
         warn!("STOP_AFTER_RECOVERY_MOVE=true: idling after recovery move (no homing/tracking)");
