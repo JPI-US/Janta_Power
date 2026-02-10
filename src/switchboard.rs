@@ -292,8 +292,8 @@ pub const fn diagnostic() -> Switchboard {
             tests: AdminTestsSwitches {
                 motor_test: true,
                 encoder_test: true,
-                persistence_test: true,
-                wifi_mqtt_test: true,
+                persistence_test: false,
+                wifi_mqtt_test: false,
             },
             stop_after: true,
         },

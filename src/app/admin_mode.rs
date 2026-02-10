@@ -2,16 +2,24 @@ use std::time::Duration;
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::{error, info, warn};
-use motion::Motion;
+use motion::{calculate_steps, Motion, MoveOutcome};
 use network::mqtt::Mqtt;
 use semver::Version;
-use wifi::wifi::Wifi;
+use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
     app::boot_recovery,
     infra,
     switchboard::{AdminSwitches, BootHomingSwitches, Direction, RecoverySwitches},
 };
+
+const TOPIC_ADMIN: &str = "device1A/admin";
+const TOPIC_ADMIN_PERSIST: &str = "device1A/admin/persistence_test";
+const TOPIC_ADMIN_WIFI_MQTT: &str = "device1A/admin/wifi_mqtt_test";
+const TOPIC_ADMIN_MOTOR: &str = "device1A/admin/motor_test";
+const TOPIC_ADMIN_ENCODER: &str = "device1A/admin/encoder_test";
+
+const NVS_KEY_ADMIN_PERSIST_COUNTER: &str = "admin_persist_ctr";
 
 /// Admin mode entrypoint.
 ///
@@ -30,6 +38,7 @@ pub fn run<T: NvsPartitionId>(
     wifi: &mut Wifi<'_>,
     current_version: &Version,
     publish_mqtt: bool,
+    persist_nvs: bool,
 ) -> anyhow::Result<()> {
     if !cfg.enabled {
         error!("ADMIN_MODE refused: SWITCHBOARD.admin.enabled=false");
@@ -51,6 +60,10 @@ pub fn run<T: NvsPartitionId>(
         cfg.tests.encoder_test,
         cfg.tests.persistence_test,
         cfg.tests.wifi_mqtt_test
+    );
+    warn!(
+        "Admin effects: publish_mqtt={} persist_nvs={}",
+        publish_mqtt, persist_nvs
     );
 
     // Keep the device "alive" on telemetry even in admin mode.
@@ -78,20 +91,19 @@ pub fn run<T: NvsPartitionId>(
         warn!("ADMIN: homing OK");
     }
 
-    // Phase 2 test skeletons (no side-effects gating yet).
+    // ================= Tests =================
+    // Each test MUST respect effect toggles so Admin can be run safely.
     if cfg.tests.motor_test {
-        info!("ADMIN motor_test: enabled (Phase 2 skeleton; implement patterns in Phase 5)");
+        run_motor_test(motion, mqtt, publish_mqtt)?;
     }
     if cfg.tests.encoder_test {
-        info!("ADMIN encoder_test: enabled (Phase 2 skeleton; implement tick direction checks in Phase 5)");
+        run_encoder_test(motion, mqtt, publish_mqtt)?;
     }
     if cfg.tests.persistence_test {
-        info!("ADMIN persistence_test: enabled (Phase 2 skeleton; implement sentinel R/W in Phase 5)");
-        let _ = nvs; // placeholder to make intent explicit
+        run_persistence_test(nvs, mqtt, publish_mqtt, persist_nvs)?;
     }
     if cfg.tests.wifi_mqtt_test {
-        info!("ADMIN wifi_mqtt_test: enabled (Phase 2 skeleton; implement connectivity checks in Phase 5)");
-        let _ = wifi; // placeholder to make intent explicit
+        run_wifi_mqtt_test(wifi, mqtt, publish_mqtt)?;
     }
 
     if cfg.stop_after {
@@ -106,3 +118,132 @@ pub fn run<T: NvsPartitionId>(
     Ok(())
 }
 
+fn publish_if(mqtt: &mut Mqtt, enabled: bool, topic: &str, payload: &str) {
+    if !enabled {
+        info!("MQTT publish disabled: skipping {} publish (payload={})", topic, payload);
+        return;
+    }
+    if let Err(e) = mqtt.publish(topic, payload.as_bytes()) {
+        warn!("Failed to publish {}: {:?}", topic, e);
+    }
+}
+
+fn run_persistence_test<T: NvsPartitionId>(
+    nvs: &mut EspNvs<T>,
+    mqtt: &mut Mqtt,
+    publish_mqtt: bool,
+    persist_nvs: bool,
+) -> anyhow::Result<()> {
+    // This test is about NVS *writes*, so if persistence is disabled, we can only report "skipped".
+    let prev = nvs.get_u32(NVS_KEY_ADMIN_PERSIST_COUNTER)?.unwrap_or(0);
+
+    if !persist_nvs {
+        let msg = format!(
+            "PERSIST_TEST SKIP: persist_nvs=false (prev_ctr={})",
+            prev
+        );
+        warn!("{}", msg);
+        publish_if(mqtt, publish_mqtt, TOPIC_ADMIN_PERSIST, &msg);
+        return Ok(());
+    }
+
+    let next = prev.wrapping_add(1);
+    nvs.set_u32(NVS_KEY_ADMIN_PERSIST_COUNTER, next)?;
+    let readback = nvs.get_u32(NVS_KEY_ADMIN_PERSIST_COUNTER)?.unwrap_or(0);
+    let ok = readback == next;
+
+    let msg = format!(
+        "PERSIST_TEST {}: prev_ctr={} wrote_next={} readback={}",
+        if ok { "PASS" } else { "FAIL" },
+        prev,
+        next,
+        readback
+    );
+    if ok {
+        info!("{}", msg);
+    } else {
+        error!("{}", msg);
+    }
+    publish_if(mqtt, publish_mqtt, TOPIC_ADMIN_PERSIST, &msg);
+    Ok(())
+}
+
+fn run_wifi_mqtt_test(
+    wifi: &mut Wifi<'_>,
+    mqtt: &mut Mqtt,
+    publish_mqtt: bool,
+) -> anyhow::Result<()> {
+    let wifi_ok = matches!(wifi.state(), WifiState::Connected(_));
+    let mqtt_ok = mqtt.is_connected();
+
+    let msg = format!(
+        "WIFI_MQTT_TEST: wifi_ok={} mqtt_ok={} wifi_state={:?}",
+        wifi_ok,
+        mqtt_ok,
+        wifi.state()
+    );
+    if wifi_ok && mqtt_ok {
+        info!("{}", msg);
+    } else {
+        warn!("{}", msg);
+    }
+
+    publish_if(mqtt, publish_mqtt, TOPIC_ADMIN_WIFI_MQTT, &msg);
+    Ok(())
+}
+
+fn run_motor_test(motion: &mut Motion<'_>, mqtt: &mut Mqtt, publish_mqtt: bool) -> anyhow::Result<()> {
+    // Conservative movement: tiny jog CW then CCW.
+    const JOG_DEG: f32 = 8.0;
+
+    let steps_cw = calculate_steps(JOG_DEG);
+    let out1 = motion.move_by(steps_cw);
+    let steps_ccw = calculate_steps(-JOG_DEG);
+    let out2 = motion.move_by(steps_ccw);
+
+    let ok = out1 == MoveOutcome::Completed && out2 == MoveOutcome::Completed;
+    let msg = format!(
+        "MOTOR_TEST {}: jog_deg={} out_cw={:?} out_ccw={:?}",
+        if ok { "PASS" } else { "FAIL" },
+        JOG_DEG,
+        out1,
+        out2
+    );
+    if ok { info!("{}", msg); } else { warn!("{}", msg); }
+    publish_if(mqtt, publish_mqtt, TOPIC_ADMIN_MOTOR, &msg);
+    Ok(())
+}
+
+fn run_encoder_test(motion: &mut Motion<'_>, mqtt: &mut Mqtt, publish_mqtt: bool) -> anyhow::Result<()> {
+    // Tiny move and report encoder deltas. We don't enforce sign expectations yet (wiring can vary),
+    // but we DO assert "ticks changed" for a healthy encoder.
+    const JOG_DEG: f32 = 8.0;
+
+    let start = motion.encoder_ticks_adjusted();
+    let out_cw = motion.move_by(calculate_steps(JOG_DEG));
+    let mid = motion.encoder_ticks_adjusted();
+    let out_ccw = motion.move_by(calculate_steps(-JOG_DEG));
+    let end = motion.encoder_ticks_adjusted();
+
+    let cw_delta = mid - start;
+    let ccw_delta = end - mid;
+
+    let ticks_changed = cw_delta != 0 || ccw_delta != 0;
+    let ok = ticks_changed && out_cw == MoveOutcome::Completed && out_ccw == MoveOutcome::Completed;
+
+    let msg = format!(
+        "ENCODER_TEST {}: jog_deg={} out_cw={:?} cw_delta={} out_ccw={:?} ccw_delta={} (start={} mid={} end={})",
+        if ok { "PASS" } else { "FAIL" },
+        JOG_DEG,
+        out_cw,
+        cw_delta,
+        out_ccw,
+        ccw_delta,
+        start,
+        mid,
+        end
+    );
+    if ok { info!("{}", msg); } else { warn!("{}", msg); }
+    publish_if(mqtt, publish_mqtt, TOPIC_ADMIN_ENCODER, &msg);
+    Ok(())
+}

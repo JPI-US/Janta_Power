@@ -76,7 +76,7 @@ impl Motion<'_> {
                     // so we use a smaller budget to detect "motor stepping but encoder not moving".
                     //
                     // If you see false stalls due to slack/noise, increase to ~10k–20k.
-                    const MAX_STEPS_WITHOUT_ENC_CHANGE: i64 = 10_000;
+                    const MAX_STEPS_WITHOUT_ENC_CHANGE: i64 = 20_000;
 
                     let step_pos = self.motor.current_position();
                     let enc_pos = self.encoder_ticks_adjusted();

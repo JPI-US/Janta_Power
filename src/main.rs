@@ -81,7 +81,9 @@ fn main() -> anyhow::Result<()> {
 
     // Track last run mode to avoid trusting stale state after Admin/bench sessions.
     // Only meaningful when NVS persistence is enabled.
-    let last_run_normal = infra::SnapshotStore::new(&mut nvs, SWITCHBOARD.effects.persist_nvs)
+    // Safety flag: we ALWAYS persist this (even if `effects.persist_nvs=false`) so that
+    // a manual/admin session cannot accidentally leave Normal mode trusting stale heading/snapshot.
+    let last_run_normal = infra::SnapshotStore::new(&mut nvs, true)
         .load_last_run_normal_or_init(true);
     let trust_nvs_state = match ACTIVE_MODE {
         RunMode::Normal => last_run_normal,
@@ -94,8 +96,7 @@ fn main() -> anyhow::Result<()> {
 
     // If we start Admin mode and persistence is enabled, mark NVS state as untrusted for the next Normal boot.
     if ACTIVE_MODE == RunMode::Admin {
-        infra::SnapshotStore::new(&mut nvs, SWITCHBOARD.effects.persist_nvs)
-            .save_last_run_normal(false);
+        infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(false);
     }
 
     // Encoder pins (move them once; pass into Motion::new later)
@@ -426,6 +427,7 @@ fn main() -> anyhow::Result<()> {
             &mut wifi,
             &current_version,
             SWITCHBOARD.effects.publish_mqtt,
+            SWITCHBOARD.effects.persist_nvs,
         )?;
         // Admin runner may return if configured; if so, we still don't want to fall into normal mode by accident.
         return Ok(());
@@ -492,7 +494,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Mark this boot as Normal so next boot can trust NVS again (if persistence enabled).
-    infra::SnapshotStore::new(&mut nvs, SWITCHBOARD.effects.persist_nvs).save_last_run_normal(true);
+    infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
 
     // --- Encoder fault recovery ---
     // If we stall (encoder unplugged), pause normal tracking and periodically probe for recovery.
