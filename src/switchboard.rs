@@ -172,11 +172,11 @@ pub enum Profile {
 const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
     RecoveryMoveSpec {
         dir: Direction::Cw,
-        deg: 190.0,
+        deg: 10.0,
     },
     RecoveryMoveSpec {
         dir: Direction::Ccw,
-        deg: 180.0,
+        deg: 0.0,
     },
 ];
 
@@ -191,7 +191,7 @@ pub const fn normal() -> Switchboard {
                 verify_tol_deg: 100.0,
                 stop_on_verify_fail: false,
                 stop_after: true,
-                disable_stall_detection: false,
+                disable_stall_detection: true,
             },
             homing: BootHomingSwitches {
                 enabled: true,
