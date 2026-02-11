@@ -4,10 +4,14 @@ use clock::Clock;
 use log::*;
 use std::thread;
 
+#[path = "../config.rs"]
 mod config;
+#[path = "../switchboard.rs"]
 mod switchboard;
 mod infra;
 mod app;
+#[path = "../diagnostics/mod.rs"]
+mod diagnostics;
 
 // Provide __pender function for embassy_executor
 // This function is called by embassy_executor to wake tasks
@@ -41,7 +45,7 @@ use wifi::wifi::{Wifi, WifiState};
 
 use crate::switchboard::{Direction, MotionModePolicy, Profile, Switchboard};
 use crate::app::encoder_fault::EncoderFaultRecovery;
-use crate::app::admin_mode;
+use crate::diagnostics::{admin_mode, cmd_handler};
 
 // ================= Compile-time switchboard =================
 // Choose ONE profile here; everything else is defined in `src/switchboard.rs`.
@@ -210,6 +214,9 @@ fn main() -> anyhow::Result<()> {
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
+
+    // Initialize command handler (subscribe to command topic for runtime test execution)
+    cmd_handler::CommandHandler::init(&mut mqtt)?;
 
     // ======== Boot Validation ========    
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);
@@ -437,7 +444,7 @@ fn main() -> anyhow::Result<()> {
     // One-shot recovery move (bench / unstuck).
     // If we're near a hard stop, we can safely back off before attempting any homing search.
     if SWITCHBOARD.boot.recovery.enabled {
-        app::boot_recovery::run(&mut motion, &SWITCHBOARD.boot.recovery);
+        diagnostics::boot_recovery::run(&mut motion, &SWITCHBOARD.boot.recovery);
     }
 
     let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
@@ -563,6 +570,22 @@ fn main() -> anyhow::Result<()> {
             &current_version,
             SWITCHBOARD.effects.publish_mqtt,
         );
+
+        // Process incoming MQTT commands (non-blocking, returns immediately if no command)
+        if let Err(e) = cmd_handler::CommandHandler::process_one(
+            &mut mqtt,
+            &mut motion,
+            &mut nvs,
+            &mut wifi,
+            &current_version,
+            &SWITCHBOARD.admin,
+            &SWITCHBOARD.boot.recovery,
+            &SWITCHBOARD.boot.homing,
+            SWITCHBOARD.effects.publish_mqtt,
+            SWITCHBOARD.effects.persist_nvs,
+        ) {
+            warn!("Command processing error: {:?}", e);
+        }
         
         std::thread::sleep(Duration::from_secs(
             SWITCHBOARD.runtime.tracking.loop_sleep_secs,

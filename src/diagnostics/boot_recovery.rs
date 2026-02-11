@@ -108,4 +108,3 @@ pub fn run(motion: &mut Motion<'_>, cfg: &RecoverySwitches) {
         }
     }
 }
-

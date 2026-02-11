@@ -8,7 +8,7 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
-    app::boot_recovery,
+    diagnostics::boot_recovery,
     infra,
     switchboard::{AdminSwitches, BootHomingSwitches, Direction, RecoverySwitches},
 };
