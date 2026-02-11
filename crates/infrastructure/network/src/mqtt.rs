@@ -5,13 +5,14 @@ use esp_idf_svc::{
     EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
     tls::X509,
 };
-use std::{sync::{atomic::{AtomicBool, Ordering}, Arc}, thread};
+use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread};
 use std::ffi::CStr;
 use std::time::Duration;
 use std::collections::VecDeque;
 pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,
+    message_queue: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
 }
 
 const CA_CERT: &CStr = unsafe{
@@ -36,52 +37,45 @@ impl Mqtt {
 
         let connected = Arc::new(AtomicBool::new(false));
         let connected_clone = connected.clone();
+        let message_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let message_queue_clone = message_queue.clone();
 
-        let (mut client, mut connection) = EspMqttClient::new(
+        let (client, mut connection) = EspMqttClient::new(
             broker_url,
             &mqtt_config,
         )?;
 
-        info!("MQTT client created successfully!");
+        info!("MQTT client created successfully!"); 
 
         thread::spawn(move || {
-            let mut message_queue: VecDeque<(String, Vec<u8>)> = VecDeque::new();
-
             while let Ok(event) = connection.next() {
                 match event.payload() {
                     EventPayload::Connected(_) => {
                         info!("MQTT Connected");
                         connected_clone.store(true, Ordering::SeqCst);
-
-                        // publish inside thread if needed
-
-                        /* // Flush queued messages
-                        while let Some((topic, payload)) = message_queue.pop_front() {
-                            match client.publish(&topic, QoS::AtLeastOnce, false, &payload) {
-                                Ok(_) => info!("Queued message published successfully"),
-                                Err(e) => {
-                                    warn!("Failed to publish queued message: {:?}, putting back in queue", e);
-                                    message_queue.push_front((topic, payload));
-                                    break; // stop flushing for now
-                                }
-                            }
-
-                        } */
                     }
                     EventPayload::Disconnected => {
-                        warn!("MQTT Disconnected, will queue messages temporarily...");
-                        warn!("Retrying momentarilly...");
+                        warn!("MQTT Disconnected");
                         connected_clone.store(false, Ordering::SeqCst);
-                        // trigger reconnect
                     }
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
+                    EventPayload::Received { topic, data, .. } => {
+                        if let Some(topic_str) = topic {
+                            info!("MQTT Received: topic={}, payload_len={}", topic_str, data.len());
+                            if let Ok(mut queue) = message_queue_clone.lock() {
+                                queue.push_back((topic_str.to_string(), data.to_vec()));
+                            }
+                        } else {
+                            warn!("MQTT Received message with no topic");
+                        }
+                    }
                     EventPayload::Error(e) => error!("MQTT error: {:?}", e),
                     _ => {}
                 }
             }
         });
 
-        Ok(Self {client, connected})
+        Ok(Self {client, connected, message_queue})
     }
 
     // Expose the flag safely
@@ -89,7 +83,22 @@ impl Mqtt {
         self.connected.load(Ordering::SeqCst)
     }
 
+    /// Wait for MQTT connection to be established (with timeout)
+    pub fn wait_for_connection(&self, timeout_ms: u64) -> Result<()> {
+        let start = std::time::Instant::now();
+        while !self.connected.load(Ordering::SeqCst) {
+            if start.elapsed().as_millis() > timeout_ms as u128 {
+                return Err(anyhow::anyhow!("MQTT connection timeout after {}ms", timeout_ms));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+
     pub fn publish(&mut self, topic: &str, payload: &[u8]) -> Result<()> {
+        if !self.is_connected() {
+            return Err(anyhow::anyhow!("MQTT client not connected"));
+        }
         info!("Attempting to publish message to topic...");
         self.client.publish(topic, QoS::AtLeastOnce, false, payload)?;
         info!("Initial message published successfully!");
@@ -97,7 +106,20 @@ impl Mqtt {
     }
 
     pub fn subscribe(&mut self, topic: &str) -> Result<()> {
+        // Wait for connection before subscribing
+        self.wait_for_connection(10000)?; // 10 second timeout
+        info!("Subscribing to topic: {}", topic);
         self.client.subscribe(topic, QoS::AtMostOnce)?;
+        info!("Successfully subscribed to: {}", topic);
         Ok(())
+    }
+
+    /// Poll for received messages. Returns the next message if available.
+    pub fn try_receive(&self) -> Option<(String, Vec<u8>)> {
+        if let Ok(mut queue) = self.message_queue.lock() {
+            queue.pop_front()
+        } else {
+            None
+        }
     }
 }
