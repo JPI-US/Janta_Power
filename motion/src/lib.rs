@@ -21,8 +21,8 @@ pub mod motion {
     //
     // Keep these in one place so all step calculations stay consistent.
     pub(crate) const MICROSTEPS: f64 = 25_600.0;
-    pub(crate) const GEAR_REDUCTION: f64 = 50.0;
-    pub(crate) const SLEW_BEARING: f64 = 85.0;
+    pub(crate) const GEAR_REDUCTION: f64 = 1.0;
+    pub(crate) const SLEW_BEARING: f64 = 84.0;
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
     // If your mechanical CW/CCW is flipped vs software commands, toggle this.
@@ -32,8 +32,8 @@ pub mod motion {
     // Stepper driver tuning knobs (steps/s and steps/s^2).
     //
     // Conservative defaults for the NEMA42 + PST2822PH combo based on your bench test.
-    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 43_000.0;
-    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 20_000;
+    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 5_000.0;
+    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 200;
 
     #[derive(PartialEq, Copy, Clone)]
     pub enum MotionMode {

@@ -18,6 +18,10 @@ impl Motion<'_> {
     }
 
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {
+        // Turn relay ON before starting motor movement
+        let _ = self.relay.set_high();
+        log::info!("Relay ON - Starting motor movement");
+
         // Reset stall detector baseline for this move so we don't accidentally compare
         // against stale values from a previous run.
         let now = Instant::now();
@@ -30,11 +34,20 @@ impl Motion<'_> {
         let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
         self.motor.move_by(signed_steps);
         let outcome = self.run();
+        
+        // Turn relay OFF after movement completes or aborts
+        let _ = self.relay.set_low();
+        log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
+        
         self.last_move_outcome = Some(outcome);
         outcome
     }
 
     pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
+        // Turn relay ON before starting motor movement
+        let _ = self.relay.set_high();
+        log::info!("Relay ON - Starting motor movement (ticks)");
+
         let now = Instant::now();
         self.stall_last_check = now;
         self.stall_step_pos_at_last_enc_change = self.motor.current_position();
@@ -45,6 +58,11 @@ impl Motion<'_> {
         let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
         self.motor.move_by(signed_steps);
         let outcome = self.run();
+        
+        // Turn relay OFF after movement completes or aborts
+        let _ = self.relay.set_low();
+        log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
+        
         self.last_move_outcome = Some(outcome);
         outcome
     }
@@ -61,6 +79,7 @@ impl Motion<'_> {
                     log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos); // hard stop
+                    let _ = self.relay.set_low(); // Turn relay OFF on abort
                     return MoveOutcome::AbortedPowerMissing;
                 }
 
@@ -111,6 +130,7 @@ impl Motion<'_> {
                         log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos); // hard stop
+                        let _ = self.relay.set_low(); // Turn relay OFF on stall abort
                         return MoveOutcome::AbortedStall;
                     }
 
