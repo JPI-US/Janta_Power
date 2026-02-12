@@ -2,10 +2,9 @@
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MoveOutcome};
+use super::{Motion, MoveOutcome, ENC_TICKS_PER_REV};
 
-// Encoder calibration (output shaft): 348,323 ticks per full revolution.
-const ENC_TICKS_PER_REV: f32 = 348_323.0;
+// Encoder calibration (output shaft): loaded from .env file at compile time.
 const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
 
 impl Motion<'_> {

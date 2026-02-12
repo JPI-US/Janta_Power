@@ -17,23 +17,14 @@ pub mod motion {
     mod homing;
     mod move_exec;
 
+    // Include auto-generated constants from .env file
+    include!(concat!(env!("OUT_DIR"), "/constants.rs"));
+
     // Motor movement constants.
     //
+    // Constants are now loaded from .env file at compile time.
     // Keep these in one place so all step calculations stay consistent.
-    pub(crate) const MICROSTEPS: f64 = 25_600.0;
-    pub(crate) const GEAR_REDUCTION: f64 = 1.0;
-    pub(crate) const SLEW_BEARING: f64 = 84.0;
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
-
-    // If your mechanical CW/CCW is flipped vs software commands, toggle this.
-    // This inverts the sign of *all* step movements right before they are sent to the driver.
-    pub(crate) const INVERT_MOTOR_DIRECTION: bool = true;
-
-    // Stepper driver tuning knobs (steps/s and steps/s^2).
-    //
-    // Conservative defaults for the NEMA42 + PST2822PH combo based on your bench test.
-    pub(crate) const DEFAULT_MAX_SPEED_STEPS_PER_S: f32 = 5_000.0;
-    pub(crate) const DEFAULT_ACCEL_STEPS_PER_S2: u16 = 200;
 
     #[derive(PartialEq, Copy, Clone)]
     pub enum MotionMode {
@@ -210,7 +201,7 @@ pub mod motion {
                     doy: clock.get_day() as u16,
                     long: clock.get_longitude() as f32,
                     lat: clock.get_latitude() as f32,
-                    timezone: -5.0,
+                    timezone: TIMEZONE_OFFSET_HOURS,
                     hour: clock.get_hour(),
                     min: clock.get_minutes(),
                     sec: clock.get_seconds(),
@@ -256,14 +247,14 @@ pub mod motion {
                 );
                 log::info!("Sun Angle: {}", sun.azimuth_in_deg());
                 // Single-path daytime tracking:
-                // If we're within ±5°, do nothing. Otherwise execute a movement based on offset.
-                if angle_offset.abs() <= 5.0 {
+                // If we're within deadband, do nothing. Otherwise execute a movement based on offset.
+                if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     let _ = self.relay.set_low().unwrap_or_default();
                     return true;
                 }
 
                 self.relay.set_high().unwrap_or_default();
-                log::info!("Tracking move (|offset| > 5°)");
+                log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                         log::info!("Steps Needed: {}", steps as i64);
                 let move_outcome = self.move_by(steps as i64);
@@ -293,7 +284,7 @@ pub mod motion {
                         return false;
             } 
             else {// Sunset Operation 
-                if location == 90.0 {
+                if (location - HOME_HEADING_DEG).abs() < 0.01 {
                     log::info!("Already reached sleep position");
                     // Ensure encoder ticks are truly 0 at home while we sleep.
                     self.force_zero_if_limit_switch_pressed();

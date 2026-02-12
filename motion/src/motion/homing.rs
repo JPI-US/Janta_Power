@@ -73,9 +73,10 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
+        use super::HOME_HEADING_DEG;
         if self.lmsw.is_low() {
-            log::info!("Found Limit Switch, Heading : 90");
-            self.update_position(90.0);
+            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
+            self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
             return true;
         }
@@ -95,8 +96,8 @@ impl Motion<'_> {
 
         self.relay.set_low().unwrap_or_default();
         if max_steps > 0 {
-            log::info!("Found Limit Switch, Heading : 90");
-            self.update_position(90.0);
+            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
+            self.update_position(HOME_HEADING_DEG);
             self.relay.set_low().unwrap_or_default();
             self.force_zero_if_limit_switch_pressed();
             return true;
@@ -106,8 +107,9 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
+        use super::HOME_HEADING_DEG;
         if self.lmsw.is_low() {
-            self.update_position(90.0);
+            self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
             return true;
         }
@@ -128,7 +130,7 @@ impl Motion<'_> {
         self.relay.set_low().unwrap_or_default();
 
         if max_steps < 0 {
-            self.update_position(90.0);
+            self.update_position(HOME_HEADING_DEG);
             self.relay.set_low().unwrap_or_default();
             self.force_zero_if_limit_switch_pressed();
             return true;

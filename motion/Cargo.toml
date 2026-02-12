@@ -21,4 +21,5 @@ ota = { path = "../crates/infrastructure/ota" }
 wifi = { path = "../crates/infrastructure/wifi" }
 quadrature-encoder = { version = "0.2.1", default-features = false }
 
-
+[build-dependencies]
+dotenv = "0.15"

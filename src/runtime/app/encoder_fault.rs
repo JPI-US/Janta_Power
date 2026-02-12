@@ -7,12 +7,11 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
+    constants::HOME_HEADING_DEG,
     infra,
     infra::SnapshotStore,
     switchboard::{Direction, EncoderRecoverySwitches},
 };
-
-const HOME_HEADING_DEG: f32 = 90.0;
 
 pub struct EncoderFaultRecovery {
     active: bool,
