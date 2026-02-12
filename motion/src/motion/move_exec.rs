@@ -2,7 +2,7 @@
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION};
+use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -89,13 +89,12 @@ impl Motion<'_> {
                     && self.stall_detection_enabled
                     && self.stall_last_check.elapsed() >= Duration::from_millis(250)
                 {
-                    // Stall threshold (no gearbox):
+                    // Stall threshold: loaded from .env file at compile time.
                     // Previously this was tuned for a drivetrain where encoder ticks could take ~20k+ steps
                     // to change. With the 50:1 gearbox removed, encoder ticks should change *much sooner*,
                     // so we use a smaller budget to detect "motor stepping but encoder not moving".
                     //
-                    // If you see false stalls due to slack/noise, increase to ~10k–20k.
-                    const MAX_STEPS_WITHOUT_ENC_CHANGE: i64 = 20_000;
+                    // If you see false stalls due to slack/noise, increase the value in .env file.
 
                     let step_pos = self.motor.current_position();
                     let enc_pos = self.encoder_ticks_adjusted();
