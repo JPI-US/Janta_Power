@@ -103,6 +103,7 @@ impl CommandHandler {
                     admin_cfg,
                     recovery_cfg,
                     homing_cfg,
+                    config_manager,
                     publish_mqtt,
                     persist_nvs,
                 )?;
@@ -144,6 +145,7 @@ impl CommandHandler {
         admin_cfg: &AdminSwitches,
         recovery_cfg: &RecoverySwitches,
         homing_cfg: &BootHomingSwitches,
+        config_manager: &mut ConfigManager,
         publish_mqtt: bool,
         persist_nvs: bool,
     ) -> anyhow::Result<String> {
@@ -175,6 +177,7 @@ impl CommandHandler {
             mqtt,
             wifi,
             current_version,
+            config_manager,
             publish_mqtt,
             persist_nvs,
         ) {
