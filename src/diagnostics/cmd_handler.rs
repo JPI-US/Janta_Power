@@ -11,7 +11,9 @@ use semver::Version;
 use wifi::wifi::Wifi;
 
 use crate::diagnostics::admin_mode;
+use crate::config_manager::{ConfigManager, RuntimeMode};
 use crate::switchboard::{AdminSwitches, BootHomingSwitches, RecoverySwitches};
+use serde_json::Value;
 
 const TOPIC_CMD: &str = "device1A/admin/cmd";
 const TOPIC_CMD_RESP: &str = "device1A/admin/cmd/resp";
@@ -23,6 +25,14 @@ enum Command {
     RunTest { test: String },
     #[serde(rename = "get_status")]
     GetStatus,
+    #[serde(rename = "set_mode")]
+    SetMode { mode: String },
+    #[serde(rename = "set_config")]
+    SetConfig { key: String, value: Value },
+    #[serde(rename = "get_config")]
+    GetConfig { key: Option<String> },
+    #[serde(rename = "reset_config")]
+    ResetConfig,
 }
  
 pub struct CommandHandler;
@@ -45,6 +55,7 @@ impl CommandHandler {
         admin_cfg: &AdminSwitches,
         recovery_cfg: &RecoverySwitches,
         homing_cfg: &BootHomingSwitches,
+        config_manager: &mut ConfigManager,
         publish_mqtt: bool,
         persist_nvs: bool,
     ) -> anyhow::Result<bool> {
@@ -97,6 +108,22 @@ impl CommandHandler {
             Command::GetStatus => {
                 let status = Self::get_status(motion, mqtt, wifi);
                 Self::publish_result(mqtt, publish_mqtt, "get_status", "", status);
+            }
+            Command::SetMode { mode } => {
+                let result = Self::set_mode(mode, config_manager, nvs, persist_nvs)?;
+                Self::publish_result(mqtt, publish_mqtt, "set_mode", &mode, result);
+            }
+            Command::SetConfig { key, value } => {
+                let result = Self::set_config(&key, value, config_manager, nvs)?;
+                Self::publish_result(mqtt, publish_mqtt, "set_config", &key, result);
+            }
+            Command::GetConfig { key } => {
+                let result = Self::get_config(key.as_deref(), config_manager);
+                Self::publish_result(mqtt, publish_mqtt, "get_config", key.as_deref().unwrap_or("all"), result);
+            }
+            Command::ResetConfig => {
+                let result = Self::reset_config(config_manager, nvs)?;
+                Self::publish_result(mqtt, publish_mqtt, "reset_config", "", result);
             }
         }
 
@@ -180,5 +207,53 @@ impl CommandHandler {
         if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
             warn!("Failed to publish error: {:?}", e);
         }
+    }
+
+    fn set_mode<T: NvsPartitionId>(
+        mode_str: String,
+        config_manager: &mut ConfigManager,
+        nvs: &mut EspNvs<T>,
+        persist_nvs: bool,
+    ) -> anyhow::Result<String> {
+        let mode = RuntimeMode::from_str(&mode_str)
+            .ok_or_else(|| anyhow::anyhow!("Invalid mode: {}. Must be 'admin' or 'normal'", mode_str))?;
+        
+        config_manager.set_runtime_mode(mode, nvs)?;
+        
+        Ok(format!("Runtime mode set to: {}", mode.as_str()))
+    }
+
+    fn set_config<T: NvsPartitionId>(
+        key: &str,
+        value: Value,
+        config_manager: &mut ConfigManager,
+        nvs: &mut EspNvs<T>,
+    ) -> anyhow::Result<String> {
+        config_manager.set_runtime(key, value, nvs)?;
+        Ok(format!("Config '{}' updated", key))
+    }
+
+    fn get_config(key: Option<&str>, config_manager: &ConfigManager) -> String {
+        match key {
+            Some(k) => {
+                match config_manager.get(k) {
+                    Some(val) => format!(r#"{{"key":"{}","value":{}}}"#, k, serde_json::to_string(&val).unwrap_or_default()),
+                    None => format!(r#"{{"key":"{}","value":null,"note":"No override found, using .env/default"}}"#, k),
+                }
+            }
+            None => {
+                // Return all overrides
+                let overrides = config_manager.get_all_overrides();
+                serde_json::to_string(overrides).unwrap_or_else(|_| "{}".to_string())
+            }
+        }
+    }
+
+    fn reset_config<T: NvsPartitionId>(
+        config_manager: &mut ConfigManager,
+        nvs: &mut EspNvs<T>,
+    ) -> anyhow::Result<String> {
+        config_manager.reset_to_defaults(nvs)?;
+        Ok("All runtime config overrides cleared".to_string())
     }
 }
