@@ -440,6 +440,7 @@ fn main() -> anyhow::Result<()> {
             &mut config_manager,
             switchboard.effects.publish_mqtt,
             switchboard.effects.persist_nvs,
+            false, // bypass_enabled_check: false for full Admin mode at boot
         )?;
         // Admin mode handles its own loop; exit here to prevent falling into Normal mode
         return Ok(());
