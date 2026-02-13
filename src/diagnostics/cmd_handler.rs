@@ -168,6 +168,8 @@ impl CommandHandler {
         }
 
         // Run the test via admin_mode (reuse existing test functions).
+        // Pass bypass_enabled_check=true to allow running tests from Normal mode
+        // without requiring switchboard.admin.enabled=true
         match admin_mode::run(
             &test_cfg,
             motion,
@@ -180,6 +182,7 @@ impl CommandHandler {
             config_manager,
             publish_mqtt,
             persist_nvs,
+            true, // bypass_enabled_check: allow running from Normal mode
         ) {
             Ok(_) => Ok(format!("Test '{}' completed", test_name)),
             Err(e) => Ok(format!("Test '{}' failed: {}", test_name, e)),

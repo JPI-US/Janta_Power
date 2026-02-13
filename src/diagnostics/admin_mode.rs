@@ -25,7 +25,11 @@ const NVS_KEY_ADMIN_PERSIST_COUNTER: &str = "admin_persist_ctr";
 ///
 /// Intent:
 /// - Centralize "bench / diagnostics / manual" behavior behind ONE call from `main.rs`.
-/// - Make it easy to turn on/off without hunting through normal runtime code paths.--------------------------------------------------
+/// - Make it easy to turn on/off without hunting through normal runtime code paths.
+///
+/// # Parameters
+/// - `bypass_enabled_check`: If true, skip the `cfg.enabled` check. Used when running tests
+///   from Normal mode via MQTT commands (temporary admin mode).
 pub fn run<T: NvsPartitionId>(
     cfg: &AdminSwitches,
     motion: &mut Motion<'_>,
@@ -38,8 +42,9 @@ pub fn run<T: NvsPartitionId>(
     config_manager: &mut ConfigManager,
     publish_mqtt: bool,
     persist_nvs: bool,
+    bypass_enabled_check: bool,
 ) -> anyhow::Result<()> {
-    if !cfg.enabled {
+    if !bypass_enabled_check && !cfg.enabled {
         error!("ADMIN_MODE refused: SWITCHBOARD.admin.enabled=false");
         infra::Telemetry::critical_failure_loop(
             mqtt,
@@ -48,7 +53,11 @@ pub fn run<T: NvsPartitionId>(
         );
     }
 
-    warn!("================ ADMIN MODE ================");
+    if bypass_enabled_check {
+        info!("================ TEMPORARY ADMIN MODE (from Normal mode) ================");
+    } else {
+        warn!("================ ADMIN MODE ================");
+    }
     warn!(
         "Admin switches: run_recovery_on_start={} run_homing_on_start={} stop_after={}",
         cfg.run_recovery_on_start, cfg.run_homing_on_start, cfg.stop_after
