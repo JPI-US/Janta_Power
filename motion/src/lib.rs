@@ -275,10 +275,10 @@ pub mod motion {
                         );
                 if publish_mqtt {
                     match mqtt.publish("device1A/data", payload.as_bytes()) {
-                        Ok(_) => log::info!("Published data payload successfully"),
-                        Err(e) => log::error!("Failed to publish data payload: {:?}", e),
-                    }
-                } else {
+                            Ok(_) => log::info!("Published data payload successfully"),
+                            Err(e) => log::error!("Failed to publish data payload: {:?}", e),
+                        }
+                        } else {
                     log::info!("MQTT publish disabled: skipping tracking data payload publish");
                 }
                         return false;
@@ -370,8 +370,8 @@ pub mod motion {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
-                                        log::error!("Failed to publish critical error message: {:?}", e);
+                                if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
+                                    log::error!("Failed to publish critical error message: {:?}", e);
                                     }
                                 } else {
                                     log::error!("Critical failure: Limit switch failure! (MQTT disabled)");

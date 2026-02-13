@@ -47,7 +47,7 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::switchboard::{Direction, MotionModePolicy, Profile, Switchboard};
+use crate::switchboard::{Direction, MotionModePolicy};
 use crate::app::encoder_fault::EncoderFaultRecovery;
 use crate::diagnostics::{admin_mode, cmd_handler};
 use crate::constants::{get_active_profile, get_active_mode, RunMode};

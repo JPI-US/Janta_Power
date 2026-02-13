@@ -110,8 +110,9 @@ impl CommandHandler {
                 Self::publish_result(mqtt, publish_mqtt, "get_status", "", status);
             }
             Command::SetMode { mode } => {
-                let result = Self::set_mode(mode, config_manager, nvs, persist_nvs)?;
-                Self::publish_result(mqtt, publish_mqtt, "set_mode", &mode, result);
+                let mode_clone = mode.clone();
+                let result = Self::set_mode(mode, config_manager, nvs)?;
+                Self::publish_result(mqtt, publish_mqtt, "set_mode", &mode_clone, result);
             }
             Command::SetConfig { key, value } => {
                 let result = Self::set_config(&key, value, config_manager, nvs)?;
@@ -213,7 +214,6 @@ impl CommandHandler {
         mode_str: String,
         config_manager: &mut ConfigManager,
         nvs: &mut EspNvs<T>,
-        persist_nvs: bool,
     ) -> anyhow::Result<String> {
         let mode = RuntimeMode::from_str(&mode_str)
             .ok_or_else(|| anyhow::anyhow!("Invalid mode: {}. Must be 'admin' or 'normal'", mode_str))?;
