@@ -597,6 +597,7 @@ fn main() -> anyhow::Result<()> {
                 &switchboard.boot.recovery,
                 &switchboard.boot.homing,
                 &mut config_manager,
+                &mut actual_heading, // Pass actual_heading so tests can update it after re-homing
                 switchboard.effects.publish_mqtt,
                 switchboard.effects.persist_nvs,
             ) {
