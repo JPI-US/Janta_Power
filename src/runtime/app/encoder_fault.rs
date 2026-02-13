@@ -27,7 +27,8 @@ impl EncoderFaultRecovery {
     }
 
     pub fn on_move_outcome(&mut self, outcome: MoveOutcome, cfg: &EncoderRecoverySwitches) {
-        if outcome == MoveOutcome::AbortedStall {
+        // Both stall and overshoot indicate encoder issues - trigger recovery
+        if outcome == MoveOutcome::AbortedStall || outcome == MoveOutcome::AbortedOvershoot {
             self.active = true;
             self.next_probe_at = Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
         }

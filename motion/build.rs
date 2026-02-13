@@ -54,6 +54,7 @@ fn generate_constants() {
     // Stall Detection
     constants.push_str("// Stall Detection\n");
     constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "i64"));
+    constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "800", "i64"));
     constants.push_str("\n");
     
     // Tracking Constants
