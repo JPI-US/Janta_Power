@@ -116,6 +116,8 @@ pub fn run<T: NvsPartitionId>(
 
     if cfg.stop_after {
         warn!("ADMIN: stop_after=true; idling here (processing MQTT commands).");
+        // In Admin mode idle loop, we don't track heading, but process_one needs it for tests
+        let mut dummy_heading = motion.location();
         loop {
             // Process incoming MQTT commands (non-blocking, processes all queued commands)
             let mut commands_processed = 0;
@@ -130,6 +132,7 @@ pub fn run<T: NvsPartitionId>(
                     recovery_cfg,
                     homing_cfg,
                     config_manager,
+                    &mut dummy_heading, // Dummy heading for Admin mode (not used for tracking)
                     publish_mqtt,
                     persist_nvs,
                 ) {
