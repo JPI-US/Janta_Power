@@ -39,6 +39,7 @@ pub mod motion {
         Completed,
         AbortedPowerMissing,
         AbortedStall,
+        AbortedOvershoot,
     }
 
     pub fn calculate_steps(offset_deg: f32) -> i64 {
@@ -76,6 +77,10 @@ pub mod motion {
         stall_last_enc_ticks_seen: i32,
         stall_reported: bool,
         stall_consecutive: u8,
+
+        // Encoder overshoot protection state (EncoderGuarded mode only).
+        overshoot_enc_start: Option<i32>,
+        overshoot_expected_ticks: Option<i64>,
 
         // Report last attempted move outcome (read once via `take_last_move_outcome`).
         last_move_outcome: Option<MoveOutcome>,
@@ -127,6 +132,9 @@ pub mod motion {
                 stall_last_enc_ticks_seen: 0,
                 stall_reported: false,
                 stall_consecutive: 0,
+
+                overshoot_enc_start: None,
+                overshoot_expected_ticks: None,
 
                 last_move_outcome: None,
 

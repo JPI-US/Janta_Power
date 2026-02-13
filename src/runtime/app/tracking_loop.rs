@@ -47,7 +47,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             }
             motion::MoveOutcome::Completed
         }
-        Some(outcome @ (motion::MoveOutcome::AbortedPowerMissing | motion::MoveOutcome::AbortedStall)) => {
+        Some(outcome @ (motion::MoveOutcome::AbortedPowerMissing | motion::MoveOutcome::AbortedStall | motion::MoveOutcome::AbortedOvershoot)) => {
             outcome
         }
         None => {

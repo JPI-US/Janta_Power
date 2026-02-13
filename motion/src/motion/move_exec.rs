@@ -31,6 +31,18 @@ impl Motion<'_> {
         self.stall_reported = false;
         self.stall_consecutive = 0;
 
+        // Initialize overshoot protection (EncoderGuarded mode only).
+        if self.motion_mode == MotionMode::EncoderGuarded {
+            use super::{ENC_TICKS_PER_REV, STEPS_PER_REV};
+            self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
+            // Calculate expected encoder ticks for this move: (steps / STEPS_PER_REV) * ENC_TICKS_PER_REV
+            let expected_ticks = ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
+            self.overshoot_expected_ticks = Some(expected_ticks);
+        } else {
+            self.overshoot_enc_start = None;
+            self.overshoot_expected_ticks = None;
+        }
+
         let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
         self.motor.move_by(signed_steps);
         let outcome = self.run();
@@ -54,6 +66,16 @@ impl Motion<'_> {
         self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
         self.stall_reported = false;
         self.stall_consecutive = 0;
+
+        // Initialize overshoot protection (EncoderGuarded mode only).
+        // For move_by_ticks, we use the location directly as expected ticks.
+        if self.motion_mode == MotionMode::EncoderGuarded {
+            self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
+            self.overshoot_expected_ticks = Some(location.abs());
+        } else {
+            self.overshoot_enc_start = None;
+            self.overshoot_expected_ticks = None;
+        }
 
         let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
         self.motor.move_by(signed_steps);
@@ -136,6 +158,37 @@ impl Motion<'_> {
                     self.stall_last_check = Instant::now();
                 }
 
+                // Encoder overshoot protection (EncoderGuarded mode only).
+                // Check if encoder moved more than expected + tolerance.
+                if self.motion_mode == MotionMode::EncoderGuarded
+                    && self.overshoot_enc_start.is_some()
+                    && self.overshoot_expected_ticks.is_some()
+                {
+                    use super::ENCODER_OVERSHOOT_TOLERANCE_TICKS;
+                    let enc_start = self.overshoot_enc_start.unwrap();
+                    let enc_current = self.encoder_ticks_adjusted();
+                    let enc_delta = (enc_current - enc_start).abs() as i64;
+                    let expected = self.overshoot_expected_ticks.unwrap();
+                    let tolerance = ENCODER_OVERSHOOT_TOLERANCE_TICKS;
+
+                    if enc_delta > expected + tolerance {
+                        log::error!(
+                            "MOVE_ABORT overshoot_detected: enc_delta={} expected={} tolerance={} (exceeded by {})",
+                            enc_delta,
+                            expected,
+                            tolerance,
+                            enc_delta - expected - tolerance
+                        );
+                        let pos = self.motor.current_position();
+                        self.motor.set_current_position(pos); // hard stop
+                        let _ = self.relay.set_low(); // Turn relay OFF on overshoot abort
+                        // Clear overshoot tracking
+                        self.overshoot_enc_start = None;
+                        self.overshoot_expected_ticks = None;
+                        return MoveOutcome::AbortedOvershoot;
+                    }
+                }
+
                 // Home-error capture + zeroing on limit switch.
                 self.poll_limit_switch_zeroing();
 
@@ -155,6 +208,9 @@ impl Motion<'_> {
                 break;
             }
         }
+        // Clear overshoot tracking on successful completion
+        self.overshoot_enc_start = None;
+        self.overshoot_expected_ticks = None;
         MoveOutcome::Completed
     }
 }
