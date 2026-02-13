@@ -8,12 +8,12 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
-    diagnostics::boot_recovery,
+    config_manager::ConfigManager,
+    diagnostics::{boot_recovery, cmd_handler},
     infra,
     switchboard::{AdminSwitches, BootHomingSwitches, Direction, RecoverySwitches},
 };
 
-const TOPIC_ADMIN: &str = "device1A/admin";
 const TOPIC_ADMIN_PERSIST: &str = "device1A/admin/persistence_test";
 const TOPIC_ADMIN_WIFI_MQTT: &str = "device1A/admin/wifi_mqtt_test";
 const TOPIC_ADMIN_MOTOR: &str = "device1A/admin/motor_test";
@@ -25,9 +25,7 @@ const NVS_KEY_ADMIN_PERSIST_COUNTER: &str = "admin_persist_ctr";
 ///
 /// Intent:
 /// - Centralize "bench / diagnostics / manual" behavior behind ONE call from `main.rs`.
-/// - Make it easy to turn on/off without hunting through normal runtime code paths.
-///
-/// Phase 2: this is a skeleton runner + switches. Test implementations can evolve later.
+/// - Make it easy to turn on/off without hunting through normal runtime code paths.--------------------------------------------------
 pub fn run<T: NvsPartitionId>(
     cfg: &AdminSwitches,
     motion: &mut Motion<'_>,
@@ -37,6 +35,7 @@ pub fn run<T: NvsPartitionId>(
     mqtt: &mut Mqtt,
     wifi: &mut Wifi<'_>,
     current_version: &Version,
+    config_manager: &mut ConfigManager,
     publish_mqtt: bool,
     persist_nvs: bool,
 ) -> anyhow::Result<()> {
@@ -107,8 +106,43 @@ pub fn run<T: NvsPartitionId>(
     }
 
     if cfg.stop_after {
-        warn!("ADMIN: stop_after=true; idling here (no tracking loop).");
+        warn!("ADMIN: stop_after=true; idling here (processing MQTT commands).");
         loop {
+            // Process incoming MQTT commands (non-blocking, processes all queued commands)
+            let mut commands_processed = 0;
+            while commands_processed < 10 {
+                match cmd_handler::CommandHandler::process_one(
+                    mqtt,
+                    motion,
+                    nvs,
+                    wifi,
+                    current_version,
+                    cfg,
+                    recovery_cfg,
+                    homing_cfg,
+                    config_manager,
+                    publish_mqtt,
+                    persist_nvs,
+                ) {
+                    Ok(true) => {
+                        commands_processed += 1;
+                        // Continue processing more commands
+                    }
+                    Ok(false) => {
+                        // No more commands available
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("Command processing error in admin mode: {:?}", e);
+                        break; // Stop on error to avoid infinite loop
+                    }
+                }
+            }
+            if commands_processed > 0 {
+                info!("Admin mode: Processed {} MQTT command(s)", commands_processed);
+            }
+            
+            // Publish telemetry and sleep
             infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
             std::thread::sleep(Duration::from_secs(60));
         }

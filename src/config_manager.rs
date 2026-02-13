@@ -4,7 +4,7 @@
 // Runtime overrides can be persisted to NVS for persistence across reboots.
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use log::{error, info, warn};
+use log::{info, warn};
 use serde_json::Value;
 use std::collections::HashMap;
 
