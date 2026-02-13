@@ -175,8 +175,8 @@ fn main() -> anyhow::Result<()> {
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
     log::info!("Waiting for 20 seconds before connecting to wifi");
     thread::sleep(Duration::from_secs(20));
-    wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
-    info!("Current wifi state: {:?}", wifi.state());
+	wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
+	info!("Current wifi state: {:?}", wifi.state());
     if wifi.state() == WifiState::Disconnected {
         wifi.reconnect_if_disconnected()?;
     }
@@ -257,8 +257,8 @@ fn main() -> anyhow::Result<()> {
 
     
     // PHASE 4: FIRMWARE VERSION & OTA--------------------------------------------------
-    
-    
+
+
     let mut version_buf = [0u8; 32];
     const DEFAULT_VERSION: &str = "1.0.4";
     
