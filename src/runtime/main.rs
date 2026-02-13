@@ -10,6 +10,8 @@ mod config;
 mod switchboard;
 #[path = "../constants.rs"]
 mod constants;
+#[path = "../config_manager.rs"]
+mod config_manager;
 mod infra;
 mod app;
 #[path = "../diagnostics/mod.rs"]
@@ -49,13 +51,14 @@ use crate::switchboard::{Direction, MotionModePolicy, Profile, Switchboard};
 use crate::app::encoder_fault::EncoderFaultRecovery;
 use crate::diagnostics::{admin_mode, cmd_handler};
 use crate::constants::{get_active_profile, get_active_mode, RunMode};
+use config_manager::{ConfigManager, RuntimeMode};
 
 fn main() -> anyhow::Result<()> {
     // ================= Initialize from .env constants =================
     // Profile and mode are selected from .env file at compile time
     // Values are read from .env and converted to enums at runtime
     let active_profile = get_active_profile();
-    let active_mode = get_active_mode();
+    let compile_time_mode = get_active_mode();
     let switchboard = switchboard::active(active_profile);
     // Required for ESP-IDF patches
     esp_idf_svc::sys::link_patches();
@@ -74,6 +77,20 @@ fn main() -> anyhow::Result<()> {
         }
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
+
+    // Initialize runtime configuration manager
+    let mut config_manager = ConfigManager::new(&mut nvs, switchboard.effects.persist_nvs);
+    
+    // Determine active mode: runtime override > compile-time .env
+    let runtime_mode = config_manager.get_runtime_mode(&mut nvs);
+    let active_mode = match runtime_mode {
+        RuntimeMode::Admin => RunMode::Admin,
+        RuntimeMode::Normal => compile_time_mode, // Use compile-time if runtime not set
+    };
+    info!(
+        "Mode: compile_time={:?}, runtime={:?}, active={:?}",
+        compile_time_mode, runtime_mode, active_mode
+    );
 
     // Track last run mode to avoid trusting stale state after Admin/bench sessions.
     // Only meaningful when NVS persistence is enabled.
@@ -575,10 +592,22 @@ fn main() -> anyhow::Result<()> {
             &switchboard.admin,
             &switchboard.boot.recovery,
             &switchboard.boot.homing,
+            &mut config_manager,
             switchboard.effects.publish_mqtt,
             switchboard.effects.persist_nvs,
         ) {
             warn!("Command processing error: {:?}", e);
+        }
+
+        // Check if runtime mode has changed (e.g., via MQTT set_mode command)
+        // If mode changed to Admin, we should switch immediately (requires restart/reboot in embedded)
+        // For now, we log it and it will take effect on next boot
+        let current_runtime_mode = config_manager.get_runtime_mode(&mut nvs);
+        let should_be_admin = current_runtime_mode == RuntimeMode::Admin;
+        if should_be_admin && active_mode == RunMode::Normal {
+            warn!("Runtime mode changed to Admin via MQTT. Restart required for mode change to take effect.");
+            // In a real embedded system, you might trigger a reboot here
+            // For now, we continue in Normal mode until next boot
         }
         
         std::thread::sleep(Duration::from_secs(
