@@ -582,21 +582,39 @@ fn main() -> anyhow::Result<()> {
             switchboard.effects.publish_mqtt,
         );
 
-        // Process incoming MQTT commands (non-blocking, returns immediately if no command)
-        if let Err(e) = cmd_handler::CommandHandler::process_one(
-            &mut mqtt,
-            &mut motion,
-            &mut nvs,
-            &mut wifi,
-            &current_version,
-            &switchboard.admin,
-            &switchboard.boot.recovery,
-            &switchboard.boot.homing,
-            &mut config_manager,
-            switchboard.effects.publish_mqtt,
-            switchboard.effects.persist_nvs,
-        ) {
-            warn!("Command processing error: {:?}", e);
+        // Process all incoming MQTT commands (non-blocking, processes all queued commands)
+        // Process up to 10 commands per iteration to avoid blocking too long
+        let mut commands_processed = 0;
+        while commands_processed < 10 {
+            match cmd_handler::CommandHandler::process_one(
+                &mut mqtt,
+                &mut motion,
+                &mut nvs,
+                &mut wifi,
+                &current_version,
+                &switchboard.admin,
+                &switchboard.boot.recovery,
+                &switchboard.boot.homing,
+                &mut config_manager,
+                switchboard.effects.publish_mqtt,
+                switchboard.effects.persist_nvs,
+            ) {
+                Ok(true) => {
+                    commands_processed += 1;
+                    // Continue processing more commands
+                }
+                Ok(false) => {
+                    // No more commands available
+                    break;
+                }
+                Err(e) => {
+                    warn!("Command processing error: {:?}", e);
+                    break; // Stop on error to avoid infinite loop
+                }
+            }
+        }
+        if commands_processed > 0 {
+            info!("Processed {} MQTT command(s) in this iteration", commands_processed);
         }
 
         // Check if runtime mode has changed (e.g., via MQTT set_mode command)

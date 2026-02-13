@@ -60,11 +60,14 @@ impl CommandHandler {
         persist_nvs: bool,
     ) -> anyhow::Result<bool> {
         let Some((topic, payload)) = mqtt.try_receive() else {
+            // No message available - this is normal, not an error
             return Ok(false);
         };
 
+        info!("CommandHandler: Received message on topic: {}", topic);
+        
         if topic != TOPIC_CMD {
-            warn!("Received message on unexpected topic: {}", topic);
+            warn!("Received message on unexpected topic: {} (expected: {})", topic, TOPIC_CMD);
             return Ok(false);
         }
 

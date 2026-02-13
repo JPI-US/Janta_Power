@@ -117,8 +117,13 @@ impl Mqtt {
     /// Poll for received messages. Returns the next message if available.
     pub fn try_receive(&self) -> Option<(String, Vec<u8>)> {
         if let Ok(mut queue) = self.message_queue.lock() {
+            let queue_len = queue.len();
+            if queue_len > 0 {
+                info!("MQTT queue: {} messages pending, popping one", queue_len);
+            }
             queue.pop_front()
         } else {
+            warn!("Failed to lock MQTT message queue");
             None
         }
     }
