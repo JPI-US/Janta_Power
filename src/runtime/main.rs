@@ -6,12 +6,8 @@ use std::thread;
 
 #[path = "../config.rs"]
 mod config;
-#[path = "../switchboard.rs"]
-mod switchboard;
 #[path = "../constants.rs"]
 mod constants;
-#[path = "../config_manager.rs"]
-mod config_manager;
 mod infra;
 mod app;
 #[path = "../diagnostics/mod.rs"]
@@ -45,19 +41,12 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::switchboard::{Direction, MotionModePolicy};
-use crate::app::encoder_fault::EncoderFaultRecovery;
-use crate::diagnostics::{admin_mode, cmd_handler};
-use crate::constants::{get_active_profile, get_active_mode, RunMode};
-use config_manager::{ConfigManager, RuntimeMode};
+use crate::app::encoder_fault::{EncoderFaultRecovery, Direction, EncoderRecoverySwitches};
+use crate::constants::RunMode;
 
 fn main() -> anyhow::Result<()> {
     
     // PHASE 1: INITIALIZATION--------------------------------------------------
-
-    let active_profile = get_active_profile();
-    let compile_time_mode = get_active_mode();
-    let switchboard = switchboard::active(active_profile);
     
     // Required for ESP-IDF patches
     esp_idf_svc::sys::link_patches();
@@ -79,35 +68,16 @@ fn main() -> anyhow::Result<()> {
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
 
-    // Initialize runtime configuration manager (handles MQTT-configurable overrides)
-    let mut config_manager = ConfigManager::new(&mut nvs, switchboard.effects.persist_nvs);
+    // Production deployment: Always Normal mode, no runtime mode switching
+    let active_mode = RunMode::Normal;
     
-    // This allows switching modes via MQTT commands
-    let runtime_mode = config_manager.get_runtime_mode(&mut nvs);
-    let active_mode = match runtime_mode {
-        RuntimeMode::Admin => RunMode::Admin,
-        RuntimeMode::Normal => compile_time_mode, // Use compile-time if runtime not set
-    };
-    info!(
-        "Mode: compile_time={:?}, runtime={:?}, active={:?}",
-        compile_time_mode, runtime_mode, active_mode
-    );
-
     let last_run_normal = infra::SnapshotStore::new(&mut nvs, true)
         .load_last_run_normal_or_init(true);
-    let trust_nvs_state = match active_mode {
-        RunMode::Normal => last_run_normal,  // Only trust NVS if last run was Normal
-        RunMode::Admin => false,             // Never trust NVS in Admin mode
-    };
+    let trust_nvs_state = last_run_normal;  // Always trust NVS in Normal mode
     info!(
-        "Last run normal={} -> trust_nvs_state={} (active_mode={:?})",
-        last_run_normal, trust_nvs_state, active_mode
+        "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
+        last_run_normal, trust_nvs_state
     );
-
-    // Admin mode was last = untrusted
-    if active_mode == RunMode::Admin {
-        infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(false);
-    }
 
     // Setup encoder pins
     let encoder_a = peripherals.pins.gpio47;
@@ -123,15 +93,17 @@ fn main() -> anyhow::Result<()> {
     // PHASE 2: NETWORK SETUP--------------------------------------------------
 
     use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS};
+    const PERSIST_NVS: bool = true;  // Always enabled in production
+    
     let mqtt_user = "device1A";
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("mqtt_user", mqtt_user){
             Ok(_) => info!("Mqtt username updated"),
             Err(e) => error!("Mqtt username not updated {:?}", e),
         };
     }
     let mqtt_pass= "device1A";
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("mqtt_pass", mqtt_pass){
             Ok(_) => info!("Mqtt password updated"),
             Err(e) => error!("Mqtt password not updated {:?}", e),
@@ -139,14 +111,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     let wifi_ssid = WIFI_SSID;
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("wifi_ssid", wifi_ssid){
             Ok(_) => info!("Wifi ssid updated"),
             Err(e) => error!("Wifi ssid not updated {:?}", e),
         };
     }
     let wifi_pass = WIFI_PASSWORD;
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("wifi_pass", wifi_pass){
             Ok(_) => info!("Wifi password updated"),
             Err(e) => error!("Wifi password not updated {:?}", e),
@@ -154,7 +126,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let offset_hours = TIMEZONE_OFFSET_HOURS as i32;
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_i32("offset_hours", offset_hours){
             Ok(_) => info!("Timezone offset has been updated"),
             Err(e) => error!("Timezone offset was not updated {:?}", e),
@@ -215,24 +187,24 @@ fn main() -> anyhow::Result<()> {
         &real_mqtt_pass,
     )?);
 
-    // Subscribe to command topic for remote control (admin mode, tests, config changes)
-    cmd_handler::CommandHandler::init(&mut mqtt)?;
-
     // PHASE 3: BOOT VALIDATION--------------------------------------------------
     
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);
 
+    const ALLOW_BOOT_VALIDATION: bool = true;  // Always enabled in production
+    const PUBLISH_MQTT: bool = true;  // Always enabled in production
+    
     // Run boot diagnostics (WiFi/MQTT connectivity check)
-    let boot_diagnostic_result = if switchboard.effects.allow_boot_validation {
-        boot_diagnostic(&mut wifi, &mut mqtt, switchboard.effects.publish_mqtt)
+    let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
+        boot_diagnostic(&mut wifi, &mut mqtt, PUBLISH_MQTT)
     } else {
-        info!("Boot validation disabled by switchboard");
+        info!("Boot validation disabled");
         true
     };
 
     // On first boot after OTA update, validate firmware before marking as valid
     // If validation fails, rollback to previous firmware version
-    if switchboard.effects.allow_boot_validation && first_boot == 1 {
+    if ALLOW_BOOT_VALIDATION && first_boot == 1 {
         info!("First boot, now performing boot diagnostics");
         let mut valid_ota = EspOta::new().expect("Failed to get OTA instance");
         let running_slot = valid_ota.get_running_slot();
@@ -263,7 +235,7 @@ fn main() -> anyhow::Result<()> {
     const DEFAULT_VERSION: &str = "1.0.4";
     
     // Store current firmware version in NVS
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         nvs.set_str("version", "1.0.4")?;
     }
 
@@ -274,14 +246,16 @@ fn main() -> anyhow::Result<()> {
         .transpose()?
         .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
 
-    // Publish firmware version to MQTT (if enabled)
+    const ALLOW_OTA: bool = true;  // Always enabled in production
+    
+    // Publish firmware version to MQTT
     infra::Telemetry::publish_firmware_version_if(
         &mut mqtt,
         &current_version,
-        switchboard.effects.publish_mqtt,
+        PUBLISH_MQTT,
     );
 
-    // Check for OTA updates (if enabled)
+    // Check for OTA updates
     let mut updater = OtaUpdater::new_ota(
         current_version.clone(),
         &mut mqtt,
@@ -289,18 +263,18 @@ fn main() -> anyhow::Result<()> {
         Some("device1A")
     ).expect("Failed to create OTA updater instance");
 
-    if switchboard.effects.allow_ota {
+    if ALLOW_OTA {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         updater.run_version_compare(&mut nvs)?;
     } else {
-        info!("OTA disabled by switchboard: skipping version compare");
+        info!("OTA disabled: skipping version compare");
     }
     
     // PHASE 5: MOTION INITIALIZATION--------------------------------------------------
     
     let tower_latitude: f64 = 32.797868;
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("tower_latitude", &tower_latitude.to_string()) {
             Ok(_) => info!("Tower latitude has been updated"),
             Err(e) => error!("Tower latitude was not updated {:?}", e),
@@ -308,7 +282,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let tower_longitude: f64 = -96.835597;
-    if switchboard.effects.persist_nvs {
+    if PERSIST_NVS {
         match nvs.set_str("tower_longitude", &tower_longitude.to_string()) {
             Ok(_) => info!("Tower longitude has been updated"),
             Err(e) => error!("Tower longitude was not updated {:?}", e),
@@ -356,25 +330,20 @@ fn main() -> anyhow::Result<()> {
     led.display_healthy();  // Show healthy LED status
     let _ = motion.run();   // Ensure motor driver is in a ready state
 
-    // Apply runtime guardrails (stall detection, soft limits)
-    motion.set_stall_detection_enabled(switchboard.runtime.guardrails.stall_detection_enabled);
+    // Apply runtime guardrails (stall detection, soft limits) - always enabled in production
+    use crate::constants::{SOFT_LIMIT_MIN_DEG, SOFT_LIMIT_MAX_DEG};
+    motion.set_stall_detection_enabled(true);
     motion.set_soft_limits(
-        switchboard.runtime.guardrails.soft_limits_enabled,
-        switchboard.runtime.guardrails.soft_limit_min_deg,
-        switchboard.runtime.guardrails.soft_limit_max_deg,
+        true,
+        SOFT_LIMIT_MIN_DEG,
+        SOFT_LIMIT_MAX_DEG,
     );
 
     const POWER_ON: bool = true;  // Motor power control (future: sense input)
 
-    // Select motion mode: StepperOnly (open-loop) vs EncoderGuarded (closed-loop)
-    // Mode can come from NVS (persisted) or be forced by switchboard
-    let motion_mode = match switchboard.runtime.motion_mode {
-        MotionModePolicy::FromNvsDefault(default) => {
-            infra::SnapshotStore::new(&mut nvs, switchboard.effects.persist_nvs)
-                .load_tracking_mode_or_init(default)
-        }
-        MotionModePolicy::Force(forced) => forced,
-    };
+    // Select motion mode: Load from NVS, default to EncoderGuarded
+    let motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+        .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
     motion.set_motion_mode(motion_mode);
     motion.set_motor_power_on(POWER_ON);
     info!(
@@ -388,20 +357,20 @@ fn main() -> anyhow::Result<()> {
     // PHASE 6: STATE RESTORATION--------------------------------------------------
     
     let mut actual_heading: f32 = if trust_nvs_state {
-        let h = infra::SnapshotStore::new(&mut nvs, switchboard.effects.persist_nvs)
+        let h = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
             .load_heading_or_init(90.0);
         info!("Restored heading from NVS: {}", h);
         h
     } else {
-        info!("Skipping heading restore: NVS state untrusted (last run was Admin)");
+        info!("Skipping heading restore: NVS state untrusted");
         90.0
     };
 
-    // Restore encoder adjusted ticks snapshot (version-gated) in L2 only.
+    // Restore encoder adjusted ticks snapshot (version-gated) in EncoderGuarded mode only.
     let mut restored_from_snapshot = false;
     if trust_nvs_state && motion_mode == MotionMode::EncoderGuarded {
         if let Some(enc_ticks_adj) =
-            infra::SnapshotStore::new(&mut nvs, switchboard.effects.persist_nvs)
+            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
                 .load_encoder_snapshot()
         {
             // Choose the zero offset so that: adjusted = raw - offset == enc_ticks_adj
@@ -415,7 +384,7 @@ fn main() -> anyhow::Result<()> {
         }
     } else {
         if !trust_nvs_state {
-            info!("Skipping encoder snapshot restore: NVS state untrusted (last run was Admin)");
+            info!("Skipping encoder snapshot restore: NVS state untrusted");
         } else {
             info!("Motion mode is StepperOnly: skipping encoder snapshot restore");
         }
@@ -424,33 +393,8 @@ fn main() -> anyhow::Result<()> {
     // Keep Motion's internal position consistent for logs/logic
     motion.update_position(actual_heading);
 
-    
-    // PHASE 7: MODE SELECTION--------------------------------------------------
-    
-    if active_mode == RunMode::Admin {
-        admin_mode::run(
-            &switchboard.admin,
-            &mut motion,
-            &switchboard.boot.recovery,
-            &switchboard.boot.homing,
-            &mut nvs,
-            &mut mqtt,
-            &mut wifi,
-            &current_version,
-            &mut config_manager,
-            switchboard.effects.publish_mqtt,
-            switchboard.effects.persist_nvs,
-            false, // bypass_enabled_check: false for full Admin mode at boot
-        )?;
-        // Admin mode handles its own loop; exit here to prevent falling into Normal mode
-        return Ok(());
-    }
-
-    // PHASE 8: NORMAL MODE BOOT ACTIONS--------------------------------------------------
-    
-    if switchboard.boot.recovery.enabled {
-        diagnostics::boot_recovery::run(&mut motion, &switchboard.boot.recovery);
-    }
+    // PHASE 7: NORMAL MODE BOOT ACTIONS--------------------------------------------------
+    // Boot recovery is disabled for production deployment
 
     // Initialize button inputs (for future manual control)
     let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
@@ -461,32 +405,35 @@ fn main() -> anyhow::Result<()> {
     // Decision logic:
     // - StepperOnly: Always home (no encoder to trust)
     // - EncoderGuarded: Home if no snapshot restored OR NVS state untrusted
+    const HOMING_ENABLED: bool = true;  // Always enabled in production
+    const HOMING_DIRECTION: Direction = Direction::Ccw;  // Default direction
+    
     let should_home_by_mode =
         motion_mode == MotionMode::StepperOnly || !restored_from_snapshot || !trust_nvs_state;
-    if should_home_by_mode && switchboard.boot.homing.enabled {
-        let limit_sw_status = match switchboard.boot.homing.dir {
+    if should_home_by_mode && HOMING_ENABLED {
+        let limit_sw_status = match HOMING_DIRECTION {
             Direction::Cw => motion.find_limit_switch_cw(),
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         match limit_sw_status {
             true => log::info!(
                 "Homing OK (dir={}): limit switch found",
-                switchboard.boot.homing.dir.as_str()
+                HOMING_DIRECTION.as_str()
             ),
             false => {
                 log::error!(
                     "Homing FAILED (dir={}): limit switch could not be found",
-                    switchboard.boot.homing.dir.as_str()
+                    HOMING_DIRECTION.as_str()
                 );
                 infra::Telemetry::critical_failure_loop(
                     &mut mqtt,
                     b"Critical failure: Limit switch failure!",
-                    switchboard.effects.publish_mqtt,
+                    PUBLISH_MQTT,
                 );
             }
         }
         // After a successful homing run, re-seed NVS with a clean baseline.
-        if switchboard.effects.persist_nvs {
+        if PERSIST_NVS {
             infra::SnapshotStore::new(&mut nvs, true).save_heading(90.0);
             if motion_mode == MotionMode::EncoderGuarded {
                 infra::SnapshotStore::new(&mut nvs, true)
@@ -495,12 +442,12 @@ fn main() -> anyhow::Result<()> {
         }
         thread::sleep(Duration::from_secs(5));
     } else if should_home_by_mode {
-        log::warn!("Homing skipped: switchboard.boot.homing.enabled=false");
+        log::warn!("Homing skipped: HOMING_ENABLED=false");
         if !trust_nvs_state {
             infra::Telemetry::critical_failure_loop(
                 &mut mqtt,
-                b"Critical failure: NVS state untrusted (last run was Admin) but homing disabled!",
-                switchboard.effects.publish_mqtt,
+                b"Critical failure: NVS state untrusted but homing disabled!",
+                PUBLISH_MQTT,
             );
         }
     } else {
@@ -530,8 +477,9 @@ fn main() -> anyhow::Result<()> {
 
         // Check for encoder faults (stalls, unplugged, etc.)
         // If fault active, skip tracking and continue to next iteration
+        let encoder_recovery_cfg = EncoderRecoverySwitches::default();
         if encoder_fault.tick(
-            &switchboard.runtime.encoder_recovery,
+            &encoder_recovery_cfg,
             &mut motion,
             motion_mode,
             &mut actual_heading,
@@ -539,14 +487,15 @@ fn main() -> anyhow::Result<()> {
             &mut mqtt,
             &mut wifi,
             &current_version,
-            switchboard.effects.publish_mqtt,
-            switchboard.effects.persist_nvs,
+            PUBLISH_MQTT,
+            PERSIST_NVS,
         )? {
             continue;  // Fault active, skip tracking this iteration
         }
 
         // Perform solar tracking: calculate sun position and move tower
-        if switchboard.runtime.tracking.enabled {
+        const TRACKING_ENABLED: bool = true;  // Always enabled in production
+        if TRACKING_ENABLED {
             let outcome = app::tracking_loop::tick(
                 &mut motion,
                 &mut calculation,
@@ -556,18 +505,18 @@ fn main() -> anyhow::Result<()> {
                 &mut nvs,
                 &mut wifi,
                 current_datetime.clone(),
-                switchboard.effects.publish_mqtt,
-                switchboard.effects.persist_nvs,
-                switchboard.effects.allow_ota,
+                PUBLISH_MQTT,
+                PERSIST_NVS,
+                ALLOW_OTA,
             );
 
             if outcome != MoveOutcome::Completed {
                 warn!("Last move aborted: {:?}", outcome);
             }
             // Update encoder fault state based on move outcome
-            encoder_fault.on_move_outcome(outcome, &switchboard.runtime.encoder_recovery);
+            encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg);
         } else {
-            info!("Tracking disabled by switchboard.runtime.tracking.enabled=false");
+            info!("Tracking disabled");
         }
 
         info!("Tracking loop duration (v1.0.4): {:?}", now.elapsed());
@@ -580,57 +529,12 @@ fn main() -> anyhow::Result<()> {
         infra::Telemetry::publish_firmware_version_if(
             &mut mqtt,
             &current_version,
-            switchboard.effects.publish_mqtt,
+            PUBLISH_MQTT,
         );
 
-        // Process MQTT commands (non-blocking, processes all queued commands)
-        // Process up to 10 commands per iteration to avoid blocking too long
-        let mut commands_processed = 0;
-        while commands_processed < 10 {
-            match cmd_handler::CommandHandler::process_one(
-                &mut mqtt,
-                &mut motion,
-                &mut nvs,
-                &mut wifi,
-                &current_version,
-                &switchboard.admin,
-                &switchboard.boot.recovery,
-                &switchboard.boot.homing,
-                &mut config_manager,
-                &mut actual_heading, // Pass actual_heading so tests can update it after re-homing
-                switchboard.effects.publish_mqtt,
-                switchboard.effects.persist_nvs,
-            ) {
-                Ok(true) => {
-                    commands_processed += 1;
-                    // Continue processing more commands
-                }
-                Ok(false) => {
-                    // No more commands available
-                    break;
-                }
-                Err(e) => {
-                    warn!("Command processing error: {:?}", e);
-                    break; // Stop on error to avoid infinite loop
-                }
-            }
-        }
-        if commands_processed > 0 {
-            info!("Processed {} MQTT command(s) in this iteration", commands_processed);
-        }
-
-        // Check if runtime mode changed via MQTT (e.g., set_mode command)
-        // Mode changes require reboot to take effect (for safety)
-        let current_runtime_mode = config_manager.get_runtime_mode(&mut nvs);
-        let should_be_admin = current_runtime_mode == RuntimeMode::Admin;
-        if should_be_admin && active_mode == RunMode::Normal {
-            warn!("Runtime mode changed to Admin via MQTT. Restart required for mode change to take effect.");
-        }
-        
         // Sleep before next iteration (default: 300 seconds = 5 minutes)
-        std::thread::sleep(Duration::from_secs(
-            switchboard.runtime.tracking.loop_sleep_secs,
-        ));
+        const LOOP_SLEEP_SECS: u64 = 300;
+        std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
 
     }
 }

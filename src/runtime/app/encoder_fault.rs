@@ -10,8 +10,44 @@ use crate::{
     constants::HOME_HEADING_DEG,
     infra,
     infra::SnapshotStore,
-    switchboard::{Direction, EncoderRecoverySwitches},
 };
+
+// Simple Direction enum (replaces switchboard::Direction)
+#[derive(Clone, Copy)]
+pub enum Direction {
+    Cw,
+    Ccw,
+}
+
+impl Direction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Direction::Cw => "CW",
+            Direction::Ccw => "CCW",
+        }
+    }
+}
+
+// Simple EncoderRecoverySwitches struct (replaces switchboard::EncoderRecoverySwitches)
+pub struct EncoderRecoverySwitches {
+    pub enabled: bool,
+    pub probe_interval_secs: u64,
+    pub probe_steps: i64,
+    pub max_drift_deg: f32,
+    pub rehome_dir: Direction,
+}
+
+impl EncoderRecoverySwitches {
+    pub const fn default() -> Self {
+        Self {
+            enabled: true,
+            probe_interval_secs: 30,
+            probe_steps: 1000,
+            max_drift_deg: 5.0,
+            rehome_dir: Direction::Ccw,
+        }
+    }
+}
 
 pub struct EncoderFaultRecovery {
     active: bool,
