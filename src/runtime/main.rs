@@ -209,8 +209,8 @@ fn main() -> anyhow::Result<()> {
         .to_string();
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
-        MQTT_BROKER_URL,
-        MQTT_CLIENT_ID,
+        "mqttS://mqtt.jantaus.com:9443",
+        "device1A_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
