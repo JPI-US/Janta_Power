@@ -89,6 +89,9 @@ pub mod motion {
         soft_limits_enabled: bool,
         soft_limit_min_deg: f32,
         soft_limit_max_deg: f32,
+
+        // Homing flag: when true, overshoot protection is disabled (we don't know expected ticks during homing).
+        is_homing: bool,
     }
 
     // CW: direction
@@ -141,6 +144,8 @@ pub mod motion {
                 soft_limits_enabled: false,
                 soft_limit_min_deg: 0.0,
                 soft_limit_max_deg: 290.0,
+
+                is_homing: false,
             }
         }
 

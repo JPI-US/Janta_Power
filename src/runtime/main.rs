@@ -514,7 +514,10 @@ fn main() -> anyhow::Result<()> {
                 warn!("Last move aborted: {:?}", outcome);
             }
             // Update encoder fault state based on move outcome
-            encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg);
+            // This may switch to StepperOnly if 3 consecutive failures occur
+            if let Err(e) = encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg, &mut motion, &mut nvs, PERSIST_NVS) {
+                error!("Error in encoder fault recovery: {:?}", e);
+            }
         } else {
             info!("Tracking disabled");
         }

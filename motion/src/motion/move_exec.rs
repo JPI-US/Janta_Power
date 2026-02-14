@@ -159,8 +159,10 @@ impl Motion<'_> {
                 }
 
                 // Encoder overshoot protection (EncoderGuarded mode only).
+                // Skip overshoot protection during homing (we don't know expected ticks).
                 // Check if encoder moved more than expected + tolerance.
                 if self.motion_mode == MotionMode::EncoderGuarded
+                    && !self.is_homing  // Skip overshoot protection during homing
                     && self.overshoot_enc_start.is_some()
                     && self.overshoot_expected_ticks.is_some()
                 {

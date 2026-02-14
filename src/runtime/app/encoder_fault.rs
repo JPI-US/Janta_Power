@@ -52,22 +52,57 @@ impl EncoderRecoverySwitches {
 pub struct EncoderFaultRecovery {
     active: bool,
     next_probe_at: Option<Instant>,
+    failure_count: u8,  // Consecutive encoder failures (stalls/overshoots)
+    mode_switched: bool,  // True if we've permanently switched to StepperOnly
 }
+
+const MAX_ENCODER_FAILURES: u8 = 3;  // After 3 consecutive failures, switch to StepperOnly
 
 impl EncoderFaultRecovery {
     pub const fn new() -> Self {
         Self {
             active: false,
             next_probe_at: None,
+            failure_count: 0,
+            mode_switched: false,
         }
     }
 
-    pub fn on_move_outcome(&mut self, outcome: MoveOutcome, cfg: &EncoderRecoverySwitches) {
+    pub fn on_move_outcome<T: NvsPartitionId>(
+        &mut self,
+        outcome: MoveOutcome,
+        cfg: &EncoderRecoverySwitches,
+        motion: &mut Motion<'_>,
+        nvs: &mut EspNvs<T>,
+        persist_nvs: bool,
+    ) -> anyhow::Result<()> {
+        // Skip all encoder checks if we've already switched to StepperOnly
+        if self.mode_switched {
+            return Ok(());
+        }
+        
         // Both stall and overshoot indicate encoder issues - trigger recovery
         if outcome == MoveOutcome::AbortedStall || outcome == MoveOutcome::AbortedOvershoot {
+            self.failure_count += 1;
+            log::warn!("Encoder fault detected (failure_count={}/{})", self.failure_count, MAX_ENCODER_FAILURES);
+            
+            // Check if we've hit the 3-strike limit immediately
+            if self.failure_count >= MAX_ENCODER_FAILURES {
+                log::error!("CRITICAL: Encoder failed {} consecutive times, switching to StepperOnly mode permanently", self.failure_count);
+                self.switch_to_stepper_only(motion, nvs, persist_nvs)?;
+                return Ok(());  // Mode switched, no need to start recovery
+            }
+            
             self.active = true;
             self.next_probe_at = Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
+        } else if outcome == MoveOutcome::Completed {
+            // Successful move resets failure count
+            if self.failure_count > 0 {
+                log::info!("Encoder fault cleared: successful move resets failure count");
+                self.failure_count = 0;
+            }
         }
+        Ok(())
     }
 
     /// Returns `Ok(true)` if the caller should `continue` the outer loop (fault still active).
@@ -84,6 +119,11 @@ impl EncoderFaultRecovery {
         publish_mqtt: bool,
         persist_nvs: bool,
     ) -> anyhow::Result<bool> {
+        // Skip all encoder checks if we've already switched to StepperOnly
+        if self.mode_switched {
+            return Ok(false);
+        }
+        
         if !self.active {
             return Ok(false);
         }
@@ -124,6 +164,8 @@ impl EncoderFaultRecovery {
         log::info!("Encoder probe succeeded; recomputing heading from encoder and resuming tracking.");
         self.active = false;
         self.next_probe_at = None;
+        // Reset failure count on successful recovery
+        self.failure_count = 0;
 
         let candidate_heading = motion.heading_from_encoder_ticks(HOME_HEADING_DEG);
         let drift = angle_diff_deg(candidate_heading, *actual_heading);
@@ -184,6 +226,36 @@ impl EncoderFaultRecovery {
             wifi.reconnect_if_disconnected()?;
         }
         infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
+        Ok(())
+    }
+
+    /// Switch to StepperOnly mode permanently after 3 consecutive encoder failures.
+    fn switch_to_stepper_only<T: NvsPartitionId>(
+        &mut self,
+        motion: &mut Motion<'_>,
+        nvs: &mut EspNvs<T>,
+        persist_nvs: bool,
+    ) -> anyhow::Result<()> {
+        log::error!("CRITICAL: Encoder failed {} consecutive times, switching to StepperOnly mode permanently", self.failure_count);
+        
+        // Change motion mode to StepperOnly
+        motion.set_motion_mode(MotionMode::StepperOnly);
+        
+        // Persist mode change to NVS (1 = StepperOnly, 2 = EncoderGuarded)
+        if persist_nvs {
+            if let Err(e) = nvs.set_u8("tracking_mode", 1) {
+                log::error!("Failed to persist mode switch to NVS: {:?}", e);
+            } else {
+                log::info!("Mode switch persisted to NVS: StepperOnly");
+            }
+        }
+        
+        // Mark that we've switched modes
+        self.mode_switched = true;
+        self.active = false;  // Stop recovery attempts
+        self.failure_count = 0;  // Reset counter
+        
+        log::error!("Encoder permanently disabled. Device now operating in StepperOnly mode.");
         Ok(())
     }
 }

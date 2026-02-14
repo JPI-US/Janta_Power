@@ -74,12 +74,17 @@ impl Motion<'_> {
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
         use super::HOME_HEADING_DEG;
+        
+        // Set homing flag to disable overshoot protection during homing
+        self.is_homing = true;
+        
         // If limit switch is already pressed, do nothing (skip pre-move and homing)
         if self.lmsw.is_low() {
             log::info!("Limit switch already pressed - skipping pre-move and homing");
             log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
+            self.is_homing = false;  // Clear homing flag
             return true;
         }
         
@@ -102,6 +107,7 @@ impl Motion<'_> {
             let step_movement = calculate_steps(1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay.set_low().unwrap_or_default();
+                self.is_homing = false;  // Clear homing flag on failure
                 return false;
             }
             max_steps -= step_movement;
@@ -113,19 +119,26 @@ impl Motion<'_> {
             self.update_position(HOME_HEADING_DEG);
             self.relay.set_low().unwrap_or_default();
             self.force_zero_if_limit_switch_pressed();
+            self.is_homing = false;  // Clear homing flag on success
             return true;
         }
         log::error!("Limit Switch was not found!");
+        self.is_homing = false;  // Clear homing flag on failure
         return false;
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
         use super::HOME_HEADING_DEG;
+        
+        // Set homing flag to disable overshoot protection during homing
+        self.is_homing = true;
+        
         // If limit switch is already pressed, do nothing (skip pre-move and homing)
         if self.lmsw.is_low() {
             log::info!("Limit switch already pressed - skipping pre-move and homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
+            self.is_homing = false;  // Clear homing flag
             return true;
         }
         
@@ -148,6 +161,7 @@ impl Motion<'_> {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay.set_low().unwrap_or_default();
+                self.is_homing = false;  // Clear homing flag on failure
                 return false;
             }
             max_steps -= step_movement;
@@ -159,8 +173,10 @@ impl Motion<'_> {
             self.update_position(HOME_HEADING_DEG);
             self.relay.set_low().unwrap_or_default();
             self.force_zero_if_limit_switch_pressed();
+            self.is_homing = false;  // Clear homing flag on success
             return true;
         }
+        self.is_homing = false;  // Clear homing flag on failure
         false
     }
 }
