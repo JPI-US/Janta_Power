@@ -92,17 +92,17 @@ fn main() -> anyhow::Result<()> {
 
     // PHASE 2: NETWORK SETUP--------------------------------------------------
 
-    use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS};
+    use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS, MQTT_USER, MQTT_PASSWORD};
     const PERSIST_NVS: bool = true;  // Always enabled in production
     
-    let mqtt_user = "device1A";
+    let mqtt_user = MQTT_USER;
     if PERSIST_NVS {
         match nvs.set_str("mqtt_user", mqtt_user){
             Ok(_) => info!("Mqtt username updated"),
             Err(e) => error!("Mqtt username not updated {:?}", e),
         };
     }
-    let mqtt_pass= "device1A";
+    let mqtt_pass = MQTT_PASSWORD;
     if PERSIST_NVS {
         match nvs.set_str("mqtt_pass", mqtt_pass){
             Ok(_) => info!("Mqtt password updated"),

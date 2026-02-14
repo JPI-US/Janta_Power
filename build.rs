@@ -91,6 +91,12 @@ fn generate_constants() {
     constants.push_str(&get_env("WIFI_PASSWORD", "@Powerfuture22", "str"));
     constants.push_str("\n");
     
+    // MQTT Configuration
+    constants.push_str("// MQTT Configuration\n");
+    constants.push_str(&get_env("MQTT_USER", "device1A", "str"));
+    constants.push_str(&get_env("MQTT_PASSWORD", "device1A", "str"));
+    constants.push_str("\n");
+    
     // Timezone
     constants.push_str("// Timezone\n");
     constants.push_str(&get_env("TIMEZONE_OFFSET_HOURS", "-5.0", "f32"));
