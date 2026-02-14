@@ -1,8 +1,3 @@
-// Diagnostics module: all test bench / admin / manual control code.
-//
-// This module is intentionally separate from `src/app/` (normal operation)
-// so that future feature developers don't need to navigate through diagnostic code.
-
-pub mod admin_mode;
-pub mod boot_recovery;
-pub mod cmd_handler;
+// Diagnostics module stub
+// All diagnostic features (admin mode, command handler, boot recovery) have been removed
+// for production deployment. This module is kept as a stub to maintain module structure.
