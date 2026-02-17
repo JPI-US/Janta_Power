@@ -246,6 +246,21 @@ impl Motion<'_> {
 
                 // Home-error capture + zeroing on limit switch.
                 self.poll_limit_switch_zeroing();
+                
+                // Critical: During pre-homing (CW move), if limit switch is hit, abort immediately
+                // Pre-homing is meant to move AWAY from limit switch - hitting it means we're already past home
+                if self.is_homing && self.lmsw.is_low() {
+                    // Check if we're moving CW (positive direction) - this is the pre-homing move
+                    let distance_to_go = self.motor.distance_to_go();
+                    // If distance_to_go is positive, we're moving CW (positive steps)
+                    if distance_to_go > 0 {
+                        log::error!("CRITICAL: Limit switch hit during pre-homing CW move - aborting immediately! This should never happen if pre-homing works correctly.");
+                        let pos = self.motor.current_position();
+                        self.motor.set_current_position(pos); // hard stop
+                        let _ = self.relay.set_low(); // Turn relay OFF
+                        return MoveOutcome::AbortedStall; // Use AbortedStall to trigger encoder fault recovery
+                    }
+                }
 
                 if t0.elapsed() >= Duration::from_millis(100) {
                     let position = self.encoder_ticks_adjusted();
