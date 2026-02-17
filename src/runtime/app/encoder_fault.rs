@@ -52,56 +52,50 @@ impl EncoderRecoverySwitches {
 pub struct EncoderFaultRecovery {
     active: bool,
     next_probe_at: Option<Instant>,
-    failure_count: u8,  // Consecutive encoder failures (stalls/overshoots)
-    mode_switched: bool,  // True if we've permanently switched to StepperOnly
+    probe_failure_count: u8,  // Consecutive probe failures (only probes count)
+    mode_switched_daily: bool,  // True if we've switched to StepperOnly due to daily probe failures
 }
 
-const MAX_ENCODER_FAILURES: u8 = 3;  // After 3 consecutive failures, switch to StepperOnly
+const MAX_PROBE_FAILURES: u8 = 3;  // After 3 consecutive probe failures, switch to StepperOnly for the day
 
 impl EncoderFaultRecovery {
     pub const fn new() -> Self {
         Self {
             active: false,
             next_probe_at: None,
-            failure_count: 0,
-            mode_switched: false,
+            probe_failure_count: 0,
+            mode_switched_daily: false,
         }
+    }
+    
+    pub fn mode_switched_daily(&self) -> bool {
+        self.mode_switched_daily
+    }
+    
+    pub fn set_mode_switched_daily(&mut self, value: bool) {
+        self.mode_switched_daily = value;
     }
 
     pub fn on_move_outcome<T: NvsPartitionId>(
         &mut self,
         outcome: MoveOutcome,
         cfg: &EncoderRecoverySwitches,
-        motion: &mut Motion<'_>,
-        nvs: &mut EspNvs<T>,
-        persist_nvs: bool,
+        _motion: &mut Motion<'_>,
+        _nvs: &mut EspNvs<T>,
+        _persist_nvs: bool,
     ) -> anyhow::Result<()> {
-        // Skip all encoder checks if we've already switched to StepperOnly
-        if self.mode_switched {
+        // Skip all encoder checks if we've already switched to StepperOnly for the day
+        if self.mode_switched_daily {
             return Ok(());
         }
         
-        // Both stall and overshoot indicate encoder issues - trigger recovery
+        // Both stall and overshoot indicate encoder issues - trigger recovery (but don't count as failures)
         if outcome == MoveOutcome::AbortedStall || outcome == MoveOutcome::AbortedOvershoot {
-            self.failure_count += 1;
-            log::warn!("Encoder fault detected (failure_count={}/{})", self.failure_count, MAX_ENCODER_FAILURES);
-            
-            // Check if we've hit the 3-strike limit immediately
-            if self.failure_count >= MAX_ENCODER_FAILURES {
-                log::error!("CRITICAL: Encoder failed {} consecutive times, switching to StepperOnly mode permanently", self.failure_count);
-                self.switch_to_stepper_only(motion, nvs, persist_nvs)?;
-                return Ok(());  // Mode switched, no need to start recovery
-            }
-            
+            log::warn!("Encoder fault detected, starting recovery probes");
             self.active = true;
             self.next_probe_at = Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
-        } else if outcome == MoveOutcome::Completed {
-            // Successful move resets failure count
-            if self.failure_count > 0 {
-                log::info!("Encoder fault cleared: successful move resets failure count");
-                self.failure_count = 0;
-            }
         }
+        // Note: Only probe failures count toward the 3-strike limit, not initial stalls/overshoots
         Ok(())
     }
 
@@ -119,8 +113,8 @@ impl EncoderFaultRecovery {
         publish_mqtt: bool,
         persist_nvs: bool,
     ) -> anyhow::Result<bool> {
-        // Skip all encoder checks if we've already switched to StepperOnly
-        if self.mode_switched {
+        // Skip all encoder checks if we've already switched to StepperOnly for the day
+        if self.mode_switched_daily {
             return Ok(false);
         }
         
@@ -153,9 +147,17 @@ impl EncoderFaultRecovery {
         log::info!("Encoder fault: probing for recovery...");
         let ok = motion.probe_encoder_motion(cfg.probe_steps);
         if !ok {
-            log::warn!("Encoder probe failed; will retry in {:?}", probe_interval);
+            self.probe_failure_count += 1;
+            log::warn!("Encoder probe failed (probe_failure_count={}/{})", self.probe_failure_count, MAX_PROBE_FAILURES);
+            
+            // Check if we've hit the 3-strike limit for probe failures
+            if self.probe_failure_count >= MAX_PROBE_FAILURES {
+                log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
+                self.switch_to_stepper_only_daily(motion, nvs, mqtt, publish_mqtt, persist_nvs)?;
+                return Ok(false);  // Mode switched, exit recovery loop
+            }
+            
             self.next_probe_at = Some(now_i + probe_interval);
-
             self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
@@ -164,8 +166,8 @@ impl EncoderFaultRecovery {
         log::info!("Encoder probe succeeded; recomputing heading from encoder and resuming tracking.");
         self.active = false;
         self.next_probe_at = None;
-        // Reset failure count on successful recovery
-        self.failure_count = 0;
+        // Reset probe failure count on successful recovery
+        self.probe_failure_count = 0;
 
         let candidate_heading = motion.heading_from_encoder_ticks(HOME_HEADING_DEG);
         let drift = angle_diff_deg(candidate_heading, *actual_heading);
@@ -229,33 +231,53 @@ impl EncoderFaultRecovery {
         Ok(())
     }
 
-    /// Switch to StepperOnly mode permanently after 3 consecutive encoder failures.
-    fn switch_to_stepper_only<T: NvsPartitionId>(
+    /// Switch to StepperOnly mode for the day after 3 consecutive probe failures.
+    fn switch_to_stepper_only_daily<T: NvsPartitionId>(
         &mut self,
         motion: &mut Motion<'_>,
         nvs: &mut EspNvs<T>,
+        mqtt: &mut Mqtt,
+        publish_mqtt: bool,
         persist_nvs: bool,
     ) -> anyhow::Result<()> {
-        log::error!("CRITICAL: Encoder failed {} consecutive times, switching to StepperOnly mode permanently", self.failure_count);
-        
         // Change motion mode to StepperOnly
         motion.set_motion_mode(MotionMode::StepperOnly);
         
-        // Persist mode change to NVS (1 = StepperOnly, 2 = EncoderGuarded)
+        // Get current date (YYYY-MM-DD format)
+        let current_date = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
+            .format("%Y-%m-%d")
+            .to_string();
+        
+        // Persist mode change to NVS using SnapshotStore
         if persist_nvs {
-            if let Err(e) = nvs.set_u8("tracking_mode", 1) {
-                log::error!("Failed to persist mode switch to NVS: {:?}", e);
-            } else {
-                log::info!("Mode switch persisted to NVS: StepperOnly");
-            }
+            SnapshotStore::new(nvs, persist_nvs).save_tracking_mode(MotionMode::StepperOnly);
+            
+            // Store current date for daily reset check
+            SnapshotStore::new(nvs, persist_nvs).save_encoder_mode_reset_date(&current_date);
+            
+            // Mark that we switched due to daily probe failures
+            SnapshotStore::new(nvs, persist_nvs).save_encoder_daily_mode(true);
         }
         
-        // Mark that we've switched modes
-        self.mode_switched = true;
-        self.active = false;  // Stop recovery attempts
-        self.failure_count = 0;  // Reset counter
+        // Publish MQTT notification
+        let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
+        if publish_mqtt {
+            if let Err(e) = mqtt.publish("device1A/status/encoder_mode", mqtt_message.as_bytes()) {
+                log::warn!("Failed to publish encoder mode switch message: {:?}", e);
+            } else {
+                log::info!("Published encoder mode switch message to MQTT");
+            }
+        } else {
+            log::info!("MQTT publish disabled: {}", mqtt_message);
+        }
         
-        log::error!("Encoder permanently disabled. Device now operating in StepperOnly mode.");
+        // Mark that we've switched modes for the day
+        self.mode_switched_daily = true;
+        self.active = false;  // Stop recovery attempts
+        self.probe_failure_count = 0;  // Reset counter
+        
+        log::error!("Encoder disabled for the day. Device now operating in StepperOnly mode. Will retry at midnight.");
         Ok(())
     }
 }

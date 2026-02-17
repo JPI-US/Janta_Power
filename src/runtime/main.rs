@@ -341,8 +341,11 @@ fn main() -> anyhow::Result<()> {
 
     const POWER_ON: bool = true;  // Motor power control (future: sense input)
 
+    // Check for daily encoder mode reset (before loading tracking mode)
+    check_daily_encoder_reset(&mut nvs, &local_time, PERSIST_NVS);
+
     // Select motion mode: Load from NVS, default to EncoderGuarded
-    let motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+    let mut motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
         .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
     motion.set_motion_mode(motion_mode);
     motion.set_motor_power_on(POWER_ON);
@@ -460,6 +463,9 @@ fn main() -> anyhow::Result<()> {
     // PHASE 9: MAIN TRACKING LOOP (Normal Mode Only)--------------------------------------------------
     
     let mut encoder_fault = EncoderFaultRecovery::new();
+    // Restore encoder fault state from NVS (check if mode was switched daily)
+    let encoder_daily_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
+    encoder_fault.set_mode_switched_daily(encoder_daily_mode);
 
     loop {
         let st_now = SystemTime::now();
@@ -469,6 +475,21 @@ fn main() -> anyhow::Result<()> {
             FixedOffset::east_opt(timezone_offset_hours * 3600).unwrap(),
         );
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
+
+        // Check for daily encoder mode reset (at start of each loop iteration)
+        let reset_occurred = check_daily_encoder_reset(&mut nvs, &local_time, PERSIST_NVS);
+        if reset_occurred {
+            // If reset occurred, update motion mode and encoder fault state
+            motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+                .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+            motion.set_motion_mode(motion_mode);
+            encoder_fault.set_mode_switched_daily(false);
+            let mode_str = match motion_mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            info!("Daily reset: Motion mode updated to {}", mode_str);
+        }
 
         info!("Actual Heading: {}", motion.location());
         info!("Current datetime: {}", current_datetime.clone());
@@ -591,4 +612,54 @@ fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mqtt: bool) -> bool
         continue;
     }
     return false; 
+}
+
+/// Check if daily encoder mode reset is needed and perform it if necessary.
+/// Returns true if a reset occurred, false otherwise.
+fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
+    nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
+    local_time: &DateTime<FixedOffset>,
+    persist_nvs: bool,
+) -> bool {
+    let mut snapshot_store = infra::SnapshotStore::new(nvs, persist_nvs);
+    
+    // Check if encoder was switched to daily mode
+    let encoder_daily_mode = snapshot_store.load_encoder_daily_mode();
+    if !encoder_daily_mode {
+        return false;  // Not in daily mode, no reset needed
+    }
+    
+    // Get current date (YYYY-MM-DD format)
+    let current_date = local_time.format("%Y-%m-%d").to_string();
+    
+    // Get stored reset date
+    let stored_date = snapshot_store.load_encoder_mode_reset_date();
+    
+    match stored_date {
+        Some(stored) if stored != current_date => {
+            // New day detected - reset to EncoderGuarded
+            info!("Daily reset: New day detected (stored={}, current={}), resetting encoder mode to EncoderGuarded", stored, current_date);
+            
+            // Reset tracking mode to EncoderGuarded
+            snapshot_store.save_tracking_mode(MotionMode::EncoderGuarded);
+            
+            // Clear daily mode flag
+            snapshot_store.save_encoder_daily_mode(false);
+            
+            // Update reset date to current date
+            snapshot_store.save_encoder_mode_reset_date(&current_date);
+            
+            true
+        }
+        Some(_stored) => {
+            // Same day, no reset needed
+            false
+        }
+        None => {
+            // No stored date (shouldn't happen if daily_mode is true, but handle gracefully)
+            warn!("encoder_daily_mode is true but no reset_date found in NVS; initializing reset_date");
+            snapshot_store.save_encoder_mode_reset_date(&current_date);
+            false
+        }
+    }
 }
