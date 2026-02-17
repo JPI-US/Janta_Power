@@ -483,6 +483,10 @@ fn main() -> anyhow::Result<()> {
 
     // PHASE 9: MAIN TRACKING LOOP (Normal Mode Only)--------------------------------------------------
     // Note: encoder_fault was already initialized before homing (above)
+    
+    // Track previous motion mode to detect switches to StepperOnly
+    let mut previous_motion_mode = motion_mode;
+    let mut need_rehome_stepper_only = false;
 
     loop {
         let st_now = SystemTime::now();
@@ -507,6 +511,42 @@ fn main() -> anyhow::Result<()> {
             };
             info!("Daily reset: Motion mode updated to {}", mode_str);
         }
+        
+        // Detect if we just switched to StepperOnly mode (need to re-home)
+        if motion_mode == MotionMode::StepperOnly && previous_motion_mode != MotionMode::StepperOnly {
+            info!("Motion mode switched to StepperOnly - re-homing required");
+            need_rehome_stepper_only = true;
+        }
+        previous_motion_mode = motion_mode;
+        
+        // If we need to re-home (switched to StepperOnly), do it now before tracking
+        if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
+            info!("StepperOnly mode detected - re-homing to establish known position");
+            const HOMING_DIRECTION: Direction = Direction::Ccw;
+            let limit_sw_status = match HOMING_DIRECTION {
+                Direction::Cw => motion.find_limit_switch_cw(),
+                Direction::Ccw => motion.find_limit_switch_ccw(),
+            };
+            match limit_sw_status {
+                true => {
+                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
+                    // Update actual heading after successful re-homing
+                    actual_heading = 90.0;
+                    motion.update_position(actual_heading);
+                    if PERSIST_NVS {
+                        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
+                    }
+                    need_rehome_stepper_only = false;  // Clear flag after successful homing
+                }
+                false => {
+                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
+                    // Don't enter critical failure loop - continue and try again next iteration
+                    // Keep flag set to try again
+                }
+            }
+            thread::sleep(Duration::from_secs(2));  // Brief pause after homing attempt
+            continue;  // Skip tracking this iteration, try again next loop
+        }
 
         info!("Actual Heading: {}", motion.location());
         info!("Current datetime: {}", current_datetime.clone());
@@ -515,6 +555,18 @@ fn main() -> anyhow::Result<()> {
 
         // Check for encoder faults (stalls, unplugged, etc.)
         // If fault active, skip tracking and continue to next iteration
+        // Also reload motion_mode from NVS in case it was switched to StepperOnly
+        let current_motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+        if current_motion_mode != motion_mode {
+            motion_mode = current_motion_mode;
+            motion.set_motion_mode(motion_mode);
+            if motion_mode == MotionMode::StepperOnly {
+                info!("Motion mode changed to StepperOnly - will re-home on next iteration");
+                need_rehome_stepper_only = true;
+            }
+        }
+        
         let encoder_recovery_cfg = EncoderRecoverySwitches::default();
         if encoder_fault.tick(
             &encoder_recovery_cfg,
@@ -529,6 +581,48 @@ fn main() -> anyhow::Result<()> {
             PERSIST_NVS,
         )? {
             continue;  // Fault active, skip tracking this iteration
+        }
+        
+        // After encoder_fault.tick(), check again if mode was switched (it might switch during tick)
+        let updated_motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+        if updated_motion_mode != motion_mode {
+            motion_mode = updated_motion_mode;
+            motion.set_motion_mode(motion_mode);
+            if motion_mode == MotionMode::StepperOnly {
+                info!("Motion mode switched to StepperOnly during encoder fault recovery - will re-home");
+                need_rehome_stepper_only = true;
+            }
+        }
+        
+        // CRITICAL: If we need to re-home (switched to StepperOnly), do it NOW before tracking
+        // This must happen AFTER encoder_fault.tick() because mode switches happen during tick()
+        if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
+            info!("StepperOnly mode detected - re-homing to establish known position (CCW)");
+            const HOMING_DIRECTION: Direction = Direction::Ccw;  // Always home CCW
+            let limit_sw_status = match HOMING_DIRECTION {
+                Direction::Cw => motion.find_limit_switch_cw(),
+                Direction::Ccw => motion.find_limit_switch_ccw(),
+            };
+            match limit_sw_status {
+                true => {
+                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
+                    // Update actual heading after successful re-homing
+                    actual_heading = 90.0;
+                    motion.update_position(actual_heading);
+                    if PERSIST_NVS {
+                        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
+                    }
+                    need_rehome_stepper_only = false;  // Clear flag after successful homing
+                }
+                false => {
+                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
+                    // Don't enter critical failure loop - continue and try again next iteration
+                    // Keep flag set to try again
+                }
+            }
+            thread::sleep(Duration::from_secs(2));  // Brief pause after homing attempt
+            continue;  // Skip tracking this iteration, try again next loop
         }
 
         // Perform solar tracking: calculate sun position and move tower
