@@ -247,12 +247,11 @@ impl Motion<'_> {
                 // Home-error capture + zeroing on limit switch.
                 self.poll_limit_switch_zeroing();
                 
-                // Critical: During pre-homing (CW move), if limit switch is hit, abort immediately
-                // Pre-homing is meant to move AWAY from limit switch - hitting it means we're already past home
+                // Critical: During homing, if limit switch is pressed, stop immediately
+                // This allows the homing code to detect we're at home and complete successfully
                 if self.is_homing && self.lmsw.is_low() {
-                    // Check if we're moving CW (positive direction) - this is the pre-homing move
                     let distance_to_go = self.motor.distance_to_go();
-                    // If distance_to_go is positive, we're moving CW (positive steps)
+                    // During pre-homing CW move, hitting limit switch is unexpected (we should be moving away from home)
                     if distance_to_go > 0 {
                         log::error!("CRITICAL: Limit switch hit during pre-homing CW move - aborting immediately! This should never happen if pre-homing works correctly.");
                         let pos = self.motor.current_position();
@@ -260,6 +259,13 @@ impl Motion<'_> {
                         let _ = self.relay.set_low(); // Turn relay OFF
                         return MoveOutcome::AbortedStall; // Use AbortedStall to trigger encoder fault recovery
                     }
+                    // During CCW search (or any homing move), hitting limit switch means we found home
+                    // Stop immediately so homing code can detect success
+                    log::info!("Limit switch pressed during homing - found home, stopping immediately");
+                    let pos = self.motor.current_position();
+                    self.motor.set_current_position(pos); // hard stop
+                    let _ = self.relay.set_low(); // Turn relay OFF
+                    return MoveOutcome::Completed; // Return Completed so homing code can detect success
                 }
 
                 if t0.elapsed() >= Duration::from_millis(100) {
