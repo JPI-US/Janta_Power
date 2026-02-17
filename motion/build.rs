@@ -31,6 +31,7 @@ fn generate_constants() {
             "u64" => format!("pub(crate) const {}: u64 = {};\n", key, value),
             "u16" => format!("pub(crate) const {}: u16 = {};\n", key, value),
             "i64" => format!("pub(crate) const {}: i64 = {};\n", key, value),
+            "i32" => format!("pub(crate) const {}: i32 = {};\n", key, value),
             "bool" => format!("pub(crate) const {}: bool = {};\n", key, value.to_lowercase()),
             _ => format!("pub(crate) const {}: &str = \"{}\";\n", key, value),
         }
@@ -55,6 +56,8 @@ fn generate_constants() {
     constants.push_str("// Stall Detection\n");
     constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "i64"));
     constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "800", "i64"));
+    constants.push_str(&get_env("ENCODER_STALL_MIN_TICKS", "400", "i32"));
+    constants.push_str(&get_env("ENCODER_STALL_CHECK_INTERVAL_STEPS", "120000", "i64"));
     constants.push_str("\n");
     
     // Tracking Constants

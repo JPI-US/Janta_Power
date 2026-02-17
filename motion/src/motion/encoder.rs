@@ -2,7 +2,7 @@
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MoveOutcome, ENC_TICKS_PER_REV};
+use super::{Motion, MoveOutcome, ENC_TICKS_PER_REV, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
 
 // Encoder calibration (output shaft): loaded from .env file at compile time.
 const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
@@ -53,11 +53,22 @@ impl Motion<'_> {
         }
 
         let end_ticks = self.encoder_ticks_adjusted();
-        let moved = end_ticks != start_ticks;
+        let encoder_ticks_moved = (end_ticks - start_ticks).abs();
+        
+        // Scaled-down ratio check: minimum expected ticks for probe
+        // For 10k steps, require at least 20 ticks
+        // Formula: (probe_steps / INTERVAL_STEPS) * MIN_TICKS, rounded up
+        let min_expected_ticks = ((probe_steps.abs() as f64 / ENCODER_STALL_CHECK_INTERVAL_STEPS as f64) * ENCODER_STALL_MIN_TICKS as f64).ceil() as i32;
+        // For 10k steps specifically, use 20 ticks minimum (user requirement)
+        let min_expected_ticks = if probe_steps.abs() == 10000 { 20 } else { min_expected_ticks };
+        
+        let moved = encoder_ticks_moved >= min_expected_ticks;
         log::info!(
-            "Encoder probe complete: start_ticks={} end_ticks={} moved={}",
+            "Encoder probe complete: start_ticks={} end_ticks={} ticks_moved={} min_expected={} passed={}",
             start_ticks,
             end_ticks,
+            encoder_ticks_moved,
+            min_expected_ticks,
             moved
         );
         moved

@@ -77,6 +77,11 @@ pub mod motion {
         stall_last_enc_ticks_seen: i32,
         stall_reported: bool,
         stall_consecutive: u8,
+        
+        // Ratio-based stall detection state (EncoderGuarded mode only).
+        stall_check_start_encoder_ticks: i32,
+        stall_check_start_step_pos: i64,
+        stall_check_last_interval_step: i64,
 
         // Encoder overshoot protection state (EncoderGuarded mode only).
         overshoot_enc_start: Option<i32>,
@@ -135,6 +140,10 @@ pub mod motion {
                 stall_last_enc_ticks_seen: 0,
                 stall_reported: false,
                 stall_consecutive: 0,
+                
+                stall_check_start_encoder_ticks: 0,
+                stall_check_start_step_pos: 0,
+                stall_check_last_interval_step: 0,
 
                 overshoot_enc_start: None,
                 overshoot_expected_ticks: None,

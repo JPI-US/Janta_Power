@@ -399,6 +399,11 @@ fn main() -> anyhow::Result<()> {
     // PHASE 7: NORMAL MODE BOOT ACTIONS--------------------------------------------------
     // Boot recovery is disabled for production deployment
 
+    // Initialize encoder fault recovery early (needed for homing failure handling)
+    let mut encoder_fault = app::encoder_fault::EncoderFaultRecovery::new();
+    let encoder_daily_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
+    encoder_fault.set_mode_switched_daily(encoder_daily_mode);
+
     // Initialize button inputs (for future manual control)
     let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
     let _eb = PinDriver::input(peripherals.pins.gpio4).unwrap(); // East Button
@@ -424,15 +429,31 @@ fn main() -> anyhow::Result<()> {
                 HOMING_DIRECTION.as_str()
             ),
             false => {
-                log::error!(
-                    "Homing FAILED (dir={}): limit switch could not be found",
-                    HOMING_DIRECTION.as_str()
-                );
-                infra::Telemetry::critical_failure_loop(
-                    &mut mqtt,
-                    b"Critical failure: Limit switch failure!",
-                    PUBLISH_MQTT,
-                );
+                // In EncoderGuarded mode, homing failure might be due to encoder stall - trigger recovery
+                if motion_mode == MotionMode::EncoderGuarded {
+                    log::warn!("Homing failed in EncoderGuarded mode - triggering encoder fault recovery");
+                    let encoder_recovery_cfg = app::encoder_fault::EncoderRecoverySwitches::default();
+                    if let Err(e) = encoder_fault.on_move_outcome(
+                        MoveOutcome::AbortedStall,
+                        &encoder_recovery_cfg,
+                        &mut motion,
+                        &mut nvs,
+                        PERSIST_NVS,
+                    ) {
+                        error!("Error triggering encoder fault recovery after homing failure: {:?}", e);
+                    }
+                    // Don't enter critical failure loop - encoder fault recovery will handle it
+                } else {
+                    log::error!(
+                        "Homing FAILED (dir={}): limit switch could not be found",
+                        HOMING_DIRECTION.as_str()
+                    );
+                    infra::Telemetry::critical_failure_loop(
+                        &mut mqtt,
+                        b"Critical failure: Limit switch failure!",
+                        PUBLISH_MQTT,
+                    );
+                }
             }
         }
         // After a successful homing run, re-seed NVS with a clean baseline.
@@ -461,11 +482,7 @@ fn main() -> anyhow::Result<()> {
     infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
 
     // PHASE 9: MAIN TRACKING LOOP (Normal Mode Only)--------------------------------------------------
-    
-    let mut encoder_fault = EncoderFaultRecovery::new();
-    // Restore encoder fault state from NVS (check if mode was switched daily)
-    let encoder_daily_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
-    encoder_fault.set_mode_switched_daily(encoder_daily_mode);
+    // Note: encoder_fault was already initialized before homing (above)
 
     loop {
         let st_now = SystemTime::now();

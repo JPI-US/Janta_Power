@@ -93,6 +93,16 @@ impl Motion<'_> {
         let pre_move_steps = calculate_steps(15.0);
         let pre_move_outcome = self.move_by(pre_move_steps);
         if pre_move_outcome != MoveOutcome::Completed {
+            // In EncoderGuarded mode, stall/overshoot means encoder failure - abort homing
+            if self.motion_mode == super::MotionMode::EncoderGuarded
+                && (pre_move_outcome == super::MoveOutcome::AbortedStall
+                    || pre_move_outcome == super::MoveOutcome::AbortedOvershoot)
+            {
+                log::error!("Pre-homing move stalled/overshot in EncoderGuarded mode - aborting homing");
+                self.is_homing = false;  // Clear homing flag
+                return false;  // Abort homing, trigger encoder fault recovery
+            }
+            // In StepperOnly mode, continue with homing (legacy behavior)
             log::warn!("Pre-homing move failed: {:?}, continuing with homing search anyway", pre_move_outcome);
         } else {
             log::info!("Pre-homing move completed successfully");

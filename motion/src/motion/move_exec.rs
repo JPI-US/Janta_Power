@@ -2,7 +2,7 @@
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE};
+use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -30,6 +30,13 @@ impl Motion<'_> {
         self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
         self.stall_reported = false;
         self.stall_consecutive = 0;
+        
+        // Initialize ratio-based stall detection (EncoderGuarded mode only).
+        if self.motion_mode == MotionMode::EncoderGuarded {
+            self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
+            self.stall_check_start_step_pos = self.motor.current_position();
+            self.stall_check_last_interval_step = self.motor.current_position();
+        }
 
         // Initialize overshoot protection (EncoderGuarded mode only).
         if self.motion_mode == MotionMode::EncoderGuarded {
@@ -66,6 +73,13 @@ impl Motion<'_> {
         self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
         self.stall_reported = false;
         self.stall_consecutive = 0;
+        
+        // Initialize ratio-based stall detection (EncoderGuarded mode only).
+        if self.motion_mode == MotionMode::EncoderGuarded {
+            self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
+            self.stall_check_start_step_pos = self.motor.current_position();
+            self.stall_check_last_interval_step = self.motor.current_position();
+        }
 
         // Initialize overshoot protection (EncoderGuarded mode only).
         // For move_by_ticks, we use the location directly as expected ticks.
@@ -156,6 +170,45 @@ impl Motion<'_> {
                     }
 
                     self.stall_last_check = Instant::now();
+                }
+
+                // Ratio-based stall detection (EncoderGuarded mode only).
+                // Check if encoder has moved at least MIN_TICKS over every INTERVAL_STEPS.
+                if self.motion_mode == MotionMode::EncoderGuarded
+                    && self.stall_detection_enabled
+                {
+                    let current_step_pos = self.motor.current_position();
+                    let current_encoder_ticks = self.encoder_ticks_adjusted();
+                    
+                    let total_steps_moved = (current_step_pos - self.stall_check_start_step_pos).abs();
+                    
+                    // Check every INTERVAL_STEPS
+                    if total_steps_moved >= ENCODER_STALL_CHECK_INTERVAL_STEPS {
+                        let encoder_ticks_moved = (current_encoder_ticks - self.stall_check_start_encoder_ticks).abs();
+                        
+                        if encoder_ticks_moved < ENCODER_STALL_MIN_TICKS {
+                            log::error!(
+                                "MOVE_ABORT ratio_stall_detected: total_steps={} encoder_ticks={} (minimum required={})",
+                                total_steps_moved,
+                                encoder_ticks_moved,
+                                ENCODER_STALL_MIN_TICKS
+                            );
+                            let pos = self.motor.current_position();
+                            self.motor.set_current_position(pos); // hard stop
+                            let _ = self.relay.set_low(); // Turn relay OFF on stall abort
+                            return MoveOutcome::AbortedStall;
+                        }
+                        
+                        // Reset for next interval
+                        self.stall_check_start_encoder_ticks = current_encoder_ticks;
+                        self.stall_check_start_step_pos = current_step_pos;
+                        self.stall_check_last_interval_step = current_step_pos;
+                        log::debug!(
+                            "Ratio-based stall check passed: {} ticks over {} steps, resetting for next interval",
+                            encoder_ticks_moved,
+                            total_steps_moved
+                        );
+                    }
                 }
 
                 // Encoder overshoot protection (EncoderGuarded mode only).

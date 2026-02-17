@@ -42,7 +42,7 @@ impl EncoderRecoverySwitches {
         Self {
             enabled: true,
             probe_interval_secs: 30,
-            probe_steps: 1000,
+            probe_steps: 10000,
             max_drift_deg: 5.0,
             rehome_dir: Direction::Ccw,
         }
@@ -140,7 +140,7 @@ impl EncoderFaultRecovery {
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
             self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
-            std::thread::sleep(Duration::from_secs(30));
+            std::thread::sleep(Duration::from_secs(90));
             return Ok(true);
         }
 
