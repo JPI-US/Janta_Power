@@ -14,8 +14,9 @@ pub const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
 pub const NVS_KEY_LAST_RUN_NORMAL: &str = "last_run_normal"; // 1=Normal, 0=Admin/Other
 
 // Daily encoder mode reset tracking
-pub const NVS_KEY_ENCODER_MODE_RESET_DATE: &str = "encoder_mode_reset_date"; // "YYYY-MM-DD" format
-pub const NVS_KEY_ENCODER_DAILY_MODE: &str = "encoder_daily_mode"; // 1=true (switched due to daily probe failures), 0=false
+// NOTE: ESP-IDF NVS key names are limited to 15 bytes max.
+pub const NVS_KEY_ENCODER_MODE_RESET_DATE: &str = "enc_rst_date"; // "YYYY-MM-DD" format
+pub const NVS_KEY_ENCODER_DAILY_MODE: &str = "enc_daily_mode"; // 1=true (switched due to daily probe failures), 0=false
 
 // Encoder snapshot version (u32) stored in NVS.
 pub const ENC_SNAPSHOT_VERSION: u32 = 1;
