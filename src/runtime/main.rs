@@ -42,7 +42,6 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::app::encoder_fault::{EncoderFaultRecovery, Direction, EncoderRecoverySwitches};
-use crate::constants::RunMode;
 
 fn main() -> anyhow::Result<()> {
     
@@ -68,9 +67,6 @@ fn main() -> anyhow::Result<()> {
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
 
-    // Production deployment: Always Normal mode, no runtime mode switching
-    let active_mode = RunMode::Normal;
-    
     let last_run_normal = infra::SnapshotStore::new(&mut nvs, true)
         .load_last_run_normal_or_init(true);
     let trust_nvs_state = last_run_normal;  // Always trust NVS in Normal mode
