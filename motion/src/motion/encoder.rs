@@ -2,7 +2,10 @@
 //
 // Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
 
-use super::{Motion, MoveOutcome, ENC_TICKS_PER_REV, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
+use super::{
+    Motion, MoveOutcome, ENC_TICKS_PER_REV, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
+    ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
+};
 
 // Encoder calibration (output shaft): loaded from .env file at compile time.
 const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
@@ -43,9 +46,7 @@ impl Motion<'_> {
     /// ticks as a servo; it simply checks for *any* tick movement.
     pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
         let start_ticks = self.encoder_ticks_adjusted();
-        self.relay_on();
         let outcome = self.move_by(probe_steps);
-        self.relay_off();
 
         if outcome != MoveOutcome::Completed {
             log::warn!("Encoder probe aborted: {:?}", outcome);
@@ -55,12 +56,15 @@ impl Motion<'_> {
         let end_ticks = self.encoder_ticks_adjusted();
         let encoder_ticks_moved = (end_ticks - start_ticks).abs();
         
-        // Scaled-down ratio check: minimum expected ticks for probe
-        // For 10k steps, require at least 20 ticks
-        // Formula: (probe_steps / INTERVAL_STEPS) * MIN_TICKS, rounded up
-        let min_expected_ticks = ((probe_steps.abs() as f64 / ENCODER_STALL_CHECK_INTERVAL_STEPS as f64) * ENCODER_STALL_MIN_TICKS as f64).ceil() as i32;
-        // For 10k steps specifically, use 20 ticks minimum (user requirement)
-        let min_expected_ticks = if probe_steps.abs() == 10000 { 20 } else { min_expected_ticks };
+        // Probe pass condition is intentionally a bit looser than the runtime ratio stall check.
+        // Default: 50k steps must produce at least 80 ticks (configurable via .env).
+        let min_expected_ticks = if probe_steps.abs() == ENCODER_PROBE_STEPS {
+            ENCODER_PROBE_MIN_TICKS
+        } else {
+            ((probe_steps.abs() as f64 / ENCODER_STALL_CHECK_INTERVAL_STEPS as f64)
+                * ENCODER_STALL_MIN_TICKS as f64)
+                .ceil() as i32
+        };
         
         let moved = encoder_ticks_moved >= min_expected_ticks;
         log::info!(

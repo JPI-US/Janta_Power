@@ -7,7 +7,7 @@ use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
-    constants::HOME_HEADING_DEG,
+    constants::{ENCODER_PROBE_STEPS, HOME_HEADING_DEG},
     infra,
     infra::SnapshotStore,
 };
@@ -42,7 +42,7 @@ impl EncoderRecoverySwitches {
         Self {
             enabled: true,
             probe_interval_secs: 30,
-            probe_steps: 10000,
+            probe_steps: ENCODER_PROBE_STEPS,
             max_drift_deg: 5.0,
             rehome_dir: Direction::Ccw,
         }

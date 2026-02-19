@@ -53,6 +53,8 @@ fn generate_constants() {
     // Encoder Constants
     constants.push_str("// Encoder Constants\n");
     constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
+    constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
+    constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
     constants.push_str("\n");
     
     // Stall Detection
