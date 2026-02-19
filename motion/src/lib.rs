@@ -3,8 +3,8 @@ pub mod motion {
     use astronav::coords::noaa_sun::NOAASun;
     use clock::Clock;
     use std::time::{Duration, Instant};
-    use esp_idf_svc::hal::gpio::{Gpio15, Gpio16, Gpio17, Gpio14, Gpio47, Gpio21, Input, Output, PinDriver};
-    use quadrature_encoder::{IncrementalEncoder, Rotary, HalfStep};
+    use esp_idf_svc::hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver};
+    use quadrature_encoder::{IncrementalEncoder, Rotary, QuadStep};
     use esp_idf_svc::nvs::*;
     use network::mqtt::Mqtt;
     use wifi::wifi::{Wifi, WifiState};
@@ -59,7 +59,7 @@ pub mod motion {
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
-        encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio47, Input>, PinDriver<'a, Gpio21, Input>, HalfStep>,
+        encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio10, Input>, PinDriver<'a, Gpio11, Input>, QuadStep>,
         // Encoder "reset" is implemented as a software offset: displayed_position = raw - offset.
         encoder_zero_offset: i32,
         // Limit-switch edge detection / debounce state (active-low switch).
@@ -102,17 +102,27 @@ pub mod motion {
     // CW: direction
     // CCW: step
     impl Motion<'_> {
-        pub fn new<'a>(p10: Gpio15, p11: Gpio16, p7: Gpio17, p6: Gpio14, p47: Gpio47, p21: Gpio21) -> Motion<'a> {
-            let step = PinDriver::output(p10).unwrap();
-            let direction = PinDriver::output(p11).unwrap();
-            let relay = PinDriver::output(p7).unwrap();
-            let mut lmsw = PinDriver::input(p6).unwrap();
-            let encoder_a = PinDriver::input(p47).unwrap();
-            let encoder_b = PinDriver::input(p21).unwrap();
+        pub fn new<'a>(
+            step_pin: Gpio15,
+            direction_pin: Gpio16,
+            relay_pin: Gpio17,
+            limit_switch_pin: Gpio14,
+            encoder_a_pin: Gpio10,
+            encoder_b_pin: Gpio11,
+        ) -> Motion<'a> {
+            let step = PinDriver::output(step_pin).unwrap();
+            let direction = PinDriver::output(direction_pin).unwrap();
+            // Relay is wired as active-low (LOW = ON, HIGH = OFF).
+            // Ensure we boot with relay OFF to avoid powering the motor unexpectedly.
+            let mut relay = PinDriver::output(relay_pin).unwrap();
+            relay.set_high().unwrap_or_default();
+            let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
+            let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
+            let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
 
-            let encoder = IncrementalEncoder::<Rotary, _, _, HalfStep>::new(encoder_a, encoder_b);
+            let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
             Motion {
@@ -196,6 +206,18 @@ pub mod motion {
             self.relay.toggle().unwrap_or_default();
         }
 
+        #[inline]
+        pub(crate) fn relay_on(&mut self) {
+            // Active-low: LOW = ON
+            self.relay.set_low().unwrap_or_default();
+        }
+
+        #[inline]
+        pub(crate) fn relay_off(&mut self) {
+            // Active-low: HIGH = OFF
+            self.relay.set_high().unwrap_or_default();
+        }
+
 
 
         pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
@@ -271,23 +293,23 @@ pub mod motion {
                 // Single-path daytime tracking:
                 // If we're within deadband, do nothing. Otherwise execute a movement based on offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
-                    let _ = self.relay.set_low().unwrap_or_default();
+                    self.relay_off();
                     return true;
                 }
 
-                self.relay.set_high().unwrap_or_default();
+                self.relay_on();
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                         log::info!("Steps Needed: {}", steps as i64);
                 let move_outcome = self.move_by(steps as i64);
                 if move_outcome != MoveOutcome::Completed {
-                    self.relay.set_low().unwrap_or_default();
+                    self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
                     return true;
                 }
                         self.update_position((location as f64 + angle_offset) as f32);
-                self.relay.set_low().unwrap_or_default();
+                self.relay_off();
 
                 // Publish message
                         let payload = format!(
