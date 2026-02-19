@@ -73,48 +73,10 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
-        use super::HOME_HEADING_DEG;
-        
-        // Set homing flag to disable overshoot protection during homing
-        self.is_homing = true;
-        
-        // If limit switch is already pressed, do nothing
-        if self.lmsw.is_low() {
-            log::info!("Limit switch already pressed - skipping homing");
-            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
-            self.update_position(HOME_HEADING_DEG);
-            self.force_zero_if_limit_switch_pressed();
-            self.is_homing = false;  // Clear homing flag
-            return true;
-        }
-        
-        self.relay_on();
-        // Convention for *current wiring*: positive step movement = physical CW.
-        log::info!("Looking for the limit switch (CW search)");
-
-        let mut max_steps = calculate_steps(360.0);
-        while max_steps > 0 && self.lmsw.is_high() {
-            let step_movement = calculate_steps(1.0);
-            if self.move_by(step_movement) != MoveOutcome::Completed {
-                self.relay_off();
-                self.is_homing = false;  // Clear homing flag on failure
-                return false;
-            }
-            max_steps -= step_movement;
-        }
-
-        self.relay_off();
-        if max_steps > 0 {
-            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
-            self.update_position(HOME_HEADING_DEG);
-            self.relay_off();
-            self.force_zero_if_limit_switch_pressed();
-            self.is_homing = false;  // Clear homing flag on success
-            return true;
-        }
-        log::error!("Limit Switch was not found!");
-        self.is_homing = false;  // Clear homing flag on failure
-        return false;
+        // Stage 2: CCW-only homing (Spec A). Keep the CW API as a wrapper so existing
+        // call sites remain safe.
+        log::warn!("Homing requested CW, but firmware is configured for CCW-only homing; using CCW search");
+        self.find_limit_switch_ccw()
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
@@ -122,25 +84,33 @@ impl Motion<'_> {
         
         // Set homing flag to disable overshoot protection during homing
         self.is_homing = true;
+
+        // During homing, we want old-style behavior: keep searching until the switch is found
+        // or we hit the travel budget. Stall detection can cause confusing abort cascades here,
+        // so we disable it temporarily and restore it afterwards.
+        let stall_prev = self.stall_detection_enabled();
+        self.set_stall_detection_enabled(false);
         
         // If limit switch is already pressed, do nothing
         if self.lmsw.is_low() {
             log::info!("Limit switch already pressed - skipping homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
+            self.set_stall_detection_enabled(stall_prev);
             self.is_homing = false;  // Clear homing flag
             return true;
         }
         
         self.relay_on();
         // Convention for *current wiring*: negative step movement = physical CCW.
-        log::info!("Looking for the limit switch (CCW search)");
+        log::info!("Looking for the limit switch (CCW search, max 350°)");
 
-        let mut max_steps = calculate_steps(-360.0);
+        let mut max_steps = calculate_steps(-350.0);
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay_off();
+                self.set_stall_detection_enabled(stall_prev);
                 self.is_homing = false;  // Clear homing flag on failure
                 return false;
             }
@@ -153,9 +123,11 @@ impl Motion<'_> {
             self.update_position(HOME_HEADING_DEG);
             self.relay_off();
             self.force_zero_if_limit_switch_pressed();
+            self.set_stall_detection_enabled(stall_prev);
             self.is_homing = false;  // Clear homing flag on success
             return true;
         }
+        self.set_stall_detection_enabled(stall_prev);
         self.is_homing = false;  // Clear homing flag on failure
         false
     }
