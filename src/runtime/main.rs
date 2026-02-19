@@ -429,31 +429,15 @@ fn main() -> anyhow::Result<()> {
                 HOMING_DIRECTION.as_str()
             ),
             false => {
-                // In EncoderGuarded mode, homing failure might be due to encoder stall - trigger recovery
-                if motion_mode == MotionMode::EncoderGuarded {
-                    log::warn!("Homing failed in EncoderGuarded mode - triggering encoder fault recovery");
-                    let encoder_recovery_cfg = app::encoder_fault::EncoderRecoverySwitches::default();
-                    if let Err(e) = encoder_fault.on_move_outcome(
-                        MoveOutcome::AbortedStall,
-                        &encoder_recovery_cfg,
-                        &mut motion,
-                        &mut nvs,
-                        PERSIST_NVS,
-                    ) {
-                        error!("Error triggering encoder fault recovery after homing failure: {:?}", e);
-                    }
-                    // Don't enter critical failure loop - encoder fault recovery will handle it
-                } else {
-                    log::error!(
-                        "Homing FAILED (dir={}): limit switch could not be found",
-                        HOMING_DIRECTION.as_str()
-                    );
-                    infra::Telemetry::critical_failure_loop(
-                        &mut mqtt,
-                        b"Critical failure: Limit switch failure!",
-                        PUBLISH_MQTT,
-                    );
-                }
+                log::error!(
+                    "Homing FAILED (dir={}): limit switch could not be found",
+                    HOMING_DIRECTION.as_str()
+                );
+                infra::Telemetry::critical_failure_loop(
+                    &mut mqtt,
+                    b"Critical failure: Limit switch failure!",
+                    PUBLISH_MQTT,
+                );
             }
         }
         // After a successful homing run, re-seed NVS with a clean baseline.
@@ -540,8 +524,11 @@ fn main() -> anyhow::Result<()> {
                 }
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    // Don't enter critical failure loop - continue and try again next iteration
-                    // Keep flag set to try again
+                    infra::Telemetry::critical_failure_loop(
+                        &mut mqtt,
+                        b"Critical failure: Limit switch failure!",
+                        PUBLISH_MQTT,
+                    );
                 }
             }
             thread::sleep(Duration::from_secs(2));  // Brief pause after homing attempt
@@ -617,8 +604,11 @@ fn main() -> anyhow::Result<()> {
                 }
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    // Don't enter critical failure loop - continue and try again next iteration
-                    // Keep flag set to try again
+                    infra::Telemetry::critical_failure_loop(
+                        &mut mqtt,
+                        b"Critical failure: Limit switch failure!",
+                        PUBLISH_MQTT,
+                    );
                 }
             }
             thread::sleep(Duration::from_secs(2));  // Brief pause after homing attempt
