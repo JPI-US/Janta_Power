@@ -41,7 +41,7 @@ fn generate_constants() {
     constants.push_str("// Motor/Mechanical Constants\n");
     constants.push_str(&get_env("MICROSTEPS", "25600.0", "f64"));
     constants.push_str(&get_env("GEAR_REDUCTION", "1.0", "f64"));
-    constants.push_str(&get_env("SLEW_BEARING", "84.0", "f64"));
+    constants.push_str(&get_env("SLEW_BEARING", "85.0", "f64"));
     constants.push_str(&get_env("DEFAULT_MAX_SPEED_STEPS_PER_S", "5000.0", "f32"));
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
@@ -56,7 +56,7 @@ fn generate_constants() {
     constants.push_str("// Stall Detection\n");
     constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "i64"));
     constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "800", "i64"));
-    constants.push_str(&get_env("ENCODER_STALL_MIN_TICKS", "400", "i32"));
+    constants.push_str(&get_env("ENCODER_STALL_MIN_TICKS", "200", "i32"));
     constants.push_str(&get_env("ENCODER_STALL_CHECK_INTERVAL_STEPS", "120000", "i64"));
     constants.push_str("\n");
     
