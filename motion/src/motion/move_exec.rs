@@ -19,7 +19,7 @@ impl Motion<'_> {
 
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {
         // Turn relay ON before starting motor movement
-        let _ = self.relay.set_high();
+        self.relay_on();
         log::info!("Relay ON - Starting motor movement");
 
         // Reset stall detector baseline for this move so we don't accidentally compare
@@ -55,7 +55,7 @@ impl Motion<'_> {
         let outcome = self.run();
         
         // Turn relay OFF after movement completes or aborts
-        let _ = self.relay.set_low();
+        self.relay_off();
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
         
         self.last_move_outcome = Some(outcome);
@@ -64,7 +64,7 @@ impl Motion<'_> {
 
     pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
         // Turn relay ON before starting motor movement
-        let _ = self.relay.set_high();
+        self.relay_on();
         log::info!("Relay ON - Starting motor movement (ticks)");
 
         let now = Instant::now();
@@ -96,7 +96,7 @@ impl Motion<'_> {
         let outcome = self.run();
         
         // Turn relay OFF after movement completes or aborts
-        let _ = self.relay.set_low();
+        self.relay_off();
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
         
         self.last_move_outcome = Some(outcome);
@@ -115,7 +115,7 @@ impl Motion<'_> {
                     log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos); // hard stop
-                    let _ = self.relay.set_low(); // Turn relay OFF on abort
+                    self.relay_off(); // Turn relay OFF on abort
                     return MoveOutcome::AbortedPowerMissing;
                 }
 
@@ -165,7 +165,7 @@ impl Motion<'_> {
                         log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos); // hard stop
-                        let _ = self.relay.set_low(); // Turn relay OFF on stall abort
+                        self.relay_off(); // Turn relay OFF on stall abort
                         return MoveOutcome::AbortedStall;
                     }
 
@@ -195,7 +195,7 @@ impl Motion<'_> {
                             );
                             let pos = self.motor.current_position();
                             self.motor.set_current_position(pos); // hard stop
-                            let _ = self.relay.set_low(); // Turn relay OFF on stall abort
+                            self.relay_off(); // Turn relay OFF on stall abort
                             return MoveOutcome::AbortedStall;
                         }
                         
@@ -236,7 +236,7 @@ impl Motion<'_> {
                         );
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos); // hard stop
-                        let _ = self.relay.set_low(); // Turn relay OFF on overshoot abort
+                        self.relay_off(); // Turn relay OFF on overshoot abort
                         // Clear overshoot tracking
                         self.overshoot_enc_start = None;
                         self.overshoot_expected_ticks = None;
@@ -250,21 +250,11 @@ impl Motion<'_> {
                 // Critical: During homing, if limit switch is pressed, stop immediately
                 // This allows the homing code to detect we're at home and complete successfully
                 if self.is_homing && self.lmsw.is_low() {
-                    let distance_to_go = self.motor.distance_to_go();
-                    // During pre-homing CW move, hitting limit switch is unexpected (we should be moving away from home)
-                    if distance_to_go > 0 {
-                        log::error!("CRITICAL: Limit switch hit during pre-homing CW move - aborting immediately! This should never happen if pre-homing works correctly.");
-                        let pos = self.motor.current_position();
-                        self.motor.set_current_position(pos); // hard stop
-                        let _ = self.relay.set_low(); // Turn relay OFF
-                        return MoveOutcome::AbortedStall; // Use AbortedStall to trigger encoder fault recovery
-                    }
-                    // During CCW search (or any homing move), hitting limit switch means we found home
-                    // Stop immediately so homing code can detect success
+                    // Stop immediately so homing code can detect success.
                     log::info!("Limit switch pressed during homing - found home, stopping immediately");
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos); // hard stop
-                    let _ = self.relay.set_low(); // Turn relay OFF
+                    self.relay_off(); // Turn relay OFF
                     return MoveOutcome::Completed; // Return Completed so homing code can detect success
                 }
 

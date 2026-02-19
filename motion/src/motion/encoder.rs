@@ -43,9 +43,9 @@ impl Motion<'_> {
     /// ticks as a servo; it simply checks for *any* tick movement.
     pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
         let start_ticks = self.encoder_ticks_adjusted();
-        self.relay.set_high().unwrap_or_default();
+        self.relay_on();
         let outcome = self.move_by(probe_steps);
-        self.relay.set_low().unwrap_or_default();
+        self.relay_off();
 
         if outcome != MoveOutcome::Completed {
             log::warn!("Encoder probe aborted: {:?}", outcome);
