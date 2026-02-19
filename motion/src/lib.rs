@@ -20,6 +20,9 @@ pub mod motion {
     // Include auto-generated constants from .env file
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
+    // ESP-IDF NVS key names are limited to 15 characters.
+    const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
+
     // Motor movement constants.
     //
     // Constants are now loaded from .env file at compile time.
@@ -329,7 +332,89 @@ pub mod motion {
             } 
             else {// Sunset Operation 
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
-                    log::info!("Already reached sleep position");
+                    // Home verification check:
+                    // Do not trust heading alone to skip homing. If we're "at home" by heading but
+                    // the physical limit switch is not pressed, run a CCW homing search once.
+                    if self.lmsw.is_high() {
+                        log::warn!(
+                            "Heading near home but limit switch not pressed; verifying home by homing CCW"
+                        );
+                        let ok = self.find_limit_switch_ccw();
+                        if ok {
+                            log::info!("Home verification homing succeeded");
+
+                            // Publish + persist daily home error (ticks) if we captured it.
+                            if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
+                                let payload = format!("{}", home_error_ticks);
+                                if publish_mqtt {
+                                    if let Err(e) = mqtt.publish(
+                                        "device1A/tower/home_error_ticks",
+                                        payload.as_bytes(),
+                                    ) {
+                                        log::error!(
+                                            "Failed to publish home_error_ticks: {:?}",
+                                            e
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "Published home_error_ticks={}",
+                                            home_error_ticks
+                                        );
+                                    }
+                                } else {
+                                    log::info!(
+                                        "MQTT publish disabled: skipping home_error_ticks publish"
+                                    );
+                                }
+
+                                if persist_nvs {
+                                    if let Err(e) =
+                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
+                                    {
+                                        log::warn!(
+                                            "Failed to store home_error_ticks in NVS: {:?}",
+                                            e
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "Stored home_error_ticks in NVS: {}",
+                                            home_error_ticks
+                                        );
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "NVS persist disabled: skipping home_error_ticks store"
+                                    );
+                                }
+                            } else {
+                                log::warn!("No home_error_ticks captured on this homing run");
+                            }
+                        } else {
+                            log::error!(
+                                "Home verification failed: limit switch could not be found"
+                            );
+                            loop {
+                                if publish_mqtt {
+                                    if let Err(e) = mqtt.publish(
+                                        "device1A/tower/status",
+                                        b"Critical failure: Limit switch failure!",
+                                    ) {
+                                        log::error!(
+                                            "Failed to publish critical error message: {:?}",
+                                            e
+                                        );
+                                    }
+                                } else {
+                                    log::error!(
+                                        "Critical failure: Limit switch failure! (MQTT disabled)"
+                                    );
+                                }
+                                thread::sleep(Duration::from_secs(900)); // every 15 minutes
+                            }
+                        }
+                    }
+
+                    log::info!("At sleep position");
                     // Ensure encoder ticks are truly 0 at home while we sleep.
                     self.force_zero_if_limit_switch_pressed();
 
@@ -398,7 +483,9 @@ pub mod motion {
                                 }
 
                                 if persist_nvs {
-                                    if let Err(e) = nvs.set_i32("home_error_ticks", home_error_ticks) {
+                                    if let Err(e) =
+                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
+                                    {
                                         log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
                                     } else {
                                         log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
