@@ -321,7 +321,7 @@ pub mod motion {
                             location as f64 + angle_offset
                         );
                 if publish_mqtt {
-                    match mqtt.publish("device1A/data", payload.as_bytes()) {
+                    match mqtt.publish("device5/data", payload.as_bytes()) {
                             Ok(_) => log::info!("Published data payload successfully"),
                             Err(e) => log::error!("Failed to publish data payload: {:?}", e),
                         }
@@ -348,7 +348,7 @@ pub mod motion {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
                                     if let Err(e) = mqtt.publish(
-                                        "device1A/tower/home_error_ticks",
+                                        "device5/tower/home_error_ticks",
                                         payload.as_bytes(),
                                     ) {
                                         log::error!(
@@ -396,7 +396,7 @@ pub mod motion {
                             loop {
                                 if publish_mqtt {
                                     if let Err(e) = mqtt.publish(
-                                        "device1A/tower/status",
+                                        "device5/tower/status",
                                         b"Critical failure: Limit switch failure!",
                                     ) {
                                         log::error!(
@@ -473,7 +473,7 @@ pub mod motion {
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish("device1A/tower/home_error_ticks", payload.as_bytes()) {
+                                    if let Err(e) = mqtt.publish("device5/tower/home_error_ticks", payload.as_bytes()) {
                                         log::error!("Failed to publish home_error_ticks: {:?}", e);
                                     } else {
                                         log::info!("Published home_error_ticks={}", home_error_ticks);
@@ -501,7 +501,7 @@ pub mod motion {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
                                 if publish_mqtt {
-                                if let Err(e) = mqtt.publish("device1A/tower/status", b"Critical failure: Limit switch failure!") {
+                                if let Err(e) = mqtt.publish("device5/tower/status", b"Critical failure: Limit switch failure!") {
                                     log::error!("Failed to publish critical error message: {:?}", e);
                                     }
                                 } else {

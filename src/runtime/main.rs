@@ -41,7 +41,7 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::app::encoder_fault::{EncoderFaultRecovery, Direction, EncoderRecoverySwitches};
+use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 fn main() -> anyhow::Result<()> {
     
@@ -178,7 +178,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device1A_pub",
+        "device5_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
@@ -247,6 +247,7 @@ fn main() -> anyhow::Result<()> {
     // Publish firmware version to MQTT
     infra::Telemetry::publish_firmware_version_if(
         &mut mqtt,
+        formatted_time.clone(),
         &current_version,
         PUBLISH_MQTT,
     );
@@ -649,6 +650,7 @@ fn main() -> anyhow::Result<()> {
         }
         infra::Telemetry::publish_firmware_version_if(
             &mut mqtt,
+            formatted_time.clone(),
             &current_version,
             PUBLISH_MQTT,
         );

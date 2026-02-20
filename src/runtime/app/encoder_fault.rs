@@ -227,7 +227,11 @@ impl EncoderFaultRecovery {
             log::warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
+        let formatted_time = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
+            .format("%d/%m/%Y %H:%M:%S")
+            .to_string();
+        infra::Telemetry::publish_firmware_version_if(mqtt, formatted_time, current_version, publish_mqtt);
         Ok(())
     }
 
@@ -263,7 +267,7 @@ impl EncoderFaultRecovery {
         // Publish MQTT notification
         let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
         if publish_mqtt {
-            if let Err(e) = mqtt.publish("device1A/status/encoder_mode", mqtt_message.as_bytes()) {
+            if let Err(e) = mqtt.publish("device5/status/encoder_mode", mqtt_message.as_bytes()) {
                 log::warn!("Failed to publish encoder mode switch message: {:?}", e);
             } else {
                 log::info!("Published encoder mode switch message to MQTT");

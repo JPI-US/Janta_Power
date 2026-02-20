@@ -4,23 +4,24 @@ use semver::Version;
 use network::mqtt::Mqtt;
 
 // Centralized MQTT topics.
-pub const TOPIC_BOOT: &str = "device1A/boot";
-pub const TOPIC_FIRMWARE_VERSION: &str = "device1A/firmware/version";
-pub const TOPIC_TOWER_STATUS: &str = "device1A/tower/status";
+pub const TOPIC_BOOT: &str = "device5/boot";
+pub const TOPIC_FIRMWARE_VERSION: &str = "device5/firmware/version";
+pub const TOPIC_TOWER_STATUS: &str = "device5/tower/status";
 
 pub struct Telemetry;
 
 impl Telemetry {
-    pub fn publish_firmware_version_if(mqtt: &mut Mqtt, version: &Version, enabled: bool) {
+    pub fn publish_firmware_version_if(mqtt: &mut Mqtt, formatted_time: String, version: &Version, enabled: bool) {
         if !enabled {
             warn!("MQTT publish disabled: skipping firmware version publish");
             return;
         }
-        Self::publish_firmware_version(mqtt, version);
+        Self::publish_firmware_version(mqtt, formatted_time, version);
     }
 
-    pub fn publish_firmware_version(mqtt: &mut Mqtt, version: &Version) {
-        let payload = format!("The current firmware version is: {}", version.to_string());
+    pub fn publish_firmware_version(mqtt: &mut Mqtt, formatted_time: String, version: &Version) {
+        // let payload = format!("The current firmware version is: {}", version.to_string());
+        let payload = format!("Current time: {}, version is: {}", formatted_time.clone(), version.to_string());
         match mqtt.publish(TOPIC_FIRMWARE_VERSION, payload.as_bytes()) {
             Ok(_) => info!("Published firmware version"),
             Err(e) => warn!("Failed to publish firmware version: {:?}", e),
