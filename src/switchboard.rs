@@ -172,7 +172,7 @@ pub enum Profile {
 const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
     RecoveryMoveSpec {
         dir: Direction::Cw,
-        deg: 10.0,
+        deg: 360.0,
     },
     RecoveryMoveSpec {
         dir: Direction::Ccw,
@@ -248,7 +248,7 @@ pub const fn diagnostic() -> Switchboard {
                 enabled: true,
                 moves: DEFAULT_RECOVERY_MOVES,
                 verify_with_encoder: true,
-                verify_tol_deg: 100.0,
+                verify_tol_deg: 2.0,
                 stop_on_verify_fail: true,
                 stop_after: true,
                 disable_stall_detection: true,
@@ -281,17 +281,17 @@ pub const fn diagnostic() -> Switchboard {
         effects: EffectsSwitches {
             // Diagnostics usually want to avoid touching flash, but still allow MQTT for tests.
             publish_mqtt: true,
-            persist_nvs: false,
+            persist_nvs: true,
             allow_ota: false,
             allow_boot_validation: false,
         },
         admin: AdminSwitches {
             enabled: true,
-            run_recovery_on_start: false,
+            run_recovery_on_start: true,
             run_homing_on_start: false,
             tests: AdminTestsSwitches {
-                motor_test: true,
-                encoder_test: true,
+                motor_test: false,
+                encoder_test: false,
                 persistence_test: false,
                 wifi_mqtt_test: false,
             },
@@ -312,4 +312,3 @@ pub const fn active(profile: Profile) -> Switchboard {
         Profile::Custom => custom(),
     }
 }
-

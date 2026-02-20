@@ -3,8 +3,8 @@ pub mod motion {
     use astronav::coords::noaa_sun::NOAASun;
     use clock::Clock;
     use std::time::{Duration, Instant};
-    use esp_idf_svc::hal::gpio::{Gpio15, Gpio16, Gpio17, Gpio14, Gpio47, Gpio21, Input, Output, PinDriver};
-    use quadrature_encoder::{IncrementalEncoder, Rotary, HalfStep};
+    use esp_idf_svc::hal::gpio::{Gpio15, Gpio16, Gpio17, Gpio14, Gpio10, Gpio11, Input, Output, PinDriver};
+    use quadrature_encoder::{IncrementalEncoder, Rotary, QuadStep};
     use esp_idf_svc::nvs::*;
     use network::mqtt::Mqtt;
     use wifi::wifi::{Wifi, WifiState};
@@ -19,6 +19,11 @@ pub mod motion {
 
     // Include auto-generated constants from .env file
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
+
+    // Relay polarity.
+    //
+    // "Flip the relays": treat the relay as active-low (ON = GPIO low, OFF = GPIO high).
+    const RELAY_ACTIVE_LOW: bool = true;
 
     // Motor movement constants.
     //
@@ -59,7 +64,7 @@ pub mod motion {
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
-        encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio47, Input>, PinDriver<'a, Gpio21, Input>, HalfStep>,
+        encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio10, Input>, PinDriver<'a, Gpio11, Input>, QuadStep>,
         // Encoder "reset" is implemented as a software offset: displayed_position = raw - offset.
         encoder_zero_offset: i32,
         // Limit-switch edge detection / debounce state (active-low switch).
@@ -94,17 +99,24 @@ pub mod motion {
     // CW: direction
     // CCW: step
     impl Motion<'_> {
-        pub fn new<'a>(p10: Gpio15, p11: Gpio16, p7: Gpio17, p6: Gpio14, p47: Gpio47, p21: Gpio21) -> Motion<'a> {
+        pub fn new<'a>(p10: Gpio15, p11: Gpio16, p7: Gpio17, p6: Gpio14, p47: Gpio10, p21: Gpio11) -> Motion<'a> {
             let step = PinDriver::output(p10).unwrap();
             let direction = PinDriver::output(p11).unwrap();
-            let relay = PinDriver::output(p7).unwrap();
+            let mut relay = PinDriver::output(p7).unwrap();
             let mut lmsw = PinDriver::input(p6).unwrap();
             let encoder_a = PinDriver::input(p47).unwrap();
             let encoder_b = PinDriver::input(p21).unwrap();
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
 
-            let encoder = IncrementalEncoder::<Rotary, _, _, HalfStep>::new(encoder_a, encoder_b);
+            // Ensure relay is OFF at startup.
+            if RELAY_ACTIVE_LOW {
+                relay.set_high().unwrap_or_default();
+            } else {
+                relay.set_low().unwrap_or_default();
+            }
+
+            let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
             Motion {
@@ -182,7 +194,21 @@ pub mod motion {
             self.relay.toggle().unwrap_or_default();
         }
 
+        pub(crate) fn relay_on(&mut self) {
+            if RELAY_ACTIVE_LOW {
+                let _ = self.relay.set_low();
+            } else {
+                let _ = self.relay.set_high();
+            }
+        }
 
+        pub(crate) fn relay_off(&mut self) {
+            if RELAY_ACTIVE_LOW {
+                let _ = self.relay.set_high();
+            } else {
+                let _ = self.relay.set_low();
+            }
+        }
 
         pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             &mut self,

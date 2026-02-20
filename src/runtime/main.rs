@@ -112,8 +112,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Setup encoder pins
-    let encoder_a = peripherals.pins.gpio47;
-    let encoder_b = peripherals.pins.gpio21;
+    let encoder_a = peripherals.pins.gpio10;
+    let encoder_b = peripherals.pins.gpio11;
 
     // Setup I2C bus for Clock
     let sda = peripherals.pins.gpio8;
