@@ -92,8 +92,8 @@ impl Motion<'_> {
         } else {
             log::info!("Pre-homing move completed successfully");
         }
-        
-        self.relay.set_high().unwrap_or_default();
+
+        self.relay_on();
         // Convention for *current wiring*: positive step movement = physical CW.
         log::info!("Looking for the limit switch (CW search)");
 
@@ -101,17 +101,17 @@ impl Motion<'_> {
         while max_steps > 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
-                self.relay.set_low().unwrap_or_default();
+                self.relay_off();
                 return false;
             }
             max_steps -= step_movement;
         }
 
-        self.relay.set_low().unwrap_or_default();
+        self.relay_off();
         if max_steps > 0 {
             log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
             self.update_position(HOME_HEADING_DEG);
-            self.relay.set_low().unwrap_or_default();
+            self.relay_off();
             self.force_zero_if_limit_switch_pressed();
             return true;
         }
@@ -138,8 +138,8 @@ impl Motion<'_> {
         } else {
             log::info!("Pre-homing move completed successfully");
         }
-        
-        self.relay.set_high().unwrap_or_default();
+
+        self.relay_on();
         // Convention for *current wiring*: negative step movement = physical CCW.
         log::info!("Looking for the limit switch (CCW search)");
 
@@ -147,21 +147,22 @@ impl Motion<'_> {
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
-                self.relay.set_low().unwrap_or_default();
+                self.relay_off();
                 return false;
             }
             max_steps -= step_movement;
         }
 
-        self.relay.set_low().unwrap_or_default();
+        self.relay_off();
 
         if max_steps < 0 {
             self.update_position(HOME_HEADING_DEG);
-            self.relay.set_low().unwrap_or_default();
+            self.relay_off();
             self.force_zero_if_limit_switch_pressed();
             return true;
         }
         false
     }
 }
+
 
