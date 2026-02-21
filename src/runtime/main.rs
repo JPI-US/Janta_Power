@@ -270,7 +270,8 @@ fn main() -> anyhow::Result<()> {
     
     // PHASE 5: MOTION INITIALIZATION--------------------------------------------------
     
-    let tower_latitude: f64 = 32.797868;
+    // Tower location (Sadler, TX): 33.75944 N, -96.82722 W
+    let tower_latitude: f64 = 33.75944;
     if PERSIST_NVS {
         match nvs.set_str("tower_latitude", &tower_latitude.to_string()) {
             Ok(_) => info!("Tower latitude has been updated"),
@@ -278,7 +279,7 @@ fn main() -> anyhow::Result<()> {
         };
     }
 
-    let tower_longitude: f64 = -96.835597;
+    let tower_longitude: f64 = -96.82722;
     if PERSIST_NVS {
         match nvs.set_str("tower_longitude", &tower_longitude.to_string()) {
             Ok(_) => info!("Tower longitude has been updated"),
