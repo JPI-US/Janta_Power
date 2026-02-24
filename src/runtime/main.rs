@@ -263,7 +263,13 @@ fn main() -> anyhow::Result<()> {
     if ALLOW_OTA {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
-        updater.run_version_compare(&mut nvs)?;
+        if let Err(e) = updater.run_version_compare(&mut nvs) {
+            mqtt.publish("device5/firmware/status", b"OTA update failed!")?;
+            error!("Version compare failed: {:?}", e);
+        }
+        else {
+            info!("Version compare succeeded");
+        }
     } else {
         info!("OTA disabled: skipping version compare");
     }
