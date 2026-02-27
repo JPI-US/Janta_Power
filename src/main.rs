@@ -24,42 +24,7 @@ use ota::OtaUpdater;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-// Constants (Note to self: add these to .env file once done making one)
-const WIFI_CONNECT_DELAY_SECS: u64 = 20;
-const TRACKING_LOOP_SLEEP_SECS: u64 = 300;
-const OTA_CHECK_DELAY_SECS: u64 = 3;
-
-const MQTT_BROKER_URL: &str = "mqttS://mqtt.jantaus.com:9443";
-const MQTT_CLIENT_ID: &str = "device1A_pub";
-
-const DEFAULT_VERSION: &str = "1.0.4";
-const HEADING_TAG: &str = "heading";
-
-// ======== Encoder snapshot contract (Stage 0) ========
-// If you ever change meanings / units, bump this version and ignore old snapshots on boot.
-const ENC_SNAPSHOT_VERSION: u32 = 1;
-
-// NVS keys for resuming position after reboot (incremental encoder; tower is non-backdrivable).
-const NVS_KEY_ENC_SNAPSHOT_VERSION: &str = "enc_snapshot_v";
-const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
-// Optional keys we may add later:
-// const NVS_KEY_ENC_ZERO_OFFSET: &str = "enc_zero_offset";
-// const NVS_KEY_SNAPSHOT_STATE: &str = "enc_snap_state";
-
-// Home (limit switch) tolerance band for "did we actually return to 0?"
-// This is ticks, in the adjusted coordinate system (0 at limit switch).
-const ENC_HOME_TOL_TICKS: i32 = 50;
-
-const DEFAULT_MQTT_USER: &str = "device1A";
-const DEFAULT_MQTT_PASS: &str = "device1A";
-const DEFAULT_WIFI_SSID: &str = "Power2";
-const DEFAULT_WIFI_PASS: &str = "@Powerfuture22";
-const DEFAULT_TZ_OFFSET_HOURS: i32 = -5;
-
-const DEFAULT_TOWER_LATITUDE: f64 = 32.797868;
-const DEFAULT_TOWER_LONGITUDE: f64 = -96.835597;
-const DEFAULT_TOWER_ID: u32 = 1;
-
+mod switchboard;
 
 // This function must be provided when using embassy-sync/embassy-time-driver
 //Fixes the ldproxy linker error in 'tower'
@@ -70,6 +35,7 @@ pub extern "C" fn __pender() {
 
 // MAIN FUNCTION
 fn main() -> anyhow::Result<()> {
+    let sw = switchboard::normal();
     
     // SYSTEM INITIALIZATION
     esp_idf_svc::sys::link_patches();
@@ -101,31 +67,31 @@ fn main() -> anyhow::Result<()> {
     //CREDENTIALS CONFIGURATION 
     // todo!("Implement a .env");
     
-    let mqtt_user = "device1A";
+    let mqtt_user = sw.default_mqtt_user;
     match nvs.set_str("mqtt_user", mqtt_user) {
         Ok(_) => info!("Mqtt username updated"),
         Err(e) => error!("Mqtt username not updated {:?}", e),
     };
     
-    let mqtt_pass = "device1A";
+    let mqtt_pass = sw.default_mqtt_pass;
     match nvs.set_str("mqtt_pass", mqtt_pass) {
         Ok(_) => info!("Mqtt password updated"),
         Err(e) => error!("Mqtt password not updated {:?}", e),
     };
     
-    let wifi_ssid = "Power2";
+    let wifi_ssid = sw.default_wifi_ssid;
     match nvs.set_str("wifi_ssid", wifi_ssid) {
         Ok(_) => info!("Wifi ssid updated"),
         Err(e) => error!("Wifi ssid not updated {:?}", e),
     };
     
-    let wifi_pass = "@Powerfuture22";
+    let wifi_pass = sw.default_wifi_pass;
     match nvs.set_str("wifi_pass", wifi_pass) {
         Ok(_) => info!("Wifi password updated"),
         Err(e) => error!("Wifi password not updated {:?}", e),
     };
     
-    let offset_hours = -5;
+    let offset_hours = sw.default_tz_offset_hours;
     match nvs.set_i32("offset_hours", offset_hours) {
         Ok(_) => info!("Timezone offset has been updated"),
         Err(e) => error!("Timezone offset was not updated {:?}", e),
@@ -146,7 +112,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
     log::info!("Waiting for 20 seconds before connecting to wifi");
-    thread::sleep(Duration::from_secs(WIFI_CONNECT_DELAY_SECS));
+    thread::sleep(Duration::from_secs(sw.wifi_connect_delay_secs));
 	wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
 	info!("Current wifi state: {:?}", wifi.state());
     if wifi.state() == WifiState::Disconnected{
@@ -163,7 +129,9 @@ fn main() -> anyhow::Result<()> {
 
     let st_now = SystemTime::now();
     let dt_now_utc: DateTime<Utc> = st_now.clone().into();
-    let timezone_offset_hours: i32 = nvs.get_i32("offset_hours")?.unwrap_or(DEFAULT_TZ_OFFSET_HOURS);
+    let timezone_offset_hours: i32 = nvs
+        .get_i32("offset_hours")?
+        .unwrap_or(sw.default_tz_offset_hours);
     let local_time: DateTime<FixedOffset> = DateTime::from_naive_utc_and_offset(
         dt_now_utc.naive_utc(),
         FixedOffset::east_opt(timezone_offset_hours * 3600).unwrap(),
@@ -185,8 +153,8 @@ fn main() -> anyhow::Result<()> {
         .to_string();
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
-        MQTT_BROKER_URL,
-        MQTT_CLIENT_ID,
+        sw.mqtt_broker_url,
+        sw.mqtt_client_id,
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
@@ -225,12 +193,12 @@ fn main() -> anyhow::Result<()> {
 
     let mut version_buf = [0u8; 32];
     info!("Setting the firmware version...");
-    nvs.set_str("version", DEFAULT_VERSION)?;
+    nvs.set_str("version", sw.default_version)?;
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
         .map(|s| s.trim().parse::<Version>())
         .transpose()?
-        .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+        .unwrap_or_else(|| Version::parse(sw.default_version).unwrap());
 
     info!("The current firmware version is: {}", current_version.to_string());
     let mut payload = format!("The current firmware version is: {}", current_version.to_string());
@@ -239,31 +207,31 @@ fn main() -> anyhow::Result<()> {
     let mut updater = OtaUpdater::new_ota(
         current_version.clone(),
         &mut mqtt,
-        Some("device1A"),
-        Some("device1A"),
+        Some(sw.default_ota_updater),
+        Some(sw.default_ota_password),
     )
     .expect("Failed to create OTA updater instance");
 
     info!("Checking for new OTA update in 3 seconds...");
-    thread::sleep(Duration::from_secs(OTA_CHECK_DELAY_SECS));
+    thread::sleep(Duration::from_secs(sw.ota_check_delay_secs));
     updater.run_version_compare(&mut nvs)?;
 
      
     //TOWER CONFIGURATION
 
-    let tower_latitude: f64 = DEFAULT_TOWER_LATITUDE;
+    let tower_latitude: f64 = sw.default_tower_latitude;
     match nvs.set_str("tower_latitude", &tower_latitude.to_string()) {
         Ok(_) => info!("Tower latitude has been updated"),
         Err(e) => error!("Tower latitude was not updated {:?}", e),
     };
 
-    let tower_longitude: f64 = DEFAULT_TOWER_LONGITUDE;
+    let tower_longitude: f64 = sw.default_tower_longitude;
     match nvs.set_str("tower_longitude", &tower_longitude.to_string()) {
         Ok(_) => info!("Tower longitude has been updated"),
         Err(e) => error!("Tower longitude was not updated {:?}", e),
     };
 
-    let tower_id: u32 = DEFAULT_TOWER_ID;
+    let tower_id: u32 = sw.default_tower_id;
     let latitude = nvs
         .get_str("tower_latitude", &mut buffer)?
         .unwrap_or("0")
@@ -303,7 +271,7 @@ fn main() -> anyhow::Result<()> {
      
     // HEADING INITIALIZATION
 
-    let heading_tag = HEADING_TAG;
+    let heading_tag = sw.heading_tag;
     let mut actual_heading: f32 = 90.0;
 
     match nvs.set_u32(heading_tag, actual_heading.to_bits()) {
@@ -380,21 +348,21 @@ fn main() -> anyhow::Result<()> {
             // ======== Stage 2: persist encoder snapshot (non-backdrivable tower) ========
             // Convention: adjusted ticks are 0 at the limit switch, CW positive.
             let enc_ticks_adj = motion.encoder_ticks_adjusted();
-            if let Err(e) = nvs.set_u32(NVS_KEY_ENC_SNAPSHOT_VERSION, ENC_SNAPSHOT_VERSION) {
+            if let Err(e) = nvs.set_u32(sw.nvs_key_enc_snapshot_version, sw.enc_snapshot_version) {
                 warn!(
                     "Failed to store encoder snapshot version in NVS ({}): {:?}",
-                    NVS_KEY_ENC_SNAPSHOT_VERSION, e
+                    sw.nvs_key_enc_snapshot_version, e
                 );
             }
-            if let Err(e) = nvs.set_i32(NVS_KEY_ENC_TICKS_ADJ, enc_ticks_adj) {
+            if let Err(e) = nvs.set_i32(sw.nvs_key_enc_ticks_adj, enc_ticks_adj) {
                 warn!(
                     "Failed to store encoder ticks in NVS ({}): {:?}",
-                    NVS_KEY_ENC_TICKS_ADJ, e
+                    sw.nvs_key_enc_ticks_adj, e
                 );
             } else {
                 info!(
                     "Stored encoder snapshot in NVS: {}={} (v={})",
-                    NVS_KEY_ENC_TICKS_ADJ, enc_ticks_adj, ENC_SNAPSHOT_VERSION
+                    sw.nvs_key_enc_ticks_adj, enc_ticks_adj, sw.enc_snapshot_version
                 );
             }
         } else {
@@ -412,7 +380,7 @@ fn main() -> anyhow::Result<()> {
         payload = format!("The current firmware version is: {}", current_version.to_string());
         mqtt.publish("device1A/firmware/version", payload.as_bytes())?;
         
-        std::thread::sleep(Duration::from_secs(TRACKING_LOOP_SLEEP_SECS)); // 5-minute cycle
+        std::thread::sleep(Duration::from_secs(sw.tracking_loop_sleep_secs)); // 5-minute cycle
     }
 }
 

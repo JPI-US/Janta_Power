@@ -1,3 +1,11 @@
+/// Motion mode: StepperOnly (open-loop) vs EncoderGuarded (encoder-based guardrails).
+/// Phase 0: present for switchboard parity; unused until later phases.
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum MotionMode {
+    StepperOnly,
+    EncoderGuarded,
+}
+
 pub mod motion {
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use astronav::coords::noaa_sun::NOAASun;
