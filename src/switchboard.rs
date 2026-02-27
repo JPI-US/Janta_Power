@@ -161,6 +161,9 @@ const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
 /// Switchboard: policy/data only.
 #[derive(Copy, Clone, Debug)]
 pub struct Switchboard {
+    /// Device id used as MQTT topic prefix (e.g. "device5" -> "device5/firmware/status").
+    pub device_id: &'static str,
+
     // Timing
     pub wifi_connect_delay_secs: u64,
     pub tracking_loop_sleep_secs: u64,
@@ -202,6 +205,8 @@ pub struct Switchboard {
 
 pub const fn normal() -> Switchboard {
     Switchboard {
+        device_id: "device5",
+
         wifi_connect_delay_secs: 20,
         tracking_loop_sleep_secs: 300,
         ota_check_delay_secs: 3,

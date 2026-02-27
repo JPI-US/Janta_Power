@@ -112,6 +112,7 @@ impl EncoderFaultRecovery {
         current_version: &Version,
         publish_mqtt: bool,
         persist_nvs: bool,
+        device_id: &str,
     ) -> anyhow::Result<bool> {
         // Skip all encoder checks if we've already switched to StepperOnly for the day
         if self.mode_switched_daily {
@@ -124,6 +125,7 @@ impl EncoderFaultRecovery {
 
         if !cfg.enabled {
             infra::Telemetry::critical_failure_loop(
+                device_id,
                 mqtt,
                 b"Critical failure: encoder fault recovery disabled in switchboard!",
                 publish_mqtt,
@@ -139,7 +141,7 @@ impl EncoderFaultRecovery {
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
-            self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
+            self.housekeeping(wifi, mqtt, current_version, publish_mqtt, device_id)?;
             std::thread::sleep(Duration::from_secs(90));
             return Ok(true);
         }
@@ -153,12 +155,12 @@ impl EncoderFaultRecovery {
             // Check if we've hit the 3-strike limit for probe failures
             if self.probe_failure_count >= MAX_PROBE_FAILURES {
                 log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
-                self.switch_to_stepper_only_daily(motion, nvs, mqtt, publish_mqtt, persist_nvs)?;
+                self.switch_to_stepper_only_daily(motion, nvs, mqtt, publish_mqtt, persist_nvs, device_id)?;
                 return Ok(false);  // Mode switched, exit recovery loop
             }
             
             self.next_probe_at = Some(now_i + probe_interval);
-            self.housekeeping(wifi, mqtt, current_version, publish_mqtt)?;
+            self.housekeeping(wifi, mqtt, current_version, publish_mqtt, device_id)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
         }
@@ -200,6 +202,7 @@ impl EncoderFaultRecovery {
         };
         if !ok {
             infra::Telemetry::critical_failure_loop(
+                device_id,
                 mqtt,
                 b"Critical failure: re-home after encoder recovery failed!",
                 publish_mqtt,
@@ -222,6 +225,7 @@ impl EncoderFaultRecovery {
         mqtt: &mut Mqtt,
         current_version: &Version,
         publish_mqtt: bool,
+        device_id: &str,
     ) -> anyhow::Result<()> {
         if wifi.state() == WifiState::Disconnected {
             log::warn!("Wifi disconnected, attempting to reconnect...");
@@ -231,7 +235,13 @@ impl EncoderFaultRecovery {
             .with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
             .format("%d/%m/%Y %H:%M:%S")
             .to_string();
-        infra::Telemetry::publish_firmware_version_if(mqtt, formatted_time, current_version, publish_mqtt);
+        infra::Telemetry::publish_firmware_version_if(
+            device_id,
+            mqtt,
+            formatted_time,
+            current_version,
+            publish_mqtt,
+        );
         Ok(())
     }
 
@@ -243,6 +253,7 @@ impl EncoderFaultRecovery {
         mqtt: &mut Mqtt,
         publish_mqtt: bool,
         persist_nvs: bool,
+        device_id: &str,
     ) -> anyhow::Result<()> {
         // Change motion mode to StepperOnly
         motion.set_motion_mode(MotionMode::StepperOnly);
@@ -267,7 +278,8 @@ impl EncoderFaultRecovery {
         // Publish MQTT notification
         let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
         if publish_mqtt {
-            if let Err(e) = mqtt.publish("device5/status/encoder_mode", mqtt_message.as_bytes()) {
+            let topic = infra::topic(device_id, "status/encoder_mode");
+            if let Err(e) = mqtt.publish(&topic, mqtt_message.as_bytes()) {
                 log::warn!("Failed to publish encoder mode switch message: {:?}", e);
             } else {
                 log::info!("Published encoder mode switch message to MQTT");

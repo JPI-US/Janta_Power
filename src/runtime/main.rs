@@ -8,6 +8,8 @@ use std::thread;
 mod config;
 #[path = "../constants.rs"]
 mod constants;
+#[path = "../switchboard.rs"]
+mod switchboard;
 mod infra;
 mod app;
 #[path = "../diagnostics/mod.rs"]
@@ -44,7 +46,8 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 fn main() -> anyhow::Result<()> {
-    
+    let sw = switchboard::normal();
+
     // PHASE 1: INITIALIZATION--------------------------------------------------
     
     // Required for ESP-IDF patches
@@ -192,7 +195,7 @@ fn main() -> anyhow::Result<()> {
     
     // Run boot diagnostics (WiFi/MQTT connectivity check)
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
-        boot_diagnostic(&mut wifi, &mut mqtt, PUBLISH_MQTT)
+        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, PUBLISH_MQTT)
     } else {
         info!("Boot validation disabled");
         true
@@ -246,6 +249,7 @@ fn main() -> anyhow::Result<()> {
     
     // Publish firmware version to MQTT
     infra::Telemetry::publish_firmware_version_if(
+        sw.device_id,
         &mut mqtt,
         formatted_time.clone(),
         &current_version,
@@ -256,15 +260,16 @@ fn main() -> anyhow::Result<()> {
     let mut updater = OtaUpdater::new_ota(
         current_version.clone(),
         &mut mqtt,
-        Some("device1A"),
-        Some("device1A")
+        sw.device_id,
+        Some(sw.default_ota_updater),
+        Some(sw.default_ota_password),
     ).expect("Failed to create OTA updater instance");
 
     if ALLOW_OTA {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         if let Err(e) = updater.run_version_compare(&mut nvs) {
-            mqtt.publish("device5/firmware/status", b"OTA update failed!")?;
+            mqtt.publish(&infra::topic(sw.device_id, "firmware/status"), b"OTA update failed!")?;
             error!("Version compare failed: {:?}", e);
         }
         else {
@@ -438,6 +443,7 @@ fn main() -> anyhow::Result<()> {
                     HOMING_DIRECTION.as_str()
                 );
                 infra::Telemetry::critical_failure_loop(
+                    sw.device_id,
                     &mut mqtt,
                     b"Critical failure: Limit switch failure!",
                     PUBLISH_MQTT,
@@ -457,6 +463,7 @@ fn main() -> anyhow::Result<()> {
         log::warn!("Homing skipped: HOMING_ENABLED=false");
         if !trust_nvs_state {
             infra::Telemetry::critical_failure_loop(
+                sw.device_id,
                 &mut mqtt,
                 b"Critical failure: NVS state untrusted but homing disabled!",
                 PUBLISH_MQTT,
@@ -529,6 +536,7 @@ fn main() -> anyhow::Result<()> {
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
                     infra::Telemetry::critical_failure_loop(
+                        sw.device_id,
                         &mut mqtt,
                         b"Critical failure: Limit switch failure!",
                         PUBLISH_MQTT,
@@ -570,6 +578,7 @@ fn main() -> anyhow::Result<()> {
             &current_version,
             PUBLISH_MQTT,
             PERSIST_NVS,
+            sw.device_id,
         )? {
             continue;  // Fault active, skip tracking this iteration
         }
@@ -609,6 +618,7 @@ fn main() -> anyhow::Result<()> {
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
                     infra::Telemetry::critical_failure_loop(
+                        sw.device_id,
                         &mut mqtt,
                         b"Critical failure: Limit switch failure!",
                         PUBLISH_MQTT,
@@ -634,6 +644,7 @@ fn main() -> anyhow::Result<()> {
                 PUBLISH_MQTT,
                 PERSIST_NVS,
                 ALLOW_OTA,
+                sw.device_id,
             );
 
             if outcome != MoveOutcome::Completed {
@@ -656,6 +667,7 @@ fn main() -> anyhow::Result<()> {
             wifi.reconnect_if_disconnected()?;
         }
         infra::Telemetry::publish_firmware_version_if(
+            sw.device_id,
             &mut mqtt,
             formatted_time.clone(),
             &current_version,
@@ -669,7 +681,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mqtt: bool) -> bool {
+fn boot_diagnostic(device_id: &str, wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mqtt: bool) -> bool {
     // Let system settle before validation
     info!("Starting boot validation in 5 seconds...");
     thread::sleep(Duration::from_secs(5));
@@ -706,7 +718,7 @@ fn boot_diagnostic(wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mqtt: bool) -> bool
         }
 
         // Try publishing a test message
-        if infra::Telemetry::publish_boot_check_if(mqtt, publish_mqtt) {
+        if infra::Telemetry::publish_boot_check_if(device_id, mqtt, publish_mqtt) {
             return true;
         }
         error!("MQTT publish failed immediately");

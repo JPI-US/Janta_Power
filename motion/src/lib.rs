@@ -1,11 +1,3 @@
-/// Motion mode: StepperOnly (open-loop) vs EncoderGuarded (encoder-based guardrails).
-/// Phase 0: present for switchboard parity; unused until later phases.
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum MotionMode {
-    StepperOnly,
-    EncoderGuarded,
-}
-
 pub mod motion {
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use astronav::coords::noaa_sun::NOAASun;
@@ -37,7 +29,7 @@ pub mod motion {
     // Keep these in one place so all step calculations stay consistent.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
-    #[derive(PartialEq, Copy, Clone)]
+    #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
         // Stepper-only movement (open-loop).
         StepperOnly,
@@ -244,6 +236,7 @@ pub mod motion {
             publish_mqtt: bool,
             persist_nvs: bool,
             allow_ota: bool,
+            device_id: &str,
         ) -> bool {
             self.update_position(location);
             log::info!("{},", clock.after_sunrise());
@@ -329,7 +322,8 @@ pub mod motion {
                             location as f64 + angle_offset
                         );
                 if publish_mqtt {
-                    match mqtt.publish("device5/data", payload.as_bytes()) {
+                    let topic = format!("{}/data", device_id);
+                    match mqtt.publish(&topic, payload.as_bytes()) {
                             Ok(_) => log::info!("Published data payload successfully"),
                             Err(e) => log::error!("Failed to publish data payload: {:?}", e),
                         }
@@ -355,10 +349,8 @@ pub mod motion {
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish(
-                                        "device5/tower/home_error_ticks",
-                                        payload.as_bytes(),
-                                    ) {
+                                    let topic = format!("{}/tower/home_error_ticks", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
                                         log::error!(
                                             "Failed to publish home_error_ticks: {:?}",
                                             e
@@ -403,10 +395,8 @@ pub mod motion {
                             );
                             loop {
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish(
-                                        "device5/tower/status",
-                                        b"Critical failure: Limit switch failure!",
-                                    ) {
+                                    let topic = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
                                         log::error!(
                                             "Failed to publish critical error message: {:?}",
                                             e
@@ -447,7 +437,7 @@ pub mod motion {
 
                             // Creates an instance of OTA crate and runs version compare
                             thread::sleep(Duration::from_secs(3));
-                            let mut updater = OtaUpdater::new_ota(current_version.clone(), mqtt, Some("device1A"), Some("device1A")).expect("Failed to create OTA adapter instance");
+                            let mut updater = OtaUpdater::new_ota(current_version.clone(), mqtt, device_id, Some("device1A"), Some("device1A")).expect("Failed to create OTA adapter instance");
 
                             thread::sleep(Duration::from_secs(3));
                             let run_compare = updater.run_version_compare(nvs);
@@ -481,7 +471,8 @@ pub mod motion {
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish("device5/tower/home_error_ticks", payload.as_bytes()) {
+                                    let topic = format!("{}/tower/home_error_ticks", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
                                         log::error!("Failed to publish home_error_ticks: {:?}", e);
                                     } else {
                                         log::info!("Published home_error_ticks={}", home_error_ticks);
@@ -509,7 +500,8 @@ pub mod motion {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
                                 if publish_mqtt {
-                                if let Err(e) = mqtt.publish("device5/tower/status", b"Critical failure: Limit switch failure!") {
+                                    let topic = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
                                     log::error!("Failed to publish critical error message: {:?}", e);
                                     }
                                 } else {

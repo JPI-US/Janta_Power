@@ -34,6 +34,7 @@ use sha2::{Sha256, Digest};
 pub struct OtaUpdater<'a> {
     current_version: Version, 
     mqtt_client: &'a mut Mqtt,
+    device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
     username: Option<String>, 
     password: Option<String>, 
@@ -41,20 +42,27 @@ pub struct OtaUpdater<'a> {
 }
 
 impl<'a> OtaUpdater<'a> {
-    pub fn new_ota(current_version: Version, mqtt_client: &'a mut Mqtt, username: Option<&str>, password: Option<&str> ) -> Result<Self> {
+    pub fn new_ota(
+        current_version: Version,
+        mqtt_client: &'a mut Mqtt,
+        device_id: &'a str,
+        username: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<Self> {
         let config = EspHttpConnection::new(&HttpConfiguration {
             buffer_size: Some(1024),
             timeout: Some(Duration::from_secs(60)),
             crt_bundle_attach: Some(esp_crt_bundle_attach),
-            use_global_ca_store: true, 
+            use_global_ca_store: true,
             ..Default::default()
         })?;
 
         let client = HttpClient::wrap(config);
 
-        Ok( Self { 
-            current_version, 
-            mqtt_client, 
+        Ok(Self {
+            current_version,
+            mqtt_client,
+            device_id,
             client,
             username: username.map(|s| s.to_string()),
             password: password.map(|s| s.to_string()),
@@ -228,7 +236,8 @@ impl<'a> OtaUpdater<'a> {
                     nvs.set_str("version", &remote_version.to_string())?; 
                     nvs.set_u8("first_boot", 1)?; 
 
-                    self.mqtt_client.publish("device5/firmware/status", b"OTA firmware downloaded, preparing esp restart!")?;
+                    let topic = format!("{}/firmware/status", self.device_id);
+                    self.mqtt_client.publish(&topic, b"OTA firmware downloaded, preparing esp restart!")?;
 
                     // Reboot into new firmware
                     info!("Reebooting firmware in 3 seconds...");
@@ -237,7 +246,8 @@ impl<'a> OtaUpdater<'a> {
                 }
                 Err(e) => {
                     info!("Firmware download failed: {:?}", e);
-                    self.mqtt_client.publish("device5/firmware/status", b"OTA update failed!")?; 
+                    let topic = format!("{}/firmware/status", self.device_id);
+                    self.mqtt_client.publish(&topic, b"OTA update failed!")?; 
                 }
             }
         }
