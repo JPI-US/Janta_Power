@@ -13,9 +13,9 @@ password = "@Powerfuture22"
 
 [location]
 # Geographic coordinates of your solar tracker installation
-latitude = 32.797868
-longitude = -96.835597
+latitude = 33.75944
+longitude = -96.82722
 altitude = 0.0
-timezone_offset_hours = -5              # UTC offset in hours (e.g., -6 for Central Time)
+timezone_offset_hours = -6              # UTC offset in hours (CST). No automatic DST handling.
 
  

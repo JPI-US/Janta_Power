@@ -1,10 +1,18 @@
 [workspace]
-members = ["buttons", "rgb_led", "sensors", "clock", "wifi", "network", "ota"]
+members = [
+    "crates/ui/buttons",
+    "crates/drivers/rgb_led",
+    "crates/sensors/sensors",
+    "crates/infrastructure/clock",
+    "crates/infrastructure/wifi",
+    "crates/infrastructure/network",
+    "crates/infrastructure/ota",
+]
 
 [package]
 name = "tower"
 version = "0.1.0"
-authors = ["ms356 msalla@jantaus.com, abenezertsige <atsige@jantaus.com>"]
+authors = ["MuditUpadhyay04 <mupadhyay@jantaus.com> ms356 <msalla@jantaus.com>, abenezertsige <atsige@jantaus.com>"]
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
@@ -14,6 +22,7 @@ partition_table = "partitions.csv" # NEW
 
 [[bin]]
 name = "tower"
+path = "src/runtime/main.rs"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]
@@ -22,6 +31,7 @@ opt-level = "s"
 [profile.dev]
 debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
+debug-assertions = false
 
 [features]
 default = []
@@ -42,18 +52,18 @@ esp-idf-hal = { version = "0.45", default-features = false, features = [
 anyhow = "1.0"               #NEW: Moved from 1.0.93 to 1.0
 embedded-svc = "0.28.0"
 motion = { path = "motion" }
-clock = { path = "clock" }
-hdc1080 = { path = "hdc1080" }
-sensors = { path = "sensors" }
-buttons = { path = "buttons" }
-wifi = { path = "wifi" }            #New
-network = { path = "network" }          #New
-ota = { path = "ota" }              #New
+clock = { path = "crates/infrastructure/clock" }
+hdc1080 = { path = "crates/sensors/hdc1080" }
+sensors = { path = "crates/sensors/sensors" }
+buttons = { path = "crates/ui/buttons" }
+wifi = { path = "crates/infrastructure/wifi" }
+network = { path = "crates/infrastructure/network" }
+ota = { path = "crates/infrastructure/ota" }
 shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
     "std",
 ] }
 embedded-hal = "1.0.0"
-rgb_led = { path = "rgb_led" }
+rgb_led = { path = "crates/drivers/rgb_led" }
 rgb = "0.8.50"
 #esp32-nimble = "0.11"
 heapless = "0.8.0"
@@ -61,8 +71,10 @@ chrono = { version = "0.4.40", features = ["clock"] }
 semver = "1.0.26"               #New
 
 serde = { version = "1.0", features = ["derive"] } #New config parsing 
+serde_json = "1.0"  #JSON command parsing
 toml = "0.8"  #New config parsing 
 pid = "4.0.0"
 
 [build-dependencies]
 embuild = "0.33.0"
+dotenv = "0.15"

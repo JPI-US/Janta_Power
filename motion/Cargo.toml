@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bno080 = { path = "../bno080" }
-accel-stepper = { path = "../accel-stepper", features = ["hal", "std"] }
+bno080 = { path = "../crates/sensors/bno080" }
+accel-stepper = { path = "../crates/drivers/accel-stepper", features = ["hal", "std"] }
 embedded-hal = "1.0.0"
 esp-idf-svc = { version = "0.51", features = [
     "critical-section",
@@ -15,10 +15,11 @@ esp-idf-svc = { version = "0.51", features = [
 log = "0.4"
 semver = "1.0.26"               #New
 astronav = { version = "0.2.5", features = ["noaa-sun"] }
-clock = { path = "../clock" }
-network = { path = "../network" }
-ota = { path = "../ota" }      
-wifi = { path = "../wifi" }            #New
+clock = { path = "../crates/infrastructure/clock" }
+network = { path = "../crates/infrastructure/network" }
+ota = { path = "../crates/infrastructure/ota" }
+wifi = { path = "../crates/infrastructure/wifi" }
 quadrature-encoder = { version = "0.2.1", default-features = false }
 
-
+[build-dependencies]
+dotenv = "0.15"
