@@ -1,5 +1,12 @@
 #![allow(dead_code)]
 
+// =============================================================================
+// Switchboard: single source of deployment/default values for the app.
+// Values default to crate::constants (generated from .env by build.rs).
+// To override for an OTA: replace any field below with a hardcoded literal
+// in this file and ship that build; the app reads only from switchboard.
+// =============================================================================
+
 #[derive(Copy, Clone, Debug)]
 pub enum Profile {
     Normal,
@@ -181,6 +188,8 @@ pub struct Switchboard {
     pub nvs_key_enc_snapshot_version: &'static str,
     pub nvs_key_enc_ticks_adj: &'static str,
     pub enc_home_tol_ticks: i32,
+    /// Heading in degrees at limit switch (home); used by encoder recovery.
+    pub home_heading_deg: f32,
 
     // Defaults currently written into NVS on boot
     pub default_mqtt_user: &'static str,
@@ -205,7 +214,7 @@ pub struct Switchboard {
 
 pub const fn normal() -> Switchboard {
     Switchboard {
-        device_id: "device5",
+        device_id: crate::constants::DEVICE_ID,
 
         wifi_connect_delay_secs: 20,
         tracking_loop_sleep_secs: 300,
@@ -221,19 +230,20 @@ pub const fn normal() -> Switchboard {
         nvs_key_enc_snapshot_version: "enc_snapshot_v",
         nvs_key_enc_ticks_adj: "enc_ticks_adj",
         enc_home_tol_ticks: 50,
+        home_heading_deg: crate::constants::HOME_HEADING_DEG,
 
-        default_mqtt_user: "device1A",
-        default_mqtt_pass: "device1A",
-        default_wifi_ssid: "Power2",
-        default_wifi_pass: "@Powerfuture22",
-        default_tz_offset_hours: -5,
+        default_mqtt_user: crate::constants::MQTT_USER,
+        default_mqtt_pass: crate::constants::MQTT_PASSWORD,
+        default_wifi_ssid: crate::constants::WIFI_SSID,
+        default_wifi_pass: crate::constants::WIFI_PASSWORD,
+        default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,
 
-        default_ota_updater: "device1A",
-        default_ota_password: "device1A",
+        default_ota_updater: crate::constants::MQTT_USER,
+        default_ota_password: crate::constants::MQTT_PASSWORD,
 
-        default_tower_latitude: 32.797868,
-        default_tower_longitude: -96.835597,
-        default_tower_id: 1,
+        default_tower_latitude: crate::constants::TOWER_LATITUDE,
+        default_tower_longitude: crate::constants::TOWER_LONGITUDE,
+        default_tower_id: crate::constants::TOWER_ID,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {
@@ -259,15 +269,15 @@ pub const fn normal() -> Switchboard {
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
-                probe_steps: 30_000,
+                probe_steps: crate::constants::ENCODER_PROBE_STEPS,
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Cw,
             },
             guardrails: GuardrailsSwitches {
                 stall_detection_enabled: true,
-                soft_limits_enabled: false,
-                soft_limit_min_deg: 0.0,
-                soft_limit_max_deg: 285.0,
+                soft_limits_enabled: true,
+                soft_limit_min_deg: crate::constants::SOFT_LIMIT_MIN_DEG,
+                soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
             },
         },
         effects: EffectsSwitches {

@@ -102,7 +102,19 @@ fn generate_constants() {
     // Timezone
     constants.push_str("// Timezone\n");
     constants.push_str(&get_env("TIMEZONE_OFFSET_HOURS", "-5.0", "f32"));
-    
+    let tz_str = std::env::var("TIMEZONE_OFFSET_HOURS").unwrap_or_else(|_| "-5.0".to_string());
+    let tz_i32: i32 = tz_str.parse().unwrap_or(-5);
+    constants.push_str(&format!("pub const TIMEZONE_OFFSET_HOURS_I32: i32 = {};\n", tz_i32));
+    constants.push_str("\n");
+
+    // Device / Tower (optional: for switchboard defaults, override in OTA if needed)
+    constants.push_str("// Device & Tower defaults\n");
+    constants.push_str(&get_env("DEVICE_ID", "device5", "str"));
+    constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
+    constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
+    constants.push_str(&get_env("TOWER_ID", "1", "u32"));
+    constants.push_str("\n");
+
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
     
     // Tell Cargo to rerun if .env changes

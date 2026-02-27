@@ -91,42 +91,36 @@ fn main() -> anyhow::Result<()> {
 
     // PHASE 2: NETWORK SETUP--------------------------------------------------
 
-    use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS, MQTT_USER, MQTT_PASSWORD};
     const PERSIST_NVS: bool = true;  // Always enabled in production
-    
-    let mqtt_user = MQTT_USER;
+
     if PERSIST_NVS {
-        match nvs.set_str("mqtt_user", mqtt_user){
+        match nvs.set_str("mqtt_user", sw.default_mqtt_user) {
             Ok(_) => info!("Mqtt username updated"),
             Err(e) => error!("Mqtt username not updated {:?}", e),
         };
     }
-    let mqtt_pass = MQTT_PASSWORD;
     if PERSIST_NVS {
-        match nvs.set_str("mqtt_pass", mqtt_pass){
+        match nvs.set_str("mqtt_pass", sw.default_mqtt_pass) {
             Ok(_) => info!("Mqtt password updated"),
             Err(e) => error!("Mqtt password not updated {:?}", e),
         };
     }
 
-    let wifi_ssid = WIFI_SSID;
     if PERSIST_NVS {
-        match nvs.set_str("wifi_ssid", wifi_ssid){
+        match nvs.set_str("wifi_ssid", sw.default_wifi_ssid) {
             Ok(_) => info!("Wifi ssid updated"),
             Err(e) => error!("Wifi ssid not updated {:?}", e),
         };
     }
-    let wifi_pass = WIFI_PASSWORD;
     if PERSIST_NVS {
-        match nvs.set_str("wifi_pass", wifi_pass){
+        match nvs.set_str("wifi_pass", sw.default_wifi_pass) {
             Ok(_) => info!("Wifi password updated"),
             Err(e) => error!("Wifi password not updated {:?}", e),
         };
     }
 
-    let offset_hours = TIMEZONE_OFFSET_HOURS as i32;
     if PERSIST_NVS {
-        match nvs.set_i32("offset_hours", offset_hours){
+        match nvs.set_i32("offset_hours", sw.default_tz_offset_hours) {
             Ok(_) => info!("Timezone offset has been updated"),
             Err(e) => error!("Timezone offset was not updated {:?}", e),
         };
@@ -339,13 +333,12 @@ fn main() -> anyhow::Result<()> {
     led.display_healthy();  // Show healthy LED status
     let _ = motion.run();   // Ensure motor driver is in a ready state
 
-    // Apply runtime guardrails (stall detection, soft limits) - always enabled in production
-    use crate::constants::{SOFT_LIMIT_MIN_DEG, SOFT_LIMIT_MAX_DEG};
-    motion.set_stall_detection_enabled(true);
+    // Apply runtime guardrails (stall detection, soft limits) from switchboard
+    motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
     motion.set_soft_limits(
-        true,
-        SOFT_LIMIT_MIN_DEG,
-        SOFT_LIMIT_MAX_DEG,
+        sw.runtime.guardrails.soft_limits_enabled,
+        sw.runtime.guardrails.soft_limit_min_deg,
+        sw.runtime.guardrails.soft_limit_max_deg,
     );
 
     const POWER_ON: bool = true;  // Motor power control (future: sense input)
@@ -566,7 +559,16 @@ fn main() -> anyhow::Result<()> {
             }
         }
         
-        let encoder_recovery_cfg = EncoderRecoverySwitches::default();
+        let encoder_recovery_cfg = EncoderRecoverySwitches {
+            enabled: sw.runtime.encoder_recovery.enabled,
+            probe_interval_secs: sw.runtime.encoder_recovery.probe_interval_secs,
+            probe_steps: sw.runtime.encoder_recovery.probe_steps,
+            max_drift_deg: sw.runtime.encoder_recovery.max_drift_deg,
+            rehome_dir: match sw.runtime.encoder_recovery.rehome_dir {
+                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
+                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
+            },
+        };
         if encoder_fault.tick(
             &encoder_recovery_cfg,
             &mut motion,
@@ -579,6 +581,7 @@ fn main() -> anyhow::Result<()> {
             PUBLISH_MQTT,
             PERSIST_NVS,
             sw.device_id,
+            sw.home_heading_deg,
         )? {
             continue;  // Fault active, skip tracking this iteration
         }

@@ -6,11 +6,7 @@ use network::mqtt::Mqtt;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::{
-    constants::{ENCODER_PROBE_STEPS, HOME_HEADING_DEG},
-    infra,
-    infra::SnapshotStore,
-};
+use crate::{infra, infra::SnapshotStore};
 
 // Simple Direction enum (replaces switchboard::Direction)
 #[derive(Clone, Copy)]
@@ -38,11 +34,12 @@ pub struct EncoderRecoverySwitches {
 }
 
 impl EncoderRecoverySwitches {
+    /// Fallback when not using switchboard (e.g. tests). Prefer building from sw.runtime.encoder_recovery.
     pub const fn default() -> Self {
         Self {
             enabled: true,
             probe_interval_secs: 30,
-            probe_steps: ENCODER_PROBE_STEPS,
+            probe_steps: 50_000,
             max_drift_deg: 5.0,
             rehome_dir: Direction::Ccw,
         }
@@ -113,6 +110,7 @@ impl EncoderFaultRecovery {
         publish_mqtt: bool,
         persist_nvs: bool,
         device_id: &str,
+        home_heading_deg: f32,
     ) -> anyhow::Result<bool> {
         // Skip all encoder checks if we've already switched to StepperOnly for the day
         if self.mode_switched_daily {
@@ -171,7 +169,7 @@ impl EncoderFaultRecovery {
         // Reset probe failure count on successful recovery
         self.probe_failure_count = 0;
 
-        let candidate_heading = motion.heading_from_encoder_ticks(HOME_HEADING_DEG);
+        let candidate_heading = motion.heading_from_encoder_ticks(home_heading_deg);
         let drift = angle_diff_deg(candidate_heading, *actual_heading);
         log::info!(
             "Encoder recovered: candidate_heading={} prev_heading={} drift_deg={}",
@@ -209,7 +207,7 @@ impl EncoderFaultRecovery {
             );
         }
 
-        *actual_heading = HOME_HEADING_DEG;
+        *actual_heading = home_heading_deg;
         motion.update_position(*actual_heading);
         SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
         if motion_mode == MotionMode::EncoderGuarded {
