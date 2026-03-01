@@ -232,14 +232,14 @@ pub const fn normal() -> Switchboard {
         enc_home_tol_ticks: 50,
         home_heading_deg: crate::constants::HOME_HEADING_DEG,
 
-        default_mqtt_user: crate::constants::MQTT_USER,
-        default_mqtt_pass: crate::constants::MQTT_PASSWORD,
+        default_mqtt_user: "device7",
+        default_mqtt_pass: "7device",
         default_wifi_ssid: crate::constants::WIFI_SSID,
         default_wifi_pass: crate::constants::WIFI_PASSWORD,
         default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,
 
-        default_ota_updater: crate::constants::MQTT_USER,
-        default_ota_password: crate::constants::MQTT_PASSWORD,
+        default_ota_updater: "device1A",
+        default_ota_password: "device1A",
 
         default_tower_latitude: crate::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::constants::TOWER_LONGITUDE,

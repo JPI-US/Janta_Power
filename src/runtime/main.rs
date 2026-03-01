@@ -175,7 +175,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device5_pub",
+        "device7_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
@@ -225,11 +225,11 @@ fn main() -> anyhow::Result<()> {
 
 
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.0.4";
+    const DEFAULT_VERSION: &str = "1.0.6";
     
     // Store current firmware version in NVS
     if PERSIST_NVS {
-        nvs.set_str("version", "1.0.4")?;
+        nvs.set_str("version", "1.0.6")?;
     }
 
     // Read firmware version from NVS (or use default)
@@ -662,7 +662,7 @@ fn main() -> anyhow::Result<()> {
             info!("Tracking disabled");
         }
 
-        info!("Tracking loop duration (v1.0.4): {:?}", now.elapsed());
+        info!("Tracking loop duration (v1.0.6): {:?}", now.elapsed());
         
         // Housekeeping: Check WiFi connection and publish telemetry
         if wifi.state() == WifiState::Disconnected {
