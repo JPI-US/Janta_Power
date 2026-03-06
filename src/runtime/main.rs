@@ -124,15 +124,15 @@ fn main() -> anyhow::Result<()> {
 
     // PHASE 2: NETWORK SETUP--------------------------------------------------
 
-    use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS};
-    let mqtt_user = "device1";
+    use crate::constants::{WIFI_SSID, WIFI_PASSWORD, MQTT_USER, MQTT_PASSWORD, TIMEZONE_OFFSET_HOURS};
+    let mqtt_user = MQTT_USER;
     if switchboard.effects.persist_nvs {
         match nvs.set_str("mqtt_user", mqtt_user){
             Ok(_) => info!("Mqtt username updated"),
             Err(e) => error!("Mqtt username not updated {:?}", e),
         };
     }
-    let mqtt_pass= "device1";
+    let mqtt_pass = MQTT_PASSWORD;
     if switchboard.effects.persist_nvs {
         match nvs.set_str("mqtt_pass", mqtt_pass){
             Ok(_) => info!("Mqtt password updated"),
