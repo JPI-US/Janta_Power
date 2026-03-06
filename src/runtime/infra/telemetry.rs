@@ -4,9 +4,9 @@ use semver::Version;
 use network::mqtt::Mqtt;
 
 // Centralized MQTT topics.
-pub const TOPIC_BOOT: &str = "device1A/boot";
-pub const TOPIC_FIRMWARE_VERSION: &str = "device1A/firmware/version";
-pub const TOPIC_TOWER_STATUS: &str = "device1A/tower/status";
+pub const TOPIC_BOOT: &str = "device1/boot";
+pub const TOPIC_FIRMWARE_VERSION: &str = "device1/firmware/version";
+pub const TOPIC_TOWER_STATUS: &str = "device1/tower/status";
 
 pub struct Telemetry;
 

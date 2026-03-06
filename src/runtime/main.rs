@@ -125,14 +125,14 @@ fn main() -> anyhow::Result<()> {
     // PHASE 2: NETWORK SETUP--------------------------------------------------
 
     use crate::constants::{WIFI_SSID, WIFI_PASSWORD, TIMEZONE_OFFSET_HOURS};
-    let mqtt_user = "device1A";
+    let mqtt_user = "device1";
     if switchboard.effects.persist_nvs {
         match nvs.set_str("mqtt_user", mqtt_user){
             Ok(_) => info!("Mqtt username updated"),
             Err(e) => error!("Mqtt username not updated {:?}", e),
         };
     }
-    let mqtt_pass= "device1A";
+    let mqtt_pass= "device1";
     if switchboard.effects.persist_nvs {
         match nvs.set_str("mqtt_pass", mqtt_pass){
             Ok(_) => info!("Mqtt password updated"),
@@ -212,7 +212,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device1A_pub",
+        "device1_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
@@ -482,7 +482,7 @@ fn main() -> anyhow::Result<()> {
                 );
                 infra::Telemetry::critical_failure_loop(
                     &mut mqtt,
-                    b"Critical failure: Limit switch failure!",
+                    b"Critical failure: Limit switch failure! at Tower 1 (Office Tower)",
                     switchboard.effects.publish_mqtt,
                 );
             }
@@ -501,7 +501,7 @@ fn main() -> anyhow::Result<()> {
         if !trust_nvs_state {
             infra::Telemetry::critical_failure_loop(
                 &mut mqtt,
-                b"Critical failure: NVS state untrusted (last run was Admin) but homing disabled!",
+                b"Critical failure: NVS state untrusted (last run was Admin) but homing disabled! at Tower 1 (Office Tower)",
                 switchboard.effects.publish_mqtt,
             );
         }

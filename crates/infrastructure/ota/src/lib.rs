@@ -228,7 +228,7 @@ impl<'a> OtaUpdater<'a> {
                     nvs.set_str("version", &remote_version.to_string())?; 
                     nvs.set_u8("first_boot", 1)?; 
 
-                    self.mqtt_client.publish("device1A/firmware/status", b"OTA firmware downloaded, preparing esp restart!")?;
+                    self.mqtt_client.publish("device1/firmware/status", b"OTA firmware downloaded, preparing esp restart!")?;
 
                     // Reboot into new firmware
                     info!("Reebooting firmware in 3 seconds...");
@@ -237,7 +237,7 @@ impl<'a> OtaUpdater<'a> {
                 }
                 Err(e) => {
                     info!("Firmware download failed: {:?}", e);
-                    self.mqtt_client.publish("device1A/firmware/status", b"OTA update failed!")?; 
+                    self.mqtt_client.publish("device1/firmware/status", b"OTA update failed!")?; 
                 }
             }
         }

@@ -55,7 +55,7 @@ impl EncoderFaultRecovery {
         if !cfg.enabled {
             infra::Telemetry::critical_failure_loop(
                 mqtt,
-                b"Critical failure: encoder fault recovery disabled in switchboard!",
+                b"Critical failure: encoder fault recovery disabled in switchboard! at Tower 1 (Office Tower)",
                 publish_mqtt,
             );
         }
@@ -121,7 +121,7 @@ impl EncoderFaultRecovery {
         if !ok {
             infra::Telemetry::critical_failure_loop(
                 mqtt,
-                b"Critical failure: re-home after encoder recovery failed!",
+                b"Critical failure: re-home after encoder recovery failed! at Tower 1 (Office Tower)",
                 publish_mqtt,
             );
         }

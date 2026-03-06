@@ -172,7 +172,7 @@ pub enum Profile {
 const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
     RecoveryMoveSpec {
         dir: Direction::Cw,
-        deg: 45.0,
+        deg: 180.0,
     },
     RecoveryMoveSpec {
         dir: Direction::Ccw,
