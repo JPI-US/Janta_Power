@@ -76,21 +76,11 @@ impl Motion<'_> {
         use super::HOME_HEADING_DEG;
         // If limit switch is already pressed, do nothing (skip pre-move and homing)
         if self.lmsw.is_low() {
-            log::info!("Limit switch already pressed - skipping pre-move and homing");
+            log::info!("Limit switch already pressed - skipping homing");
             log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
             return true;
-        }
-        
-        // Pre-homing move: move 15 degrees CW before searching for limit switch
-        log::info!("Pre-homing: moving 15° CW before limit switch search");
-        let pre_move_steps = calculate_steps(15.0);
-        let pre_move_outcome = self.move_by(pre_move_steps);
-        if pre_move_outcome != MoveOutcome::Completed {
-            log::warn!("Pre-homing move failed: {:?}, continuing with homing search anyway", pre_move_outcome);
-        } else {
-            log::info!("Pre-homing move completed successfully");
         }
 
         self.relay_on();
@@ -123,20 +113,10 @@ impl Motion<'_> {
         use super::HOME_HEADING_DEG;
         // If limit switch is already pressed, do nothing (skip pre-move and homing)
         if self.lmsw.is_low() {
-            log::info!("Limit switch already pressed - skipping pre-move and homing");
+            log::info!("Limit switch already pressed - skipping homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
             return true;
-        }
-        
-        // Pre-homing move: move 15 degrees CW before searching for limit switch
-        log::info!("Pre-homing: moving 15° CW before limit switch search");
-        let pre_move_steps = calculate_steps(15.0);
-        let pre_move_outcome = self.move_by(pre_move_steps);
-        if pre_move_outcome != MoveOutcome::Completed {
-            log::warn!("Pre-homing move failed: {:?}, continuing with homing search anyway", pre_move_outcome);
-        } else {
-            log::info!("Pre-homing move completed successfully");
         }
 
         self.relay_on();

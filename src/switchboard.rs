@@ -161,7 +161,7 @@ pub struct AdminSwitches {
 // Profiles
 // =========================
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Profile {
     Normal,
     Diagnostic,
@@ -310,5 +310,48 @@ pub const fn active(profile: Profile) -> Switchboard {
         Profile::Normal => normal(),
         Profile::Diagnostic => diagnostic(),
         Profile::Custom => custom(),
+    }
+}
+
+// =========================
+// Runtime switchable profile (button: Normal <-> Custom this boot)
+// =========================
+
+/// Holds Normal, Diagnostic, and Custom switchboards and the active profile for this run.
+/// Use [SwitchboardState::current] to get the active switchboard. The maintenance button
+/// toggles only between Normal and Custom via [SwitchboardState::set_profile].
+#[derive(Debug)]
+pub struct SwitchboardState {
+    active: Profile,
+    normal: Switchboard,
+    diagnostic: Switchboard,
+    custom: Switchboard,
+}
+
+impl SwitchboardState {
+    pub fn new(initial_profile: Profile) -> Self {
+        Self {
+            active: initial_profile,
+            normal: normal(),
+            diagnostic: diagnostic(),
+            custom: custom(),
+        }
+    }
+
+    pub fn current(&self) -> &Switchboard {
+        match self.active {
+            Profile::Normal => &self.normal,
+            Profile::Diagnostic => &self.diagnostic,
+            Profile::Custom => &self.custom,
+        }
+    }
+
+    pub fn active_profile(&self) -> Profile {
+        self.active
+    }
+
+    /// Switch between Normal and Custom (used when maintenance button is pressed).
+    pub fn set_profile(&mut self, p: Profile) {
+        self.active = p;
     }
 }
