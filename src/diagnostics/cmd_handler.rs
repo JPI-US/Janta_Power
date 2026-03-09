@@ -1,7 +1,7 @@
 // MQTT command handler for runtime diagnostics/test execution.
 //
-// Commands arrive as JSON on `device1A/admin/cmd` topic.
-// Results are published to `device1A/admin/cmd/resp` topic.
+// Commands arrive as JSON on `device1/admin/cmd` topic.
+// Results are published to `device1/admin/cmd/resp` topic.
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::{error, info, warn};
@@ -15,8 +15,8 @@ use crate::config_manager::{ConfigManager, RuntimeMode};
 use crate::switchboard::{AdminSwitches, BootHomingSwitches, RecoverySwitches};
 use serde_json::Value;
 
-const TOPIC_CMD: &str = "device1A/admin/cmd";
-const TOPIC_CMD_RESP: &str = "device1A/admin/cmd/resp";
+const TOPIC_CMD: &str = "device1/admin/cmd";
+const TOPIC_CMD_RESP: &str = "device1/admin/cmd/resp";
 
 #[derive(serde::Deserialize, Debug)]
 #[serde(tag = "cmd")]

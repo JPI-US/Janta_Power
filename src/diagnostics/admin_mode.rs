@@ -14,10 +14,10 @@ use crate::{
     switchboard::{AdminSwitches, BootHomingSwitches, Direction, RecoverySwitches},
 };
 
-const TOPIC_ADMIN_PERSIST: &str = "device1A/admin/persistence_test";
-const TOPIC_ADMIN_WIFI_MQTT: &str = "device1A/admin/wifi_mqtt_test";
-const TOPIC_ADMIN_MOTOR: &str = "device1A/admin/motor_test";
-const TOPIC_ADMIN_ENCODER: &str = "device1A/admin/encoder_test";
+const TOPIC_ADMIN_PERSIST: &str = "device1/admin/persistence_test";
+const TOPIC_ADMIN_WIFI_MQTT: &str = "device1/admin/wifi_mqtt_test";
+const TOPIC_ADMIN_MOTOR: &str = "device1/admin/motor_test";
+const TOPIC_ADMIN_ENCODER: &str = "device1/admin/encoder_test";
 
 const NVS_KEY_ADMIN_PERSIST_COUNTER: &str = "admin_persist_ctr";
 
@@ -48,7 +48,7 @@ pub fn run<T: NvsPartitionId>(
         error!("ADMIN_MODE refused: SWITCHBOARD.admin.enabled=false");
         infra::Telemetry::critical_failure_loop(
             mqtt,
-            b"Critical failure: Admin mode selected but disabled in switchboard!",
+            b"Critical failure: Admin mode selected but disabled in switchboard! at Tower 1 (Office Tower)",
             publish_mqtt,
         );
     }
@@ -92,7 +92,7 @@ pub fn run<T: NvsPartitionId>(
         if !ok {
             infra::Telemetry::critical_failure_loop(
                 mqtt,
-                b"Critical failure: Admin homing failed!",
+                b"Critical failure: Admin homing failed! at Tower 1 (Office Tower)",
                 publish_mqtt,
             );
         }
