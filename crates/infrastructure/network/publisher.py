@@ -9,10 +9,10 @@ import os
 # --- Configuration ---
 BROKER_ADDRESS = "mqtt.jantaus.com"        # Server's public domain
 PORT = 8883                                # TLS port
-TOPIC = "device/device1/firmware"
+TOPIC = "device/device1A/firmware"
 CA_CERT = "fullchain.pem"                  # Fixed path to certificate
-username = "device1"
-password = "1device"
+username = "device1A"
+password = "device1A"
 
 def on_connect(client, userdata, flags, rc):
     """Callback for when the client connects to the broker"""

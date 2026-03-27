@@ -73,61 +73,39 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
-        use super::HOME_HEADING_DEG;
-        // If limit switch is already pressed, do nothing (skip pre-move and homing)
-        if self.lmsw.is_low() {
-            log::info!("Limit switch already pressed - skipping homing");
-            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
-            self.update_position(HOME_HEADING_DEG);
-            self.force_zero_if_limit_switch_pressed();
-            return true;
-        }
-
-        self.relay_on();
-        // Convention for *current wiring*: positive step movement = physical CW.
-        log::info!("Looking for the limit switch (CW search)");
-
-        let mut max_steps = calculate_steps(360.0);
-        while max_steps > 0 && self.lmsw.is_high() {
-            let step_movement = calculate_steps(1.0);
-            if self.move_by(step_movement) != MoveOutcome::Completed {
-                self.relay_off();
-                return false;
-            }
-            max_steps -= step_movement;
-        }
-
-        self.relay_off();
-        if max_steps > 0 {
-            log::info!("Found Limit Switch, Heading : {}", HOME_HEADING_DEG);
-            self.update_position(HOME_HEADING_DEG);
-            self.relay_off();
-            self.force_zero_if_limit_switch_pressed();
-            return true;
-        }
-        log::error!("Limit Switch was not found!");
-        return false;
+        // Keep CW API for compatibility, but run CCW homing behavior.
+        log::warn!("Homing requested CW, running CCW homing strategy");
+        self.find_limit_switch_ccw()
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
         use super::HOME_HEADING_DEG;
-        // If limit switch is already pressed, do nothing (skip pre-move and homing)
+
+        // During homing, keep the old dfw behavior: temporarily disable stall detection
+        // so the search can complete unless we hit the travel budget.
+        let stall_prev = self.stall_detection_enabled();
+        self.set_stall_detection_enabled(false);
+
+        // If limit switch is already pressed, do nothing.
         if self.lmsw.is_low() {
+            log::info!("Limit switch already pressed - skipping homing");
             log::info!("Limit switch already pressed - skipping homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
+            self.set_stall_detection_enabled(stall_prev);
             return true;
         }
 
         self.relay_on();
         // Convention for *current wiring*: negative step movement = physical CCW.
-        log::info!("Looking for the limit switch (CCW search)");
+        log::info!("Looking for the limit switch (CCW search, max 350°)");
 
-        let mut max_steps = calculate_steps(-360.0);
+        let mut max_steps = calculate_steps(-350.0);
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay_off();
+                self.set_stall_detection_enabled(stall_prev);
                 return false;
             }
             max_steps -= step_movement;
@@ -139,8 +117,10 @@ impl Motion<'_> {
             self.update_position(HOME_HEADING_DEG);
             self.relay_off();
             self.force_zero_if_limit_switch_pressed();
+            self.set_stall_detection_enabled(stall_prev);
             return true;
         }
+        self.set_stall_detection_enabled(stall_prev);
         false
     }
 }

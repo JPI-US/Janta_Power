@@ -3,7 +3,7 @@ pub mod motion {
     use astronav::coords::noaa_sun::NOAASun;
     use clock::Clock;
     use std::time::{Duration, Instant};
-    use esp_idf_svc::hal::gpio::{Gpio15, Gpio16, Gpio17, Gpio14, Gpio10, Gpio11, Input, Output, PinDriver};
+    use esp_idf_svc::hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver};
     use quadrature_encoder::{IncrementalEncoder, Rotary, QuadStep};
     use esp_idf_svc::nvs::*;
     use network::mqtt::Mqtt;
@@ -20,10 +20,8 @@ pub mod motion {
     // Include auto-generated constants from .env file
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
-    // Relay polarity.
-    //
-    // "Flip the relays": treat the relay as active-low (ON = GPIO low, OFF = GPIO high).
-    const RELAY_ACTIVE_LOW: bool = true;
+    // ESP-IDF NVS key names are limited to 15 characters.
+    const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
     // Motor movement constants.
     //
@@ -31,7 +29,7 @@ pub mod motion {
     // Keep these in one place so all step calculations stay consistent.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
-    #[derive(PartialEq, Copy, Clone)]
+    #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
         // Stepper-only movement (open-loop).
         StepperOnly,
@@ -82,6 +80,11 @@ pub mod motion {
         stall_last_enc_ticks_seen: i32,
         stall_reported: bool,
         stall_consecutive: u8,
+        
+        // Ratio-based stall detection state (EncoderGuarded mode only).
+        stall_check_start_encoder_ticks: i32,
+        stall_check_start_step_pos: i64,
+        stall_check_last_interval_step: i64,
 
         // Encoder overshoot protection state (EncoderGuarded mode only).
         overshoot_enc_start: Option<i32>,
@@ -94,27 +97,33 @@ pub mod motion {
         soft_limits_enabled: bool,
         soft_limit_min_deg: f32,
         soft_limit_max_deg: f32,
+
+        // Homing flag: when true, overshoot protection is disabled (we don't know expected ticks during homing).
+        is_homing: bool,
     }
 
     // CW: direction
     // CCW: step
     impl Motion<'_> {
-        pub fn new<'a>(p10: Gpio15, p11: Gpio16, p7: Gpio17, p6: Gpio14, p47: Gpio10, p21: Gpio11) -> Motion<'a> {
-            let step = PinDriver::output(p10).unwrap();
-            let direction = PinDriver::output(p11).unwrap();
-            let mut relay = PinDriver::output(p7).unwrap();
-            let mut lmsw = PinDriver::input(p6).unwrap();
-            let encoder_a = PinDriver::input(p47).unwrap();
-            let encoder_b = PinDriver::input(p21).unwrap();
+        pub fn new<'a>(
+            step_pin: Gpio15,
+            direction_pin: Gpio16,
+            relay_pin: Gpio17,
+            limit_switch_pin: Gpio14,
+            encoder_a_pin: Gpio10,
+            encoder_b_pin: Gpio11,
+        ) -> Motion<'a> {
+            let step = PinDriver::output(step_pin).unwrap();
+            let direction = PinDriver::output(direction_pin).unwrap();
+            // Relay is wired as active-low (LOW = ON, HIGH = OFF).
+            // Ensure we boot with relay OFF to avoid powering the motor unexpectedly.
+            let mut relay = PinDriver::output(relay_pin).unwrap();
+            relay.set_high().unwrap_or_default();
+            let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
+            let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
+            let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
-
-            // Ensure relay is OFF at startup.
-            if RELAY_ACTIVE_LOW {
-                relay.set_high().unwrap_or_default();
-            } else {
-                relay.set_low().unwrap_or_default();
-            }
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
@@ -144,6 +153,10 @@ pub mod motion {
                 stall_last_enc_ticks_seen: 0,
                 stall_reported: false,
                 stall_consecutive: 0,
+                
+                stall_check_start_encoder_ticks: 0,
+                stall_check_start_step_pos: 0,
+                stall_check_last_interval_step: 0,
 
                 overshoot_enc_start: None,
                 overshoot_expected_ticks: None,
@@ -153,6 +166,8 @@ pub mod motion {
                 soft_limits_enabled: false,
                 soft_limit_min_deg: 0.0,
                 soft_limit_max_deg: 290.0,
+
+                is_homing: false,
             }
         }
 
@@ -194,21 +209,19 @@ pub mod motion {
             self.relay.toggle().unwrap_or_default();
         }
 
+        #[inline]
         pub(crate) fn relay_on(&mut self) {
-            if RELAY_ACTIVE_LOW {
-                let _ = self.relay.set_low();
-            } else {
-                let _ = self.relay.set_high();
-            }
+            // Active-low: LOW = ON
+            self.relay.set_low().unwrap_or_default();
         }
 
+        #[inline]
         pub(crate) fn relay_off(&mut self) {
-            if RELAY_ACTIVE_LOW {
-                let _ = self.relay.set_high();
-            } else {
-                let _ = self.relay.set_low();
-            }
+            // Active-low: HIGH = OFF
+            self.relay.set_high().unwrap_or_default();
         }
+
+
 
         pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             &mut self,
@@ -223,6 +236,7 @@ pub mod motion {
             publish_mqtt: bool,
             persist_nvs: bool,
             allow_ota: bool,
+            device_id: &str,
         ) -> bool {
             self.update_position(location);
             log::info!("{},", clock.after_sunrise());
@@ -283,23 +297,23 @@ pub mod motion {
                 // Single-path daytime tracking:
                 // If we're within deadband, do nothing. Otherwise execute a movement based on offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
-                    let _ = self.relay.set_low().unwrap_or_default();
+                    self.relay_off();
                     return true;
                 }
 
-                self.relay.set_high().unwrap_or_default();
+                self.relay_on();
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                         log::info!("Steps Needed: {}", steps as i64);
                 let move_outcome = self.move_by(steps as i64);
                 if move_outcome != MoveOutcome::Completed {
-                    self.relay.set_low().unwrap_or_default();
+                    self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
                     return true;
                 }
                         self.update_position((location as f64 + angle_offset) as f32);
-                self.relay.set_low().unwrap_or_default();
+                self.relay_off();
 
                 // Publish message
                         let payload = format!(
@@ -308,7 +322,8 @@ pub mod motion {
                             location as f64 + angle_offset
                         );
                 if publish_mqtt {
-                    match mqtt.publish("device1/data", payload.as_bytes()) {
+                    let topic = format!("{}/data", device_id);
+                    match mqtt.publish(&topic, payload.as_bytes()) {
                             Ok(_) => log::info!("Published data payload successfully"),
                             Err(e) => log::error!("Failed to publish data payload: {:?}", e),
                         }
@@ -319,7 +334,85 @@ pub mod motion {
             } 
             else {// Sunset Operation 
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
-                    log::info!("Already reached sleep position");
+                    // Home verification check:
+                    // Do not trust heading alone to skip homing. If we're "at home" by heading but
+                    // the physical limit switch is not pressed, run a CCW homing search once.
+                    if self.lmsw.is_high() {
+                        log::warn!(
+                            "Heading near home but limit switch not pressed; verifying home by homing CCW"
+                        );
+                        let ok = self.find_limit_switch_ccw();
+                        if ok {
+                            log::info!("Home verification homing succeeded");
+
+                            // Publish + persist daily home error (ticks) if we captured it.
+                            if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
+                                let payload = format!("{}", home_error_ticks);
+                                if publish_mqtt {
+                                    let topic = format!("{}/tower/home_error_ticks", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
+                                        log::error!(
+                                            "Failed to publish home_error_ticks: {:?}",
+                                            e
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "Published home_error_ticks={}",
+                                            home_error_ticks
+                                        );
+                                    }
+                                } else {
+                                    log::info!(
+                                        "MQTT publish disabled: skipping home_error_ticks publish"
+                                    );
+                                }
+
+                                if persist_nvs {
+                                    if let Err(e) =
+                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
+                                    {
+                                        log::warn!(
+                                            "Failed to store home_error_ticks in NVS: {:?}",
+                                            e
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "Stored home_error_ticks in NVS: {}",
+                                            home_error_ticks
+                                        );
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "NVS persist disabled: skipping home_error_ticks store"
+                                    );
+                                }
+                            } else {
+                                log::warn!("No home_error_ticks captured on this homing run");
+                            }
+                        } else {
+                            log::error!(
+                                "Home verification failed: limit switch could not be found"
+                            );
+                            loop {
+                                if publish_mqtt {
+                                    let topic = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
+                                        log::error!(
+                                            "Failed to publish critical error message: {:?}",
+                                            e
+                                        );
+                                    }
+                                } else {
+                                    log::error!(
+                                        "Critical failure: Limit switch failure! (MQTT disabled)"
+                                    );
+                                }
+                                thread::sleep(Duration::from_secs(900)); // every 15 minutes
+                            }
+                        }
+                    }
+
+                    log::info!("At sleep position");
                     // Ensure encoder ticks are truly 0 at home while we sleep.
                     self.force_zero_if_limit_switch_pressed();
 
@@ -378,7 +471,8 @@ pub mod motion {
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
-                                    if let Err(e) = mqtt.publish("device1/tower/home_error_ticks", payload.as_bytes()) {
+                                    let topic = format!("{}/tower/home_error_ticks", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
                                         log::error!("Failed to publish home_error_ticks: {:?}", e);
                                     } else {
                                         log::info!("Published home_error_ticks={}", home_error_ticks);
@@ -388,7 +482,9 @@ pub mod motion {
                                 }
 
                                 if persist_nvs {
-                                    if let Err(e) = nvs.set_i32("home_error_ticks", home_error_ticks) {
+                                    if let Err(e) =
+                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
+                                    {
                                         log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
                                     } else {
                                         log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
@@ -404,11 +500,12 @@ pub mod motion {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             loop{
                                 if publish_mqtt {
-                                if let Err(e) = mqtt.publish("device1/tower/status", b"Critical failure: Limit switch failure! at Tower 1 (Office Tower)") {
+                                    let topic = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
                                     log::error!("Failed to publish critical error message: {:?}", e);
                                     }
                                 } else {
-                                    log::error!("Critical failure: Limit switch failure! at Tower 1 (Office Tower) (MQTT disabled)");
+                                    log::error!("Critical failure: Limit switch failure! (MQTT disabled)");
                                 }
                                 thread::sleep(Duration::from_secs(900));// Loop every 15 minutes
                             }

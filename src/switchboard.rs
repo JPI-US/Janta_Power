@@ -1,3 +1,23 @@
+#![allow(dead_code)]
+
+// =============================================================================
+// Switchboard: single source of deployment/default values for the app.
+// Values default to crate::constants (generated from .env by build.rs).
+// To override for an OTA: replace any field below with a hardcoded literal
+// in this file and ship that build; the app reads only from switchboard.
+// =============================================================================
+
+#[derive(Copy, Clone, Debug)]
+pub enum Profile {
+    Normal,
+    Admin,
+    Custom,
+}
+
+// =========================
+// Types for future phases
+// =========================
+
 #[derive(Copy, Clone, Debug)]
 pub enum Direction {
     Cw,
@@ -71,7 +91,6 @@ pub enum MotionModePolicy {
 
 impl core::fmt::Debug for MotionModePolicy {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // `motion::MotionMode` doesn't implement Debug, so only print the variant name.
         match self {
             MotionModePolicy::FromNvsDefault(_) => f.write_str("FromNvsDefault(..)"),
             MotionModePolicy::Force(_) => f.write_str("Force(..)"),
@@ -83,14 +102,43 @@ impl core::fmt::Debug for MotionModePolicy {
 pub struct EncoderRecoverySwitches {
     /// If false, we never enter the encoder-fault probe loop.
     pub enabled: bool,
-    /// How long to wait between recovery probes.
     pub probe_interval_secs: u64,
-    /// How many steps to move during a probe.
     pub probe_steps: i64,
-    /// Maximum heading drift allowed when encoder comes back before we re-home.
     pub max_drift_deg: f32,
-    /// Which direction to use when re-homing after drift is too large.
     pub rehome_dir: Direction,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GuardrailsSwitches {
+    pub stall_detection_enabled: bool,
+    pub soft_limits_enabled: bool,
+    pub soft_limit_min_deg: f32,
+    pub soft_limit_max_deg: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct EffectsSwitches {
+    pub publish_mqtt: bool,
+    pub persist_nvs: bool,
+    pub allow_ota: bool,
+    pub allow_boot_validation: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AdminTestsSwitches {
+    pub motor_test: bool,
+    pub encoder_test: bool,
+    pub persistence_test: bool,
+    pub wifi_mqtt_test: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct AdminSwitches {
+    pub enabled: bool,
+    pub run_recovery_on_start: bool,
+    pub run_homing_on_start: bool,
+    pub tests: AdminTestsSwitches,
+    pub stop_after: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -101,78 +149,11 @@ pub struct RuntimeSwitches {
     pub guardrails: GuardrailsSwitches,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Switchboard {
-    pub boot: BootSwitches,
-    pub runtime: RuntimeSwitches,
-    pub effects: EffectsSwitches,
-    pub admin: AdminSwitches,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct GuardrailsSwitches {
-    /// Stall detector in move execution (EncoderGuarded only).
-    pub stall_detection_enabled: bool,
-    /// Clamp tracking target heading into [soft_limit_min_deg, soft_limit_max_deg].
-    pub soft_limits_enabled: bool,
-    pub soft_limit_min_deg: f32,
-    pub soft_limit_max_deg: f32,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct EffectsSwitches {
-    /// If false, suppress MQTT publishes across the app (best-effort).
-    pub publish_mqtt: bool,
-    /// If false, suppress NVS writes across the app (best-effort).
-    pub persist_nvs: bool,
-    /// If false, suppress OTA checks (best-effort).
-    pub allow_ota: bool,
-    /// If false, skip first-boot validation/rollback logic.
-    pub allow_boot_validation: bool,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct AdminTestsSwitches {
-    /// Basic motor movement sanity checks (open-loop).
-    pub motor_test: bool,
-    /// Encoder sanity checks (tick direction / tick change).
-    pub encoder_test: bool,
-    /// NVS read/write verification test.
-    pub persistence_test: bool,
-    /// WiFi + MQTT connectivity and publish test.
-    pub wifi_mqtt_test: bool,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct AdminSwitches {
-    /// If false, Admin mode will refuse to start (even if `ACTIVE_MODE=Admin`).
-    pub enabled: bool,
-    /// If true, run the recovery move sequence when Admin mode starts.
-    pub run_recovery_on_start: bool,
-    /// If true, run homing when Admin mode starts.
-    pub run_homing_on_start: bool,
-    /// Which test cases are enabled in Admin mode.
-    pub tests: AdminTestsSwitches,
-    /// If true, stop/idle after running startup actions/tests (do not enter normal tracking loop).
-    pub stop_after: bool,
-}
-
-// =========================
-// Profiles
-// =========================
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Profile {
-    Normal,
-    Diagnostic,
-    Custom,
-}
-
 // Default "unstuck" sequence (kept identical across profiles unless overridden).
 const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
     RecoveryMoveSpec {
         dir: Direction::Cw,
-        deg: 180.0,
+        deg: 360.0,
     },
     RecoveryMoveSpec {
         dir: Direction::Ccw,
@@ -180,9 +161,97 @@ const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
     },
 ];
 
-pub const fn normal() -> Switchboard {
-    // Must match the previous `main.rs` constants (no functional change).
+// =========================
+// Switchboard configuration
+// =========================
+
+/// Switchboard: policy/data only.
+#[derive(Copy, Clone, Debug)]
+pub struct Switchboard {
+    /// Device id used as MQTT topic prefix (e.g. "device5" -> "device5/firmware/status").
+    pub device_id: &'static str,
+
+    // Timing
+    pub wifi_connect_delay_secs: u64,
+    pub tracking_loop_sleep_secs: u64,
+    pub ota_check_delay_secs: u64,
+
+    // MQTT
+    pub mqtt_broker_url: &'static str,
+    pub mqtt_client_id: &'static str,
+
+    // Firmware + persistence keys
+    pub default_version: &'static str,
+    pub heading_tag: &'static str,
+
+    pub enc_snapshot_version: u32,
+    pub nvs_key_enc_snapshot_version: &'static str,
+    pub nvs_key_enc_ticks_adj: &'static str,
+    pub enc_home_tol_ticks: i32,
+    /// Heading in degrees at limit switch (home); used by encoder recovery.
+    pub home_heading_deg: f32,
+
+    // Defaults currently written into NVS on boot
+    pub default_mqtt_user: &'static str,
+    pub default_mqtt_pass: &'static str,
+    pub default_wifi_ssid: &'static str,
+    pub default_wifi_pass: &'static str,
+    pub default_tz_offset_hours: i32,
+
+    // Tower defaults
+    pub default_tower_latitude: f64,
+    pub default_tower_longitude: f64,
+    pub default_tower_id: u32,
+    pub default_ota_updater: &'static str,
+    pub default_ota_password: &'static str,
+
+    // Nested (Phase 0: present for parity; unused until later phases)
+    pub boot: BootSwitches,
+    pub runtime: RuntimeSwitches,
+    pub effects: EffectsSwitches,
+    pub admin: AdminSwitches,
+}
+
+/// Core defaults shared with dfw_deployment “normal” deployment: connectivity, tower, boot,
+/// runtime guardrails, encoder recovery, and MQTT topic identity (`device_id`, broker URL).
+///
+/// Profiles (`normal`, `admin`, `custom`) only differ in **policy overlays** (mainly `admin.*`
+/// and optional bench tweaks). `main.rs` always calls `CommandHandler::init` after MQTT connect,
+/// so `{device_id}/admin/cmd` is subscribed in **every** profile; boot-time Admin mode also
+/// drains commands in `admin_mode` when `admin.stop_after` is true.
+const fn shared_defaults() -> Switchboard {
     Switchboard {
+        device_id: crate::constants::DEVICE_ID,
+
+        wifi_connect_delay_secs: 20,
+        tracking_loop_sleep_secs: 300,
+        ota_check_delay_secs: 3,
+
+        mqtt_broker_url: "mqttS://mqtt.jantaus.com:9443",
+        mqtt_client_id: "device1A_pub",
+
+        default_version: "1.0.4",
+        heading_tag: "heading",
+
+        enc_snapshot_version: 1,
+        nvs_key_enc_snapshot_version: "enc_snapshot_v",
+        nvs_key_enc_ticks_adj: "enc_ticks_adj",
+        enc_home_tol_ticks: 50,
+        home_heading_deg: crate::constants::HOME_HEADING_DEG,
+
+        default_mqtt_user: "device1",
+        default_mqtt_pass: "1device",
+        default_wifi_ssid: crate::constants::WIFI_SSID,
+        default_wifi_pass: crate::constants::WIFI_PASSWORD,
+        default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,
+
+        default_ota_updater: "device1A",
+        default_ota_password: "device1A",
+
+        default_tower_latitude: crate::constants::TOWER_LATITUDE,
+        default_tower_longitude: crate::constants::TOWER_LONGITUDE,
+        default_tower_id: crate::constants::TOWER_ID,
+
         boot: BootSwitches {
             recovery: RecoverySwitches {
                 enabled: false,
@@ -195,7 +264,7 @@ pub const fn normal() -> Switchboard {
             },
             homing: BootHomingSwitches {
                 enabled: true,
-                dir: Direction::Ccw,
+                dir: Direction::Cw,
             },
         },
         runtime: RuntimeSwitches {
@@ -207,16 +276,15 @@ pub const fn normal() -> Switchboard {
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
-                probe_steps: 30_000,
+                probe_steps: crate::constants::ENCODER_PROBE_STEPS,
                 max_drift_deg: 15.0,
-                rehome_dir: Direction::Ccw,
+                rehome_dir: Direction::Cw,
             },
             guardrails: GuardrailsSwitches {
                 stall_detection_enabled: true,
-                soft_limits_enabled: false,
-                // Set the numbers now for convenience; flip `soft_limits_enabled` when ready.
-                soft_limit_min_deg: 0.0,
-                soft_limit_max_deg: 285.0,
+                soft_limits_enabled: true,
+                soft_limit_min_deg: crate::constants::SOFT_LIMIT_MIN_DEG,
+                soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
             },
         },
         effects: EffectsSwitches {
@@ -240,54 +308,22 @@ pub const fn normal() -> Switchboard {
     }
 }
 
-pub const fn diagnostic() -> Switchboard {
-    // A safer bench profile: disable normal tracking; keep recovery/homing enabled.
+/// Field deployment: tracking + solar loop enabled; admin MQTT commands allowed from Normal mode
+/// via `cmd_handler` with `bypass_enabled_check` for tests. Boot-time Admin still requires
+/// `ACTIVE_MODE=Admin` (or NVS) **and** either this profile or `admin.enabled` where applicable.
+pub const fn normal() -> Switchboard {
+    shared_defaults()
+}
+
+/// Same hardware/network/tower/runtime scaffold as [`normal`], but **admin policy is enabled** so
+/// `admin_mode::run(..., bypass_enabled_check: false)` succeeds at boot when you use
+/// `ACTIVE_PROFILE=Admin` + Admin runtime mode. MQTT subscribe + command drain use the same
+/// `device_id` as normal; optional tests stay off unless you enable them here or via JSON commands.
+pub const fn admin() -> Switchboard {
     Switchboard {
-        boot: BootSwitches {
-            recovery: RecoverySwitches {
-                enabled: true,
-                moves: DEFAULT_RECOVERY_MOVES,
-                verify_with_encoder: true,
-                verify_tol_deg: 2.0,
-                stop_on_verify_fail: true,
-                stop_after: true,
-                disable_stall_detection: true,
-            },
-            homing: BootHomingSwitches {
-                enabled: true,
-                dir: Direction::Ccw,
-            },
-        },
-        runtime: RuntimeSwitches {
-            tracking: TrackingSwitches {
-                enabled: false,
-                loop_sleep_secs: 300,
-            },
-            motion_mode: MotionModePolicy::Force(motion::MotionMode::EncoderGuarded),
-            encoder_recovery: EncoderRecoverySwitches {
-                enabled: true,
-                probe_interval_secs: 60,
-                probe_steps: 30_000,
-                max_drift_deg: 15.0,
-                rehome_dir: Direction::Ccw,
-            },
-            guardrails: GuardrailsSwitches {
-                stall_detection_enabled: false,
-                soft_limits_enabled: false,
-                soft_limit_min_deg: 0.0,
-                soft_limit_max_deg: 285.0,
-            },
-        },
-        effects: EffectsSwitches {
-            // Diagnostics usually want to avoid touching flash, but still allow MQTT for tests.
-            publish_mqtt: true,
-            persist_nvs: true,
-            allow_ota: false,
-            allow_boot_validation: false,
-        },
         admin: AdminSwitches {
             enabled: true,
-            run_recovery_on_start: true,
+            run_recovery_on_start: false,
             run_homing_on_start: false,
             tests: AdminTestsSwitches {
                 motor_test: false,
@@ -295,63 +331,27 @@ pub const fn diagnostic() -> Switchboard {
                 persistence_test: false,
                 wifi_mqtt_test: false,
             },
+            // Keep device on the network processing `{device_id}/admin/cmd` after optional boot tests.
             stop_after: true,
         },
+        ..shared_defaults()
     }
 }
 
+/// Same as [`normal`] today — explicit hook for site-specific images. Change fields here (or
+/// duplicate the `Switchboard { ... }` literal) instead of editing `normal()` when a customer
+/// needs different defaults without touching production `Normal` profile semantics.
 pub const fn custom() -> Switchboard {
-    // User-tuned profile placeholder: start from normal and tweak here.
-    normal()
+    Switchboard {
+        ..shared_defaults()
+    }
 }
 
 pub const fn active(profile: Profile) -> Switchboard {
     match profile {
         Profile::Normal => normal(),
-        Profile::Diagnostic => diagnostic(),
+        Profile::Admin => admin(),
         Profile::Custom => custom(),
     }
 }
 
-// =========================
-// Runtime switchable profile (button: Normal <-> Custom this boot)
-// =========================
-
-/// Holds Normal, Diagnostic, and Custom switchboards and the active profile for this run.
-/// Use [SwitchboardState::current] to get the active switchboard. The maintenance button
-/// toggles only between Normal and Custom via [SwitchboardState::set_profile].
-#[derive(Debug)]
-pub struct SwitchboardState {
-    active: Profile,
-    normal: Switchboard,
-    diagnostic: Switchboard,
-    custom: Switchboard,
-}
-
-impl SwitchboardState {
-    pub fn new(initial_profile: Profile) -> Self {
-        Self {
-            active: initial_profile,
-            normal: normal(),
-            diagnostic: diagnostic(),
-            custom: custom(),
-        }
-    }
-
-    pub fn current(&self) -> &Switchboard {
-        match self.active {
-            Profile::Normal => &self.normal,
-            Profile::Diagnostic => &self.diagnostic,
-            Profile::Custom => &self.custom,
-        }
-    }
-
-    pub fn active_profile(&self) -> Profile {
-        self.active
-    }
-
-    /// Switch between Normal and Custom (used when maintenance button is pressed).
-    pub fn set_profile(&mut self, p: Profile) {
-        self.active = p;
-    }
-}

@@ -20,6 +20,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     publish_mqtt: bool,
     persist_nvs: bool,
     allow_ota: bool,
+    device_id: &str,
 ) -> motion::MoveOutcome {
     let tracking_done = motion.set_tower_position(
         calculation,
@@ -33,6 +34,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
         publish_mqtt,
         persist_nvs,
         allow_ota,
+        device_id,
     );
 
     // Persist only when a move actually completed successfully.

@@ -14,7 +14,7 @@ pub enum RunMode {
 pub fn get_active_profile() -> crate::switchboard::Profile {
     match ACTIVE_PROFILE_STR {
         "Normal" => crate::switchboard::Profile::Normal,
-        "Diagnostic" => crate::switchboard::Profile::Diagnostic,
+        "Admin" => crate::switchboard::Profile::Admin,
         "Custom" => crate::switchboard::Profile::Custom,
         _ => crate::switchboard::Profile::Normal,
     }

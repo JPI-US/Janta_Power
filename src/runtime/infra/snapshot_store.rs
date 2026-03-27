@@ -13,6 +13,11 @@ pub const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
 // Tracks which run mode last wrote potentially-stateful values.
 pub const NVS_KEY_LAST_RUN_NORMAL: &str = "last_run_normal"; // 1=Normal, 0=Admin/Other
 
+// Daily encoder mode reset tracking
+// NOTE: ESP-IDF NVS key names are limited to 15 bytes max.
+pub const NVS_KEY_ENCODER_MODE_RESET_DATE: &str = "enc_rst_date"; // "YYYY-MM-DD" format
+pub const NVS_KEY_ENCODER_DAILY_MODE: &str = "enc_daily_mode"; // 1=true (switched due to daily probe failures), 0=false
+
 // Encoder snapshot version (u32) stored in NVS.
 pub const ENC_SNAPSHOT_VERSION: u32 = 1;
 
@@ -159,6 +164,74 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                 "Failed to store encoder ticks in NVS ({}): {:?}",
                 NVS_KEY_ENC_TICKS_ADJ, e
             ),
+        }
+    }
+
+    /// Load encoder mode reset date from NVS (returns None if not set)
+    pub fn load_encoder_mode_reset_date(&mut self) -> Option<String> {
+        let mut buf = [0u8; 16];
+        self.nvs.get_str(NVS_KEY_ENCODER_MODE_RESET_DATE, &mut buf).ok().flatten()
+            .map(|s| s.to_string())
+    }
+
+    /// Save encoder mode reset date to NVS (format: "YYYY-MM-DD")
+    pub fn save_encoder_mode_reset_date(&mut self, date: &str) {
+        if !self.persist_enabled {
+            warn!("NVS persist disabled: skipping save_encoder_mode_reset_date({})", date);
+            return;
+        }
+        match self.nvs.set_str(NVS_KEY_ENCODER_MODE_RESET_DATE, date) {
+            Ok(_) => info!("Stored {} in NVS: {}", NVS_KEY_ENCODER_MODE_RESET_DATE, date),
+            Err(e) => warn!("Failed to store {} in NVS: {:?}", NVS_KEY_ENCODER_MODE_RESET_DATE, e),
+        }
+    }
+
+    /// Load encoder daily mode flag from NVS (true if switched due to daily probe failures)
+    pub fn load_encoder_daily_mode(&mut self) -> bool {
+        match self.nvs.get_u8(NVS_KEY_ENCODER_DAILY_MODE).ok().flatten() {
+            Some(1) => true,
+            Some(0) => false,
+            Some(other) => {
+                warn!("Invalid {}={} in NVS; defaulting to false", NVS_KEY_ENCODER_DAILY_MODE, other);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Save encoder daily mode flag to NVS
+    pub fn save_encoder_daily_mode(&mut self, daily_mode: bool) {
+        if !self.persist_enabled {
+            warn!("NVS persist disabled: skipping save_encoder_daily_mode({})", daily_mode);
+            return;
+        }
+        match self.nvs.set_u8(NVS_KEY_ENCODER_DAILY_MODE, if daily_mode { 1 } else { 0 }) {
+            Ok(_) => info!("Stored {} in NVS: {}", NVS_KEY_ENCODER_DAILY_MODE, daily_mode),
+            Err(e) => warn!("Failed to store {} in NVS: {:?}", NVS_KEY_ENCODER_DAILY_MODE, e),
+        }
+    }
+
+    /// Save tracking mode to NVS (for use by encoder fault recovery)
+    pub fn save_tracking_mode(&mut self, mode: MotionMode) {
+        if !self.persist_enabled {
+            let mode_str = match mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            warn!("NVS persist disabled: skipping save_tracking_mode({})", mode_str);
+            return;
+        }
+        let mode_value = match mode {
+            MotionMode::StepperOnly => 1,
+            MotionMode::EncoderGuarded => 2,
+        };
+        let mode_str = match mode {
+            MotionMode::StepperOnly => "StepperOnly",
+            MotionMode::EncoderGuarded => "EncoderGuarded",
+        };
+        match self.nvs.set_u8(NVS_KEY_TRACKING_MODE, mode_value) {
+            Ok(_) => info!("Stored {} in NVS: {}", NVS_KEY_TRACKING_MODE, mode_str),
+            Err(e) => warn!("Failed to store {} in NVS: {:?}", NVS_KEY_TRACKING_MODE, e),
         }
     }
 }

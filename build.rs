@@ -44,7 +44,7 @@ fn generate_constants() {
     constants.push_str("// Motor/Mechanical Constants\n");
     constants.push_str(&get_env("MICROSTEPS", "25600.0", "f64"));
     constants.push_str(&get_env("GEAR_REDUCTION", "1.0", "f64"));
-    constants.push_str(&get_env("SLEW_BEARING", "84.0", "f64"));
+    constants.push_str(&get_env("SLEW_BEARING", "85.0", "f64"));
     constants.push_str(&get_env("DEFAULT_MAX_SPEED_STEPS_PER_S", "5000.0", "f32"));
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
@@ -53,6 +53,8 @@ fn generate_constants() {
     // Encoder Constants
     constants.push_str("// Encoder Constants\n");
     constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
+    constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
+    constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
     constants.push_str("\n");
     
     // Stall Detection
@@ -93,14 +95,26 @@ fn generate_constants() {
     
     // MQTT Configuration
     constants.push_str("// MQTT Configuration\n");
-    constants.push_str(&get_env("MQTT_USER", "device1", "str"));
-    constants.push_str(&get_env("MQTT_PASSWORD", "1device", "str"));
+    constants.push_str(&get_env("MQTT_USER", "device1A", "str"));
+    constants.push_str(&get_env("MQTT_PASSWORD", "device1A", "str"));
     constants.push_str("\n");
     
     // Timezone
     constants.push_str("// Timezone\n");
     constants.push_str(&get_env("TIMEZONE_OFFSET_HOURS", "-5.0", "f32"));
-    
+    let tz_str = std::env::var("TIMEZONE_OFFSET_HOURS").unwrap_or_else(|_| "-5.0".to_string());
+    let tz_i32: i32 = tz_str.parse().unwrap_or(-5);
+    constants.push_str(&format!("pub const TIMEZONE_OFFSET_HOURS_I32: i32 = {};\n", tz_i32));
+    constants.push_str("\n");
+
+    // Device / Tower (optional: for switchboard defaults, override in OTA if needed)
+    constants.push_str("// Device & Tower defaults\n");
+    constants.push_str(&get_env("DEVICE_ID", "device5", "str"));
+    constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
+    constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
+    constants.push_str(&get_env("TOWER_ID", "1", "u32"));
+    constants.push_str("\n");
+
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
     
     // Tell Cargo to rerun if .env changes

@@ -31,6 +31,8 @@ const NVS_KEY_ADMIN_PERSIST_COUNTER: &str = "admin_persist_ctr";
 /// - `bypass_enabled_check`: If true, skip the `cfg.enabled` check. Used when running tests
 ///   from Normal mode via MQTT commands (temporary admin mode).
 pub fn run<T: NvsPartitionId>(
+    device_id: &str,
+    formatted_time: String,
     cfg: &AdminSwitches,
     motion: &mut Motion<'_>,
     recovery_cfg: &RecoverySwitches,
@@ -47,6 +49,7 @@ pub fn run<T: NvsPartitionId>(
     if !bypass_enabled_check && !cfg.enabled {
         error!("ADMIN_MODE refused: SWITCHBOARD.admin.enabled=false");
         infra::Telemetry::critical_failure_loop(
+            device_id,
             mqtt,
             b"Critical failure: Admin mode selected but disabled in switchboard! at Tower 1 (Office Tower)",
             publish_mqtt,
@@ -75,7 +78,13 @@ pub fn run<T: NvsPartitionId>(
     );
 
     // Keep the device "alive" on telemetry even in admin mode.
-    infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
+    infra::Telemetry::publish_firmware_version_if(
+        device_id,
+        mqtt,
+        formatted_time.clone(),
+        current_version,
+        publish_mqtt,
+    );
 
     // Optional startup actions (re-use existing primitives).
     if cfg.run_recovery_on_start {
@@ -91,6 +100,7 @@ pub fn run<T: NvsPartitionId>(
         };
         if !ok {
             infra::Telemetry::critical_failure_loop(
+                device_id,
                 mqtt,
                 b"Critical failure: Admin homing failed! at Tower 1 (Office Tower)",
                 publish_mqtt,
@@ -135,6 +145,8 @@ pub fn run<T: NvsPartitionId>(
                     &mut dummy_heading, // Dummy heading for Admin mode (not used for tracking)
                     publish_mqtt,
                     persist_nvs,
+                    device_id,
+                    &formatted_time,
                 ) {
                     Ok(true) => {
                         commands_processed += 1;
@@ -155,7 +167,13 @@ pub fn run<T: NvsPartitionId>(
             }
             
             // Publish telemetry and sleep
-            infra::Telemetry::publish_firmware_version_if(mqtt, current_version, publish_mqtt);
+            infra::Telemetry::publish_firmware_version_if(
+                device_id,
+                mqtt,
+                formatted_time.clone(),
+                current_version,
+                publish_mqtt,
+            );
             std::thread::sleep(Duration::from_secs(60));
         }
     }

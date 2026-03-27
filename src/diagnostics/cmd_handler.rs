@@ -15,8 +15,13 @@ use crate::config_manager::{ConfigManager, RuntimeMode};
 use crate::switchboard::{AdminSwitches, BootHomingSwitches, RecoverySwitches};
 use serde_json::Value;
 
-const TOPIC_CMD: &str = "device1/admin/cmd";
-const TOPIC_CMD_RESP: &str = "device1/admin/cmd/resp";
+fn topic_cmd(device_id: &str) -> String {
+    format!("{}/admin/cmd", device_id)
+}
+
+fn topic_cmd_resp(device_id: &str) -> String {
+    format!("{}/admin/cmd/resp", device_id)
+}
 
 #[derive(serde::Deserialize, Debug)]
 #[serde(tag = "cmd")]
@@ -39,9 +44,10 @@ pub struct CommandHandler;
 
 impl CommandHandler {
     /// Subscribe to command topic and return handler instance.
-    pub fn init(mqtt: &mut Mqtt) -> anyhow::Result<()> {
-        mqtt.subscribe(TOPIC_CMD)?;
-        info!("Command handler subscribed to: {}", TOPIC_CMD);
+    pub fn init(mqtt: &mut Mqtt, device_id: &str) -> anyhow::Result<()> {
+        let t = topic_cmd(device_id);
+        mqtt.subscribe(&t)?;
+        info!("Command handler subscribed to: {}", t);
         Ok(())
     }
 
@@ -62,6 +68,8 @@ impl CommandHandler {
         actual_heading: &mut f32,
         publish_mqtt: bool,
         persist_nvs: bool,
+        device_id: &str,
+        formatted_time: &str,
     ) -> anyhow::Result<bool> {
         let Some((topic, payload)) = mqtt.try_receive() else {
             // No message available - this is normal, not an error
@@ -70,8 +78,9 @@ impl CommandHandler {
 
         info!("CommandHandler: Received message on topic: {}", topic);
         
-        if topic != TOPIC_CMD {
-            warn!("Received message on unexpected topic: {} (expected: {})", topic, TOPIC_CMD);
+        let expected = topic_cmd(device_id);
+        if topic != expected {
+            warn!("Received message on unexpected topic: {} (expected: {})", topic, expected);
             return Ok(false);
         }
 
@@ -80,7 +89,7 @@ impl CommandHandler {
             Ok(s) => s,
             Err(e) => {
                 error!("Command payload is not valid UTF-8: {:?}", e);
-                Self::publish_error(mqtt, publish_mqtt, "invalid_encoding", "Command payload must be UTF-8");
+                Self::publish_error(mqtt, device_id, publish_mqtt, "invalid_encoding", "Command payload must be UTF-8");
                 return Ok(true);
             }
         };
@@ -89,7 +98,7 @@ impl CommandHandler {
             Ok(c) => c,
             Err(e) => {
                 error!("Failed to parse command JSON: {:?}", e);
-                Self::publish_error(mqtt, publish_mqtt, "parse_error", &format!("Invalid JSON: {}", e));
+                Self::publish_error(mqtt, device_id, publish_mqtt, "parse_error", &format!("Invalid JSON: {}", e));
                 return Ok(true);
             }
         };
@@ -111,29 +120,31 @@ impl CommandHandler {
                     actual_heading,
                     publish_mqtt,
                     persist_nvs,
+                    device_id,
+                    formatted_time,
                 )?;
-                Self::publish_result(mqtt, publish_mqtt, "run_test", &test, result);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "run_test", &test, result);
             }
             Command::GetStatus => {
                 let status = Self::get_status(motion, mqtt, wifi);
-                Self::publish_result(mqtt, publish_mqtt, "get_status", "", status);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "get_status", "", status);
             }
             Command::SetMode { mode } => {
                 let mode_clone = mode.clone();
                 let result = Self::set_mode(mode, config_manager, nvs)?;
-                Self::publish_result(mqtt, publish_mqtt, "set_mode", &mode_clone, result);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "set_mode", &mode_clone, result);
             }
             Command::SetConfig { key, value } => {
                 let result = Self::set_config(&key, value, config_manager, nvs)?;
-                Self::publish_result(mqtt, publish_mqtt, "set_config", &key, result);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "set_config", &key, result);
             }
             Command::GetConfig { key } => {
                 let result = Self::get_config(key.as_deref(), config_manager);
-                Self::publish_result(mqtt, publish_mqtt, "get_config", key.as_deref().unwrap_or("all"), result);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "get_config", key.as_deref().unwrap_or("all"), result);
             }
             Command::ResetConfig => {
                 let result = Self::reset_config(config_manager, nvs)?;
-                Self::publish_result(mqtt, publish_mqtt, "reset_config", "", result);
+                Self::publish_result(mqtt, device_id, publish_mqtt, "reset_config", "", result);
             }
         }
 
@@ -154,6 +165,8 @@ impl CommandHandler {
         actual_heading: &mut f32,
         publish_mqtt: bool,
         persist_nvs: bool,
+        device_id: &str,
+        formatted_time: &str,
     ) -> anyhow::Result<String> {
         // Create a minimal admin config that only enables the requested test.
         let mut test_cfg = *admin_cfg;
@@ -178,7 +191,7 @@ impl CommandHandler {
         info!("{}", start_msg);
         if publish_mqtt {
             let payload = format!(r#"{{"status":"starting","test":"{}"}}"#, test_name);
-            if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+            if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
                 warn!("Failed to publish test start message: {:?}", e);
             }
         }
@@ -187,6 +200,8 @@ impl CommandHandler {
         // Pass bypass_enabled_check=true to allow running tests from Normal mode
         // without requiring switchboard.admin.enabled=true
         let result = match admin_mode::run(
+            device_id,
+            formatted_time.to_string(),
             &test_cfg,
             motion,
             recovery_cfg,
@@ -245,7 +260,7 @@ impl CommandHandler {
                 let result_with_homing = format!("{}. Re-homed successfully.", result);
                 if publish_mqtt {
                     let payload = format!(r#"{{"status":"completed","test":"{}","result":"{}"}}"#, test_name, result_with_homing);
-                    if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+                    if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
                         warn!("Failed to publish test completion message: {:?}", e);
                     }
                 }
@@ -255,7 +270,7 @@ impl CommandHandler {
                 let result_with_error = format!("{}. WARNING: Re-homing failed - position may be incorrect!", result);
                 if publish_mqtt {
                     let payload = format!(r#"{{"status":"completed","test":"{}","result":"{}"}}"#, test_name, result_with_error);
-                    if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+                    if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
                         warn!("Failed to publish test completion message: {:?}", e);
                     }
                 }
@@ -267,7 +282,7 @@ impl CommandHandler {
         info!("Test execution finished: {}", result);
         if publish_mqtt {
             let payload = format!(r#"{{"status":"completed","test":"{}","result":"{}"}}"#, test_name, result);
-            if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+            if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
                 warn!("Failed to publish test completion message: {:?}", e);
             }
         }
@@ -284,23 +299,23 @@ impl CommandHandler {
         )
     }
 
-    fn publish_result(mqtt: &mut Mqtt, enabled: bool, cmd: &str, test: &str, result: String) {
+    fn publish_result(mqtt: &mut Mqtt, device_id: &str, enabled: bool, cmd: &str, test: &str, result: String) {
         if !enabled {
             info!("MQTT disabled: skipping result publish for {} {}", cmd, test);
             return;
         }
         let payload = format!(r#"{{"cmd":"{}","test":"{}","result":"{}"}}"#, cmd, test, result);
-        if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+        if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
             warn!("Failed to publish command result: {:?}", e);
         }
     }
 
-    fn publish_error(mqtt: &mut Mqtt, enabled: bool, error_type: &str, msg: &str) {
+    fn publish_error(mqtt: &mut Mqtt, device_id: &str, enabled: bool, error_type: &str, msg: &str) {
         if !enabled {
             return;
         }
         let payload = format!(r#"{{"error":"{}","msg":"{}"}}"#, error_type, msg);
-        if let Err(e) = mqtt.publish(TOPIC_CMD_RESP, payload.as_bytes()) {
+        if let Err(e) = mqtt.publish(&topic_cmd_resp(device_id), payload.as_bytes()) {
             warn!("Failed to publish error: {:?}", e);
         }
     }
