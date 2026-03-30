@@ -175,7 +175,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device7_pub",
+        "device1_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
