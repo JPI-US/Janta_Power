@@ -125,7 +125,7 @@ impl EncoderFaultRecovery {
             infra::Telemetry::critical_failure_loop(
                 device_id,
                 mqtt,
-                b"Critical failure: encoder fault recovery disabled in switchboard!",
+                b"Critical failure: encoder fault recovery disabled in switchboard at the Office Tower!",
                 publish_mqtt,
             );
         }
@@ -202,7 +202,7 @@ impl EncoderFaultRecovery {
             infra::Telemetry::critical_failure_loop(
                 device_id,
                 mqtt,
-                b"Critical failure: re-home after encoder recovery failed!",
+                b"Critical failure: re-home after encoder recovery failed at the Office Tower!",
                 publish_mqtt,
             );
         }
@@ -273,14 +273,23 @@ impl EncoderFaultRecovery {
             SnapshotStore::new(nvs, persist_nvs).save_encoder_daily_mode(true);
         }
         
-        // Publish MQTT notification
+        // Publish MQTT notification on both topics: dedicated encoder channel + tower/status
+        // (same path as limit-switch critical alerts) so ops/Discord bridges that only subscribe
+        // to tower/status still see encoder degradation.
         let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
         if publish_mqtt {
-            let topic = infra::topic(device_id, "status/encoder_mode");
-            if let Err(e) = mqtt.publish(&topic, mqtt_message.as_bytes()) {
-                log::warn!("Failed to publish encoder mode switch message: {:?}", e);
+            let payload = mqtt_message.as_bytes();
+            let t_encoder = infra::topic(device_id, "status/encoder_mode");
+            if let Err(e) = mqtt.publish(&t_encoder, payload) {
+                log::warn!("Failed to publish encoder mode switch to {}: {:?}", t_encoder, e);
             } else {
-                log::info!("Published encoder mode switch message to MQTT");
+                log::info!("Published encoder mode switch to {}", t_encoder);
+            }
+            let t_tower = infra::topic(device_id, "tower/status");
+            if let Err(e) = mqtt.publish(&t_tower, payload) {
+                log::warn!("Failed to publish encoder mode switch to {}: {:?}", t_tower, e);
+            } else {
+                log::info!("Published encoder mode switch to {}", t_tower);
             }
         } else {
             log::info!("MQTT publish disabled: {}", mqtt_message);

@@ -109,7 +109,7 @@ fn generate_constants() {
 
     // Device / Tower (optional: for switchboard defaults, override in OTA if needed)
     constants.push_str("// Device & Tower defaults\n");
-    constants.push_str(&get_env("DEVICE_ID", "device5", "str"));
+    constants.push_str(&get_env("DEVICE_ID", "device1", "str"));
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
     constants.push_str(&get_env("TOWER_ID", "1", "u32"));

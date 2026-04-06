@@ -363,12 +363,12 @@ fn main() -> anyhow::Result<()> {
     
     let mut actual_heading: f32 = if trust_nvs_state {
         let h = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-            .load_heading_or_init(90.0);
+            .load_heading_or_init(sw.home_heading_deg);
         info!("Restored heading from NVS: {}", h);
         h
     } else {
         info!("Skipping heading restore: NVS state untrusted");
-        90.0
+        sw.home_heading_deg
     };
 
     // Restore encoder adjusted ticks snapshot (version-gated) in EncoderGuarded mode only.
@@ -438,14 +438,16 @@ fn main() -> anyhow::Result<()> {
                 infra::Telemetry::critical_failure_loop(
                     sw.device_id,
                     &mut mqtt,
-                    b"Critical failure: Limit switch failure!",
+                    b"Critical failure: Limit switch failure at the Office Tower!",
                     PUBLISH_MQTT,
                 );
             }
         }
+        // Motion was homed inside find_limit_switch_*; align RAM/NVS so tracking does not use a stale pre-home heading.
+        actual_heading = sw.home_heading_deg;
         // After a successful homing run, re-seed NVS with a clean baseline.
         if PERSIST_NVS {
-            infra::SnapshotStore::new(&mut nvs, true).save_heading(90.0);
+            infra::SnapshotStore::new(&mut nvs, true).save_heading(sw.home_heading_deg);
             if motion_mode == MotionMode::EncoderGuarded {
                 infra::SnapshotStore::new(&mut nvs, true)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
@@ -458,7 +460,7 @@ fn main() -> anyhow::Result<()> {
             infra::Telemetry::critical_failure_loop(
                 sw.device_id,
                 &mut mqtt,
-                b"Critical failure: NVS state untrusted but homing disabled!",
+                b"Critical failure: NVS state untrusted but homing disabled at the Office Tower!",
                 PUBLISH_MQTT,
             );
         }
@@ -519,7 +521,7 @@ fn main() -> anyhow::Result<()> {
                 true => {
                     info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
                     // Update actual heading after successful re-homing
-                    actual_heading = 90.0;
+                    actual_heading = sw.home_heading_deg;
                     motion.update_position(actual_heading);
                     if PERSIST_NVS {
                         infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
@@ -531,7 +533,7 @@ fn main() -> anyhow::Result<()> {
                     infra::Telemetry::critical_failure_loop(
                         sw.device_id,
                         &mut mqtt,
-                        b"Critical failure: Limit switch failure!",
+                        b"Critical failure: Limit switch failure at the Office Tower!",
                         PUBLISH_MQTT,
                     );
                 }
@@ -611,7 +613,7 @@ fn main() -> anyhow::Result<()> {
                 true => {
                     info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
                     // Update actual heading after successful re-homing
-                    actual_heading = 90.0;
+                    actual_heading = sw.home_heading_deg;
                     motion.update_position(actual_heading);
                     if PERSIST_NVS {
                         infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
@@ -623,7 +625,7 @@ fn main() -> anyhow::Result<()> {
                     infra::Telemetry::critical_failure_loop(
                         sw.device_id,
                         &mut mqtt,
-                        b"Critical failure: Limit switch failure!",
+                        b"Critical failure: Limit switch failure at the Office Tower!",
                         PUBLISH_MQTT,
                     );
                 }

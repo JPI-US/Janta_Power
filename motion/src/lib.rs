@@ -396,7 +396,7 @@ pub mod motion {
                             loop {
                                 if publish_mqtt {
                                     let topic = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure at the Office Tower!") {
                                         log::error!(
                                             "Failed to publish critical error message: {:?}",
                                             e
@@ -404,7 +404,7 @@ pub mod motion {
                                     }
                                 } else {
                                     log::error!(
-                                        "Critical failure: Limit switch failure! (MQTT disabled)"
+                                        "Critical failure: Limit switch failure at the Office Tower! (MQTT disabled)"
                                     );
                                 }
                                 thread::sleep(Duration::from_secs(900)); // every 15 minutes
@@ -501,11 +501,11 @@ pub mod motion {
                             loop{
                                 if publish_mqtt {
                                     let topic = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure!") {
+                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure at the Office Tower!") {
                                     log::error!("Failed to publish critical error message: {:?}", e);
                                     }
                                 } else {
-                                    log::error!("Critical failure: Limit switch failure! (MQTT disabled)");
+                                    log::error!("Critical failure: Limit switch failure at the Office Tower! (MQTT disabled)");
                                 }
                                 thread::sleep(Duration::from_secs(900));// Loop every 15 minutes
                             }
