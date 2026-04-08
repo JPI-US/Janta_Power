@@ -4,10 +4,7 @@ use semver::Version;
 
 use crate::infra::SnapshotStore;
 
-/// One “normal mode” tracking tick: call Motion's tracking logic and persist stable results.
-///
-/// We keep Motion's existing `set_tower_position()` behavior, but isolate the orchestration +
-/// persistence wiring behind a single function.
+/// Run one tracking tick and persist stable state.
 pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     motion: &mut motion::Motion,
     calculation: &mut clock::Clock<I2C>,
@@ -37,8 +34,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
         device_id,
     );
 
-    // Persist only when a move actually completed successfully.
-    // This prevents “phantom saves” and prevents old headings from being overwritten on abort paths.
+    // Persist only after completed moves.
     match motion.take_last_move_outcome() {
         Some(motion::MoveOutcome::Completed) => {
             *actual_heading = motion.location();
@@ -53,8 +49,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             outcome
         }
         None => {
-            // If no movement was needed, treat as Completed for outer orchestration.
-            // We do not persist here because nothing changed.
+            // No movement needed; treat as completed without writing NVS.
             if !tracking_done {
                 log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
             }

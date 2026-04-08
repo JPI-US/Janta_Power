@@ -3,7 +3,7 @@ use semver::Version;
 
 use network::mqtt::Mqtt;
 
-/// Build device-prefixed MQTT topic: e.g. topic("device5", "firmware/status") -> "device5/firmware/status"
+/// Build a device-prefixed MQTT topic.
 pub fn topic(device_id: &str, suffix: &str) -> String {
     format!("{}/{}", device_id, suffix)
 }
@@ -83,7 +83,7 @@ impl Telemetry {
                     core::str::from_utf8(msg).unwrap_or("<non-utf8 msg>")
                 );
             }
-            std::thread::sleep(std::time::Duration::from_secs(900)); // every 15 minutes
+            std::thread::sleep(std::time::Duration::from_secs(900));
         }
     }
 
