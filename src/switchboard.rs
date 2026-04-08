@@ -223,7 +223,7 @@ pub const fn normal() -> Switchboard {
         mqtt_broker_url: "mqttS://mqtt.jantaus.com:9443",
         mqtt_client_id: "device1_pub",
 
-        default_version: "1.0.4",
+        default_version: "1.0.0",
         heading_tag: "heading",
 
         enc_snapshot_version: 1,

@@ -220,10 +220,10 @@ fn main() -> anyhow::Result<()> {
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
 
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.0.6";
-    
+    const DEFAULT_VERSION: &str = "1.0.0";
+
     if PERSIST_NVS {
-        nvs.set_str("version", "1.0.6")?;
+        nvs.set_str("version", "1.0.0")?;
     }
 
     // Read current version from NVS (or default).
@@ -633,7 +633,7 @@ fn main() -> anyhow::Result<()> {
             info!("Tracking disabled");
         }
 
-        info!("Tracking loop duration (v1.0.6): {:?}", now.elapsed());
+        info!("Tracking loop duration (v1.0.0): {:?}", now.elapsed());
         
         // Housekeeping
         if wifi.state() == WifiState::Disconnected {
