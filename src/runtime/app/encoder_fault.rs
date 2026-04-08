@@ -261,21 +261,14 @@ impl EncoderFaultRecovery {
             SnapshotStore::new(nvs, persist_nvs).save_encoder_daily_mode(true);
         }
 
-        // Publish on dedicated encoder topic and tower/status for shared alerting pipelines.
+        // Critical: encoder probes exhausted; single alert topic, payload describes the failure.
         let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
         if publish_mqtt {
-            let payload = mqtt_message.as_bytes();
-            let t_encoder = infra::topic(device_id, "status/encoder_mode");
-            if let Err(e) = mqtt.publish(&t_encoder, payload) {
-                log::warn!("Failed to publish encoder mode switch to {}: {:?}", t_encoder, e);
+            let t = infra::topic(device_id, "tower/status");
+            if let Err(e) = mqtt.publish(&t, mqtt_message.as_bytes()) {
+                log::warn!("Failed to publish critical status to {}: {:?}", t, e);
             } else {
-                log::info!("Published encoder mode switch to {}", t_encoder);
-            }
-            let t_tower = infra::topic(device_id, "tower/status");
-            if let Err(e) = mqtt.publish(&t_tower, payload) {
-                log::warn!("Failed to publish encoder mode switch to {}: {:?}", t_tower, e);
-            } else {
-                log::info!("Published encoder mode switch to {}", t_tower);
+                log::info!("Published critical status to {}", t);
             }
         } else {
             log::info!("MQTT publish disabled: {}", mqtt_message);

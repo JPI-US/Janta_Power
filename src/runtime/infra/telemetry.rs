@@ -65,6 +65,7 @@ impl Telemetry {
         }
     }
 
+    /// Critical alert on `tower/status`: republish `msg` every 15 minutes until reset.
     pub fn critical_failure_loop(
         device_id: &str,
         mqtt: &mut Mqtt,
@@ -75,12 +76,12 @@ impl Telemetry {
         loop {
             if publish_enabled {
                 if let Err(e) = mqtt.publish(&t, msg) {
-                    error!("Failed to publish critical error message: {:?}", e);
+                    warn!("Failed to publish critical status to {}: {:?}", t, e);
                 }
             } else {
-                error!(
-                    "CRITICAL_FAILURE (MQTT disabled): {}",
-                    core::str::from_utf8(msg).unwrap_or("<non-utf8 msg>")
+                info!(
+                    "MQTT publish disabled: {}",
+                    core::str::from_utf8(msg).unwrap_or("<non-utf8>")
                 );
             }
             std::thread::sleep(std::time::Duration::from_secs(900));

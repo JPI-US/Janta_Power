@@ -43,6 +43,10 @@ use wifi::wifi::{Wifi, WifiState};
 
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
+/// `tower/status` when re-homing fails after Stepper-only transition (encoder probe recovery).
+/// Distinct from boot/sunset limit-search failures so alerts match the real sequence.
+const CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY: &[u8] = b"Critical failure: Re-homing failed in Stepper-only mode after encoder recovery. Limit switch not found or homing move aborted.";
+
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::normal();
 
@@ -505,7 +509,7 @@ fn main() -> anyhow::Result<()> {
                     infra::Telemetry::critical_failure_loop(
                         sw.device_id,
                         &mut mqtt,
-                        b"Critical failure: Limit switch failure at the Office Tower!",
+                        CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
                         PUBLISH_MQTT,
                     );
                 }
@@ -593,7 +597,7 @@ fn main() -> anyhow::Result<()> {
                     infra::Telemetry::critical_failure_loop(
                         sw.device_id,
                         &mut mqtt,
-                        b"Critical failure: Limit switch failure at the Office Tower!",
+                        CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
                         PUBLISH_MQTT,
                     );
                 }

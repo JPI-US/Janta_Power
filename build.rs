@@ -107,9 +107,8 @@ fn generate_constants() {
     constants.push_str(&format!("pub const TIMEZONE_OFFSET_HOURS_I32: i32 = {};\n", tz_i32));
     constants.push_str("\n");
 
-    // Device / Tower (optional: for switchboard defaults, override in OTA if needed)
+    // Tower location (MQTT topic root is MQTT_USER above)
     constants.push_str("// Device & Tower defaults\n");
-    constants.push_str(&get_env("DEVICE_ID", "device1", "str"));
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
     constants.push_str(&get_env("TOWER_ID", "1", "u32"));

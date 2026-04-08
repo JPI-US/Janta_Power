@@ -168,7 +168,7 @@ const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
 /// Switchboard: policy/data only.
 #[derive(Copy, Clone, Debug)]
 pub struct Switchboard {
-    /// Device id used as MQTT topic prefix (e.g. "device5" -> "device5/firmware/status").
+    /// MQTT topic prefix; same string as `MQTT_USER` from env (build-time constants).
     pub device_id: &'static str,
 
     // Timing
@@ -214,7 +214,7 @@ pub struct Switchboard {
 
 pub const fn normal() -> Switchboard {
     Switchboard {
-        device_id: crate::constants::DEVICE_ID,
+        device_id: crate::constants::MQTT_USER,
 
         wifi_connect_delay_secs: 20,
         tracking_loop_sleep_secs: 300,
@@ -232,8 +232,8 @@ pub const fn normal() -> Switchboard {
         enc_home_tol_ticks: 50,
         home_heading_deg: crate::constants::HOME_HEADING_DEG,
 
-        default_mqtt_user: "device1",
-        default_mqtt_pass: "1device",
+        default_mqtt_user: crate::constants::MQTT_USER,
+        default_mqtt_pass: crate::constants::MQTT_PASSWORD,
         default_wifi_ssid: crate::constants::WIFI_SSID,
         default_wifi_pass: crate::constants::WIFI_PASSWORD,
         default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,

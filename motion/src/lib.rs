@@ -23,6 +23,10 @@ pub mod motion {
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
+    /// `tower/status` payload: limit switch not found during sunset verify or sleep homing.
+    const CRITICAL_TOWER_LIMIT_SWITCH: &[u8] =
+        b"Critical failure: Limit switch failure at the Office Tower!";
+
     // Keep step math in one place.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
@@ -384,21 +388,25 @@ pub mod motion {
                             log::error!(
                                 "Home verification failed: limit switch could not be found"
                             );
+                            // Critical: sunset home verification could not find limit switch.
                             loop {
                                 if publish_mqtt {
-                                    let topic = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure at the Office Tower!") {
-                                        log::error!(
-                                            "Failed to publish critical error message: {:?}",
+                                    let t = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
+                                        log::warn!(
+                                            "Failed to publish critical status to {}: {:?}",
+                                            t,
                                             e
                                         );
                                     }
                                 } else {
-                                    log::error!(
-                                        "Critical failure: Limit switch failure at the Office Tower! (MQTT disabled)"
+                                    log::info!(
+                                        "MQTT publish disabled: {}",
+                                        std::str::from_utf8(CRITICAL_TOWER_LIMIT_SWITCH)
+                                            .unwrap_or("critical")
                                     );
                                 }
-                                thread::sleep(Duration::from_secs(900)); // every 15 minutes
+                                thread::sleep(Duration::from_secs(900));
                             }
                         }
                     }
@@ -484,14 +492,23 @@ pub mod motion {
                         },
                         false => {
                             log::error!("Limit switch has returned false, limit switch could not be found");
-                            loop{
+                            // Critical: move-to-sleep homing could not find limit switch.
+                            loop {
                                 if publish_mqtt {
-                                    let topic = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, b"Critical failure: Limit switch failure at the Office Tower!") {
-                                    log::error!("Failed to publish critical error message: {:?}", e);
+                                    let t = format!("{}/tower/status", device_id);
+                                    if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
+                                        log::warn!(
+                                            "Failed to publish critical status to {}: {:?}",
+                                            t,
+                                            e
+                                        );
                                     }
                                 } else {
-                                    log::error!("Critical failure: Limit switch failure at the Office Tower! (MQTT disabled)");
+                                    log::info!(
+                                        "MQTT publish disabled: {}",
+                                        std::str::from_utf8(CRITICAL_TOWER_LIMIT_SWITCH)
+                                            .unwrap_or("critical")
+                                    );
                                 }
                                 thread::sleep(Duration::from_secs(900));
                             }
