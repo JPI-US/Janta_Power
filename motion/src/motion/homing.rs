@@ -1,6 +1,4 @@
-// Limit-switch and homing related helpers for Motion.
-//
-// Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
+// Limit-switch and homing helpers.
 
 use super::{calculate_steps, Motion, MoveOutcome};
 use std::time::{Duration, Instant};
@@ -10,23 +8,22 @@ impl Motion<'_> {
         self.lmsw.is_low()
     }
 
-    // Retrieve and clear the most recent home error (captured when we hit the limit switch).
+    // Retrieve and clear the most recent home error.
     pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
         self.last_home_error_ticks.take()
     }
 
-    // `set_tower_position()` may call this when the motor isn't running yet; we still want
-    // adjusted ticks to be 0 at home.
+    // Ensure adjusted ticks are zeroed when we are physically on the switch.
     pub(crate) fn force_zero_if_limit_switch_pressed(&mut self) {
         if self.lmsw.is_low() {
-            // Capture drift before re-zeroing (based on current offset)
+            // Capture drift before re-zeroing.
             let home_error = self.encoder_ticks_adjusted();
             self.last_home_error_ticks = Some(home_error);
 
-            // Make adjusted ticks 0 at the switch
+            // Make adjusted ticks 0 at the switch.
             self.encoder_zero_offset = self.encoder.position();
 
-            // Keep the debouncer state consistent (pressed + already zeroed for this press)
+            // Keep debounce state consistent with a pressed/zeroed switch.
             self.lmsw_last_state_pressed = true;
             self.lmsw_last_change = Instant::now();
             self.lmsw_zeroed_this_press = true;
@@ -39,27 +36,25 @@ impl Motion<'_> {
         }
     }
 
-    // Called from `run()` while the motor is moving: edge detection + debounce + capture home error + zero.
+    // Called from `run()` while moving: edge-detect, debounce, and zero on press.
     pub(crate) fn poll_limit_switch_zeroing(&mut self) {
-        // Reset encoder count to 0 when the limit switch is pressed (edge-triggered + debounced)
-        // The switch is active-low in this codebase (pressed => is_low()).
+        // Switch is active-low.
         let pressed = self.lmsw.is_low();
         let now = Instant::now();
         if pressed != self.lmsw_last_state_pressed {
             self.lmsw_last_state_pressed = pressed;
             self.lmsw_last_change = now;
-            // Allow re-zeroing after a release.
+
             if !pressed {
                 self.lmsw_zeroed_this_press = false;
             }
         }
 
-        // Simple time-based debounce: require stable pressed state for 30ms.
+        // Time-based debounce: pressed and stable for 30 ms.
         if pressed
             && !self.lmsw_zeroed_this_press
             && self.lmsw_last_change.elapsed() >= Duration::from_millis(30)
         {
-            // Capture how far off we were from "perfect home" right before we re-zero.
             let home_error = self.encoder_ticks_adjusted();
             self.last_home_error_ticks = Some(home_error);
             self.encoder_zero_offset = self.encoder.position();
@@ -73,8 +68,7 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
-        // Stage 2: CCW-only homing (Spec A). Keep the CW API as a wrapper so existing
-        // call sites remain safe.
+        // Firmware is currently CCW-only for homing.
         log::warn!("Homing requested CW, but firmware is configured for CCW-only homing; using CCW search");
         self.find_limit_switch_ccw()
     }
@@ -82,27 +76,25 @@ impl Motion<'_> {
     pub fn find_limit_switch_ccw(&mut self) -> bool {
         use super::HOME_HEADING_DEG;
         
-        // Set homing flag to disable overshoot protection during homing
+        // Disable overshoot checks while homing.
         self.is_homing = true;
 
-        // During homing, we want old-style behavior: keep searching until the switch is found
-        // or we hit the travel budget. Stall detection can cause confusing abort cascades here,
-        // so we disable it temporarily and restore it afterwards.
+        // Keep searching until switch is found or travel budget is exhausted.
+        // Stall detection is temporarily disabled to avoid abort cascades.
         let stall_prev = self.stall_detection_enabled();
         self.set_stall_detection_enabled(false);
-        
-        // If limit switch is already pressed, do nothing
+
         if self.lmsw.is_low() {
             log::info!("Limit switch already pressed - skipping homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
             self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;  // Clear homing flag
+            self.is_homing = false;
             return true;
         }
-        
+
         self.relay_on();
-        // Convention for *current wiring*: negative step movement = physical CCW.
+        // Current wiring convention: negative step command moves CCW.
         log::info!("Looking for the limit switch (CCW search, max 350°)");
 
         let mut max_steps = calculate_steps(-350.0);
@@ -111,7 +103,7 @@ impl Motion<'_> {
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay_off();
                 self.set_stall_detection_enabled(stall_prev);
-                self.is_homing = false;  // Clear homing flag on failure
+                self.is_homing = false;
                 return false;
             }
             max_steps -= step_movement;
@@ -124,11 +116,11 @@ impl Motion<'_> {
             self.relay_off();
             self.force_zero_if_limit_switch_pressed();
             self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;  // Clear homing flag on success
+            self.is_homing = false;
             return true;
         }
         self.set_stall_detection_enabled(stall_prev);
-        self.is_homing = false;  // Clear homing flag on failure
+        self.is_homing = false;
         false
     }
 }

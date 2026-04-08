@@ -1,6 +1,4 @@
-// Stepper movement execution + stall detector.
-//
-// Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
+// Stepper movement execution and safety checks.
 
 use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
 use std::time::{Duration, Instant};
@@ -18,12 +16,11 @@ impl Motion<'_> {
     }
 
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {
-        // Turn relay ON before starting motor movement
+        // Start move.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement");
 
-        // Reset stall detector baseline for this move so we don't accidentally compare
-        // against stale values from a previous run.
+        // Reset stall baselines for this move.
         let now = Instant::now();
         self.stall_last_check = now;
         self.stall_step_pos_at_last_enc_change = self.motor.current_position();
@@ -31,18 +28,17 @@ impl Motion<'_> {
         self.stall_reported = false;
         self.stall_consecutive = 0;
         
-        // Initialize ratio-based stall detection (EncoderGuarded mode only).
+        // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
             self.stall_check_start_step_pos = self.motor.current_position();
             self.stall_check_last_interval_step = self.motor.current_position();
         }
 
-        // Initialize overshoot protection (EncoderGuarded mode only).
+        // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             use super::{ENC_TICKS_PER_REV, STEPS_PER_REV};
             self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
-            // Calculate expected encoder ticks for this move: (steps / STEPS_PER_REV) * ENC_TICKS_PER_REV
             let expected_ticks = ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
             self.overshoot_expected_ticks = Some(expected_ticks);
         } else {
@@ -54,7 +50,7 @@ impl Motion<'_> {
         self.motor.move_by(signed_steps);
         let outcome = self.run();
         
-        // Turn relay OFF after movement completes or aborts
+        // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
         
@@ -63,7 +59,7 @@ impl Motion<'_> {
     }
 
     pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
-        // Turn relay ON before starting motor movement
+        // Start move in tick space.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement (ticks)");
 
@@ -74,15 +70,14 @@ impl Motion<'_> {
         self.stall_reported = false;
         self.stall_consecutive = 0;
         
-        // Initialize ratio-based stall detection (EncoderGuarded mode only).
+        // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
             self.stall_check_start_step_pos = self.motor.current_position();
             self.stall_check_last_interval_step = self.motor.current_position();
         }
 
-        // Initialize overshoot protection (EncoderGuarded mode only).
-        // For move_by_ticks, we use the location directly as expected ticks.
+        // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
             self.overshoot_expected_ticks = Some(location.abs());
@@ -95,7 +90,7 @@ impl Motion<'_> {
         self.motor.move_by(signed_steps);
         let outcome = self.run();
         
-        // Turn relay OFF after movement completes or aborts
+        // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
         
@@ -119,24 +114,15 @@ impl Motion<'_> {
                     return MoveOutcome::AbortedPowerMissing;
                 }
 
-                // Stall detector.
-                // Detect "motor stepping but encoder not moving" at a fixed cadence.
+                // Absolute stall detector: encoder must change within a step budget.
                 if self.motion_mode == MotionMode::EncoderGuarded
                     && self.stall_detection_enabled
                     && self.stall_last_check.elapsed() >= Duration::from_millis(250)
                 {
-                    // Stall threshold: loaded from .env file at compile time.
-                    // Previously this was tuned for a drivetrain where encoder ticks could take ~20k+ steps
-                    // to change. With the 50:1 gearbox removed, encoder ticks should change *much sooner*,
-                    // so we use a smaller budget to detect "motor stepping but encoder not moving".
-                    //
-                    // If you see false stalls due to slack/noise, increase the value in .env file.
-
                     let step_pos = self.motor.current_position();
                     let enc_pos = self.encoder_ticks_adjusted();
 
                     if enc_pos != self.stall_last_enc_ticks_seen {
-                        // Encoder moved -> reset baseline.
                         self.stall_last_enc_ticks_seen = enc_pos;
                         self.stall_step_pos_at_last_enc_change = step_pos;
                         self.stall_reported = false;
@@ -159,8 +145,6 @@ impl Motion<'_> {
                         self.stall_reported = true;
                     }
 
-                    // Abort the move once we've exceeded the allowed step budget without
-                    // any encoder tick change.
                     if stalled {
                         log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
                         let pos = self.motor.current_position();
@@ -172,8 +156,7 @@ impl Motion<'_> {
                     self.stall_last_check = Instant::now();
                 }
 
-                // Ratio-based stall detection (EncoderGuarded mode only).
-                // Check if encoder has moved at least MIN_TICKS over every INTERVAL_STEPS.
+                // Ratio stall detector: every interval must produce minimum tick movement.
                 if self.motion_mode == MotionMode::EncoderGuarded
                     && self.stall_detection_enabled
                 {
@@ -182,7 +165,6 @@ impl Motion<'_> {
                     
                     let total_steps_moved = (current_step_pos - self.stall_check_start_step_pos).abs();
                     
-                    // Check every INTERVAL_STEPS
                     if total_steps_moved >= ENCODER_STALL_CHECK_INTERVAL_STEPS {
                         let encoder_ticks_moved = (current_encoder_ticks - self.stall_check_start_encoder_ticks).abs();
                         
@@ -199,7 +181,6 @@ impl Motion<'_> {
                             return MoveOutcome::AbortedStall;
                         }
                         
-                        // Reset for next interval
                         self.stall_check_start_encoder_ticks = current_encoder_ticks;
                         self.stall_check_start_step_pos = current_step_pos;
                         self.stall_check_last_interval_step = current_step_pos;
@@ -211,11 +192,9 @@ impl Motion<'_> {
                     }
                 }
 
-                // Encoder overshoot protection (EncoderGuarded mode only).
-                // Skip overshoot protection during homing (we don't know expected ticks).
-                // Check if encoder moved more than expected + tolerance.
+                // Overshoot protection (EncoderGuarded only, disabled during homing).
                 if self.motion_mode == MotionMode::EncoderGuarded
-                    && !self.is_homing  // Skip overshoot protection during homing
+                    && !self.is_homing
                     && self.overshoot_enc_start.is_some()
                     && self.overshoot_expected_ticks.is_some()
                 {
@@ -235,27 +214,24 @@ impl Motion<'_> {
                             enc_delta - expected - tolerance
                         );
                         let pos = self.motor.current_position();
-                        self.motor.set_current_position(pos); // hard stop
-                        self.relay_off(); // Turn relay OFF on overshoot abort
-                        // Clear overshoot tracking
+                        self.motor.set_current_position(pos);
+                        self.relay_off();
                         self.overshoot_enc_start = None;
                         self.overshoot_expected_ticks = None;
                         return MoveOutcome::AbortedOvershoot;
                     }
                 }
 
-                // Home-error capture + zeroing on limit switch.
+                // Capture home error and zero encoder on switch events.
                 self.poll_limit_switch_zeroing();
                 
-                // Critical: During homing, if limit switch is pressed, stop immediately
-                // This allows the homing code to detect we're at home and complete successfully
+                // During homing, stop immediately once switch is pressed.
                 if self.is_homing && self.lmsw.is_low() {
-                    // Stop immediately so homing code can detect success.
                     log::info!("Limit switch pressed during homing - found home, stopping immediately");
                     let pos = self.motor.current_position();
-                    self.motor.set_current_position(pos); // hard stop
-                    self.relay_off(); // Turn relay OFF
-                    return MoveOutcome::Completed; // Return Completed so homing code can detect success
+                    self.motor.set_current_position(pos);
+                    self.relay_off();
+                    return MoveOutcome::Completed;
                 }
 
                 if t0.elapsed() >= Duration::from_millis(100) {
@@ -274,7 +250,7 @@ impl Motion<'_> {
                 break;
             }
         }
-        // Clear overshoot tracking on successful completion
+        // Clear overshoot state on normal completion.
         self.overshoot_enc_start = None;
         self.overshoot_expected_ticks = None;
         MoveOutcome::Completed

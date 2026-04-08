@@ -1,27 +1,25 @@
-// Encoder-related helpers for Motion.
-//
-// Keep behavior identical to the previous monolithic implementation in `motion/src/lib.rs`.
+// Encoder helpers for Motion.
 
 use super::{
     Motion, MoveOutcome, ENC_TICKS_PER_REV, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
     ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
 };
 
-// Encoder calibration (output shaft): loaded from .env file at compile time.
+// Output-shaft encoder calibration from build-time constants.
 const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
 
 impl Motion<'_> {
-    // Convention: CW is positive; 0 ticks corresponds to the limit switch (home) after zeroing.
+    // CW is positive; 0 ticks is limit-switch home after zeroing.
     pub fn encoder_ticks_adjusted(&self) -> i32 {
         self.encoder.position() - self.encoder_zero_offset
     }
 
-    // Raw encoder ticks from the quadrature decoder (typically resets to 0 on reboot).
+    // Raw quadrature ticks.
     pub fn encoder_ticks_raw(&self) -> i32 {
         self.encoder.position()
     }
 
-    // Restore the software zero offset so adjusted ticks can be reconstructed after reboot.
+    // Restore software zero offset after reboot.
     pub fn set_encoder_zero_offset(&mut self, zero_offset: i32) {
         self.encoder_zero_offset = zero_offset;
     }
@@ -40,10 +38,7 @@ impl Motion<'_> {
         (deg * ENC_TICKS_PER_DEG).round() as i32
     }
 
-    /// Tiny diagnostic move: step a small amount and check whether encoder ticks change.
-    ///
-    /// Intended for "encoder might be unplugged / recovered" probing. This does NOT use
-    /// ticks as a servo; it simply checks for *any* tick movement.
+    /// Diagnostic probe: move and verify encoder ticks changed.
     pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
         let start_ticks = self.encoder_ticks_adjusted();
         let outcome = self.move_by(probe_steps);
@@ -56,8 +51,7 @@ impl Motion<'_> {
         let end_ticks = self.encoder_ticks_adjusted();
         let encoder_ticks_moved = (end_ticks - start_ticks).abs();
         
-        // Probe pass condition is intentionally a bit looser than the runtime ratio stall check.
-        // Default: 50k steps must produce at least 80 ticks (configurable via .env).
+        // Probe threshold is intentionally looser than runtime stall checks.
         let min_expected_ticks = if probe_steps.abs() == ENCODER_PROBE_STEPS {
             ENCODER_PROBE_MIN_TICKS
         } else {
