@@ -12,21 +12,18 @@ pub mod motion {
     use semver::Version;
     use std::thread;
 
-    // Split into focused modules: encoder, homing, move execution.
+    // Focused motion modules.
     mod encoder;
     mod homing;
     mod move_exec;
 
-    // Include auto-generated constants from .env file
+    // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
-    // Motor movement constants.
-    //
-    // Constants are now loaded from .env file at compile time.
-    // Keep these in one place so all step calculations stay consistent.
+    // Keep step math in one place.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
     #[derive(PartialEq, Copy, Clone, Debug)]
@@ -58,14 +55,14 @@ pub mod motion {
         motor_device:
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
         motor_clock: OperatingSystemClock,
-        // Legacy / unused after removing fine-adjust logic; keep for now to minimize churn.
+        // Legacy field kept for compatibility.
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
         encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio10, Input>, PinDriver<'a, Gpio11, Input>, QuadStep>,
-        // Encoder "reset" is implemented as a software offset: displayed_position = raw - offset.
+        // Encoder zero is a software offset: adjusted = raw - offset.
         encoder_zero_offset: i32,
-        // Limit-switch edge detection / debounce state (active-low switch).
+        // Limit-switch debounce state (active-low switch).
         lmsw_last_state_pressed: bool,
         lmsw_last_change: Instant,
         lmsw_zeroed_this_press: bool,
@@ -90,20 +87,21 @@ pub mod motion {
         overshoot_enc_start: Option<i32>,
         overshoot_expected_ticks: Option<i64>,
 
-        // Report last attempted move outcome (read once via `take_last_move_outcome`).
+        // Last attempted move outcome, consumed by `take_last_move_outcome`.
         last_move_outcome: Option<MoveOutcome>,
 
-        // Tracking soft limits (guardrail).
+        // Tracking soft limits.
         soft_limits_enabled: bool,
         soft_limit_min_deg: f32,
         soft_limit_max_deg: f32,
 
-        // Homing flag: when true, overshoot protection is disabled (we don't know expected ticks during homing).
+        // During homing, overshoot checks are disabled.
         is_homing: bool,
     }
 
-    // CW: direction
-    // CCW: step
+    // Direction and step wiring notes:
+    // - CW controls direction pin
+    // - CCW steps by convention in this wiring
     impl Motion<'_> {
         pub fn new<'a>(
             step_pin: Gpio15,
@@ -115,8 +113,7 @@ pub mod motion {
         ) -> Motion<'a> {
             let step = PinDriver::output(step_pin).unwrap();
             let direction = PinDriver::output(direction_pin).unwrap();
-            // Relay is wired as active-low (LOW = ON, HIGH = OFF).
-            // Ensure we boot with relay OFF to avoid powering the motor unexpectedly.
+            // Relay is active-low: boot with relay OFF.
             let mut relay = PinDriver::output(relay_pin).unwrap();
             relay.set_high().unwrap_or_default();
             let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
@@ -241,8 +238,7 @@ pub mod motion {
             self.update_position(location);
             log::info!("{},", clock.after_sunrise());
             if clock.after_sunrise() && !clock.after_sunset() {
-                // If we're starting the day already at home, ensure encoder ticks are zeroed
-                // even though the motor isn't running yet.
+                // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
                 let sun = NOAASun {
                     year: clock.get_year(),
@@ -257,8 +253,7 @@ pub mod motion {
                 log::info!("Tracking in progress");
                 let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
 
-                // Soft limits (guardrail): clamp target heading to avoid mechanical cable wrap / hard stops.
-                // We only apply this in daytime tracking moves.
+                // Clamp daytime target heading to soft limits.
                 let target_raw = (location as f64) + angle_offset_raw;
                 let target_clamped = if self.soft_limits_enabled {
                     let min = self.soft_limit_min_deg as f64;
@@ -294,8 +289,7 @@ pub mod motion {
                     target_clamped
                 );
                 log::info!("Sun Angle: {}", sun.azimuth_in_deg());
-                // Single-path daytime tracking:
-                // If we're within deadband, do nothing. Otherwise execute a movement based on offset.
+                // Daytime tracking: no move in deadband, otherwise step by offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     self.relay_off();
                     return true;
@@ -315,8 +309,7 @@ pub mod motion {
                         self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
 
-                // Publish message
-                        let payload = format!(
+                let payload = format!(
                             "Current datetime: {}, and current tower angle: {}",
                             formatted_time, 
                             location as f64 + angle_offset
@@ -334,9 +327,7 @@ pub mod motion {
             } 
             else {// Sunset Operation 
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
-                    // Home verification check:
-                    // Do not trust heading alone to skip homing. If we're "at home" by heading but
-                    // the physical limit switch is not pressed, run a CCW homing search once.
+                    // Verify home physically when heading says home.
                     if self.lmsw.is_high() {
                         log::warn!(
                             "Heading near home but limit switch not pressed; verifying home by homing CCW"
@@ -345,7 +336,7 @@ pub mod motion {
                         if ok {
                             log::info!("Home verification homing succeeded");
 
-                            // Publish + persist daily home error (ticks) if we captured it.
+                            // Publish and persist home error ticks if captured.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
@@ -416,11 +407,9 @@ pub mod motion {
                     // Ensure encoder ticks are truly 0 at home while we sleep.
                     self.force_zero_if_limit_switch_pressed();
 
-                    // Track start time
                     let mut last_check = Instant::now();
-                    let check_interval = Duration::from_secs(2 * 60 * 60); // 2 hours
+                    let check_interval = Duration::from_secs(2 * 60 * 60);
 
-                    // Wait here until sunrise
                     while clock.after_sunset() || !clock.after_sunrise() {
                         if clock.after_sunrise() && !clock.after_sunset() {
                             log::info!("Sunrise detected, exiting sleep loop");
@@ -429,13 +418,11 @@ pub mod motion {
                         if allow_ota && last_check.elapsed() >= check_interval {
                             log::info!("2 hours elapsed, checking for OTA");
 
-                            // Check to see if wifi is disconnected before OTA try
                             log::info!("Current wifi state: {:?}", wifi.state());
                             if wifi.state() == WifiState::Disconnected {
                                 let _ = wifi.reconnect_if_disconnected();
                             }
 
-                            // Creates an instance of OTA crate and runs version compare
                             thread::sleep(Duration::from_secs(3));
                             let mut updater = OtaUpdater::new_ota(current_version.clone(), mqtt, device_id, Some("device1A"), Some("device1A")).expect("Failed to create OTA adapter instance");
 
@@ -449,14 +436,13 @@ pub mod motion {
                                 }
                             } 
 
-                            last_check = Instant::now(); // reset the timer
-                            //break;
+                            last_check = Instant::now();
                         } else if !allow_ota && last_check.elapsed() >= check_interval {
                             log::info!("OTA disabled: skipping periodic OTA check");
                             last_check = Instant::now();
                         }
                         log::info!("Still waiting for sunrise...");
-                        std::thread::sleep(std::time::Duration::from_secs(600)); // Prevent busy waiting
+                        std::thread::sleep(std::time::Duration::from_secs(600));
                     }
 
                     return true;
@@ -467,7 +453,7 @@ pub mod motion {
                         true => {
                             log::info!("Limit switch has returned true");
 
-                            // Publish + persist daily home error (ticks) if we captured it.
+                            // Publish and persist home error ticks if captured.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
                                 if publish_mqtt {
@@ -507,7 +493,7 @@ pub mod motion {
                                 } else {
                                     log::error!("Critical failure: Limit switch failure at the Office Tower! (MQTT disabled)");
                                 }
-                                thread::sleep(Duration::from_secs(900));// Loop every 15 minutes
+                                thread::sleep(Duration::from_secs(900));
                             }
                         }
                     }
