@@ -398,11 +398,32 @@ fn main() -> anyhow::Result<()> {
     // Homing policy:
     // - StepperOnly: always home
     // - EncoderGuarded: home when snapshot restore is unavailable/untrusted
+    // - EncoderGuarded: if NVS claims mechanical home (≈ home_heading_deg), require limit
+    //   switch active before skipping homing; otherwise re-home like snapshot miss
     const HOMING_ENABLED: bool = true;
     const HOMING_DIRECTION: Direction = Direction::Ccw;
+    /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
+    const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
 
-    let should_home_by_mode =
-        motion_mode == MotionMode::StepperOnly || !restored_from_snapshot || !trust_nvs_state;
+    let would_skip_homing_on_snapshot = motion_mode == MotionMode::EncoderGuarded
+        && restored_from_snapshot
+        && trust_nvs_state;
+    let restored_claims_mechanical_home =
+        (actual_heading - sw.home_heading_deg).abs() < HOME_HEADING_VERIFY_EPS_DEG;
+    let home_claim_needs_limit_verify = would_skip_homing_on_snapshot
+        && restored_claims_mechanical_home
+        && !motion.switch_pressed();
+    if home_claim_needs_limit_verify {
+        log::info!(
+            "Restored heading matches home ({}) but limit switch not pressed; homing to verify",
+            sw.home_heading_deg
+        );
+    }
+
+    let should_home_by_mode = motion_mode == MotionMode::StepperOnly
+        || !restored_from_snapshot
+        || !trust_nvs_state
+        || home_claim_needs_limit_verify;
     if should_home_by_mode && HOMING_ENABLED {
         let limit_sw_status = match HOMING_DIRECTION {
             Direction::Cw => motion.find_limit_switch_cw(),
