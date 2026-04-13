@@ -34,6 +34,7 @@ use esp_idf_svc::{
     ota::EspOta,
     sntp::{EspSntp, SyncStatus},
 };
+use rtc as _;
 use motion::{MoveOutcome, Motion, MotionMode};
 use rgb_led::Led;
 use network::mqtt::Mqtt;

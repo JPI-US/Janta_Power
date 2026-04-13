@@ -105,6 +105,9 @@ fn generate_constants() {
     let tz_str = std::env::var("TIMEZONE_OFFSET_HOURS").unwrap_or_else(|_| "-5.0".to_string());
     let tz_i32: i32 = tz_str.parse().unwrap_or(-5);
     constants.push_str(&format!("pub const TIMEZONE_OFFSET_HOURS_I32: i32 = {};\n", tz_i32));
+    let tz_posix = std::env::var("TZ_POSIX").unwrap_or_else(|_| "CST6CDT,M3.2.0,M11.1.0".to_string());
+    constants.push_str("// POSIX TZ string for libc setenv/tzset (DST-aware local time)\n");
+    constants.push_str(&format!("pub const TZ_POSIX: &str = {:?};\n", tz_posix));
     constants.push_str("\n");
 
     // Tower location (MQTT topic root is MQTT_USER above)
