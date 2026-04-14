@@ -224,8 +224,7 @@ impl EncoderFaultRecovery {
             log::warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        let formatted_time = chrono::Utc::now()
-            .with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
+        let formatted_time = rtc::timezone::local_time()
             .format("%d/%m/%Y %H:%M:%S")
             .to_string();
         infra::Telemetry::publish_firmware_version_if(
@@ -250,8 +249,7 @@ impl EncoderFaultRecovery {
     ) -> anyhow::Result<()> {
         motion.set_motion_mode(MotionMode::StepperOnly);
 
-        let current_date = chrono::Utc::now()
-            .with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())
+        let current_date = rtc::timezone::local_time()
             .format("%Y-%m-%d")
             .to_string();
 

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Boot time: **RTC-first** (sane year range on the DS3231) restores system time from the chip; otherwise **Wi‑Fi + SNTP** (60s timeout) writes UTC to the RTC and system clock. Removed the previous **SNTP-first** blocking wait before MQTT.
 - Wall-clock strings and daily encoder date rollover use **`chrono::Local`** after `TZ` is set (no longer `SystemTime` + fixed `offset_hours` only for those paths). `offset_hours` remains in NVS for compatibility and motion/NOAA-related constants.
+- Encoder-fault housekeeping timestamp and Stepper-only daily reset date now use the same local-time source (`rtc::timezone::local_time`), removing mixed UTC/local date boundaries in runtime paths.
 
 ## [1.0.0] - 2026-04-08
 
