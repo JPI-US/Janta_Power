@@ -13,6 +13,7 @@ esp-idf-svc = { version = "0.51", features = [
     "embassy-sync",
 ] }
 log = "0.4"
+chrono = { version = "0.4", features = ["clock"] }
 semver = "1.0.26"               #New
 astronav = { version = "0.2.5", features = ["noaa-sun"] }
 clock = { path = "../crates/infrastructure/clock" }

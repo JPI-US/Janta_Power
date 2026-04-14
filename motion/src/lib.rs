@@ -1,6 +1,7 @@
 pub mod motion {
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use astronav::coords::noaa_sun::NOAASun;
+    use chrono::Local;
     use clock::Clock;
     use std::time::{Duration, Instant};
     use esp_idf_svc::hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver};
@@ -244,12 +245,14 @@ pub mod motion {
             if clock.after_sunrise() && !clock.after_sunset() {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
+                // Use runtime local offset (DST-aware via TZ/tzset) for NOAA calculations.
+                let timezone_hours = (Local::now().offset().local_minus_utc() as f32) / 3600.0;
                 let sun = NOAASun {
                     year: clock.get_year(),
                     doy: clock.get_day() as u16,
                     long: clock.get_longitude() as f32,
                     lat: clock.get_latitude() as f32,
-                    timezone: TIMEZONE_OFFSET_HOURS,
+                    timezone: timezone_hours,
                     hour: clock.get_hour(),
                     min: clock.get_minutes(),
                     sec: clock.get_seconds(),

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wall-clock strings and daily encoder date rollover use **`chrono::Local`** after `TZ` is set (no longer `SystemTime` + fixed `offset_hours` only for those paths). `offset_hours` remains in NVS for compatibility and motion/NOAA-related constants.
 - Encoder-fault housekeeping timestamp and Stepper-only daily reset date now use the same local-time source (`rtc::timezone::local_time`), removing mixed UTC/local date boundaries in runtime paths.
 - `clock` crate sunrise/sunset and `after_sunrise`/`after_sunset` no longer hardcode UTC-5; comparisons now use RTC UTC time and timezone-aware conversions instead.
+- Motion NOAA sun-angle timezone now uses runtime local UTC offset (DST-aware via `TZ`/`tzset`) instead of a fixed build-time `TIMEZONE_OFFSET_HOURS` constant.
 
 ## [1.0.0] - 2026-04-08
 
