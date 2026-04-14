@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `rtc` crate: DS3231 read/write, POSIX `TZ` via `setenv`/`tzset`, `settimeofday`, SNTP fallback with timeout (ported from standalone bring-up).
+- Build-time `TZ_POSIX` / switchboard `default_tz_posix`; NVS key `tz_posix` seeded on boot (with other defaults).
+
+### Changed
+
+- Boot time: **RTC-first** (sane year range on the DS3231) restores system time from the chip; otherwise **Wi‑Fi + SNTP** (60s timeout) writes UTC to the RTC and system clock. Removed the previous **SNTP-first** blocking wait before MQTT.
+- Wall-clock strings and daily encoder date rollover use **`chrono::Local`** after `TZ` is set (no longer `SystemTime` + fixed `offset_hours` only for those paths). `offset_hours` remains in NVS for compatibility and motion/NOAA-related constants.
+
 ## [1.0.0] - 2026-04-08
 
 First stable release of the **tower** ESP32-S3 firmware: field-deployable baseline for sun tracking, motion control, and cloud telemetry.

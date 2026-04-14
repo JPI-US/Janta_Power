@@ -1,5 +1,5 @@
-use std::time::{Duration, SystemTime};
-use chrono::{DateTime, FixedOffset, Utc};
+use std::time::Duration;
+use chrono::{DateTime, Local};
 use clock::Clock;
 use log::{error, info, warn};
 use std::thread;
@@ -32,9 +32,8 @@ use esp_idf_svc::{
     log::EspLogger,
     nvs::{EspDefaultNvsPartition, EspNvs},
     ota::EspOta,
-    sntp::{EspSntp, SyncStatus},
 };
-use rtc as _;
+use rtc::Rtc;
 use motion::{MoveOutcome, Motion, MotionMode};
 use rgb_led::Led;
 use network::mqtt::Mqtt;
@@ -125,6 +124,12 @@ fn main() -> anyhow::Result<()> {
             Err(e) => error!("Timezone offset was not updated {:?}", e),
         };
     }
+    if PERSIST_NVS {
+        match nvs.set_str("tz_posix", sw.default_tz_posix) {
+            Ok(_) => info!("POSIX TZ string has been updated"),
+            Err(e) => error!("tz_posix was not updated {:?}", e),
+        };
+    }
 
     // Wi-Fi
     let mut buffer = [0u8; 64];
@@ -146,21 +151,17 @@ fn main() -> anyhow::Result<()> {
         wifi.reconnect_if_disconnected()?;
     }
 
-    // SNTP sync
-    let ntp = EspSntp::new_default().unwrap();
-    info!("Synchronizing with NTP Server");
-    while ntp.get_sync_status() != SyncStatus::Completed {}
-    info!("Time Sync Completed");
-
-    // Local time from UTC + timezone offset
-    let st_now = SystemTime::now();
-    let dt_now_utc: DateTime<Utc> = st_now.clone().into();
-    let timezone_offset_hours: i32 = nvs.get_i32("offset_hours")?.unwrap_or(-5);
-    let local_time: DateTime<FixedOffset> = DateTime::from_naive_utc_and_offset(
-        dt_now_utc.naive_utc(),
-        FixedOffset::east_opt(timezone_offset_hours * 3600).unwrap(),
-    );
-    let formatted_time = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
+    // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`)
+    let mut tz_buf = [0u8; 96];
+    let tz_posix_str = nvs
+        .get_str("tz_posix", &mut tz_buf)?
+        .unwrap_or(sw.default_tz_posix);
+    {
+        let mut rtc = Rtc::new(bus);
+        rtc.init(&wifi, tz_posix_str);
+    }
+    let local_time_boot = rtc::timezone::local_time();
+    let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
     info!("{}", formatted_time);
 
     // MQTT
@@ -175,7 +176,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device1_pub",
+        "device1A_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);
@@ -302,7 +303,6 @@ fn main() -> anyhow::Result<()> {
 
     // Hardware initialization
     let mut calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
-    calculation.set_date_time(&local_time.naive_local());
 
     // LED status
     let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
@@ -332,7 +332,7 @@ fn main() -> anyhow::Result<()> {
     const POWER_ON: bool = true;
 
     // Daily encoder mode reset before mode load
-    check_daily_encoder_reset(&mut nvs, &local_time, PERSIST_NVS);
+    check_daily_encoder_reset(&mut nvs, &rtc::timezone::local_time(), PERSIST_NVS);
 
     // Motion mode from NVS, default EncoderGuarded
     let mut motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
@@ -480,12 +480,7 @@ fn main() -> anyhow::Result<()> {
     let mut need_rehome_stepper_only = false;
 
     loop {
-        let st_now = SystemTime::now();
-        let dt_now_utc: DateTime<Utc> = st_now.into();
-        let local_time: DateTime<FixedOffset> = DateTime::from_naive_utc_and_offset(
-            dt_now_utc.naive_utc(),
-            FixedOffset::east_opt(timezone_offset_hours * 3600).unwrap(),
-        );
+        let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
         // Daily encoder mode reset
@@ -728,7 +723,7 @@ fn boot_diagnostic(device_id: &str, wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mq
 /// Reset daily encoder mode at day rollover.
 fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
     nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
-    local_time: &DateTime<FixedOffset>,
+    local_time: &DateTime<Local>,
     persist_nvs: bool,
 ) -> bool {
     let mut snapshot_store = infra::SnapshotStore::new(nvs, persist_nvs);

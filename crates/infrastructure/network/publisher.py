@@ -5,14 +5,17 @@ import ssl
 import json
 import time
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- Configuration ---
 BROKER_ADDRESS = "mqtt.jantaus.com"        # Server's public domain
 PORT = 8883                                # TLS port
-TOPIC = "device/device5/firmware"
 CA_CERT = "fullchain.pem"                  # Fixed path to certificate
-username = "device5"
-password = "5device"
+username = os.getenv("MQTT_USER", "device1A") # it will try to load the value, if you don't have in env, it will use the alternate value
+password = os.getenv("MQTT_PASSWORD", "device1A") # Same as above behavior to missing value
+TOPIC = f"device/{username}/firmware"
 
 def on_connect(client, userdata, flags, rc):
     """Callback for when the client connects to the broker"""
