@@ -1,7 +1,5 @@
 pub mod clock {
     use chrono::prelude::*;
-    use chrono::MappedLocalTime;
-    use chrono::Utc;
     use ds323x::{DateTimeAccess, Ds323x, NaiveDate, Rtcc};
 
     pub struct Clock<I2C> {
@@ -25,10 +23,8 @@ pub mod clock {
             }
         }
 
-        /// Calculate sunrise and sunset times in UTC
-        pub fn sunrise_times(&mut self) -> Option<DateTime<FixedOffset>> {
-            //Calculate date in utc
-
+        /// Calculate sunrise time and represent it in local timezone.
+        pub fn sunrise_times(&mut self) -> Option<DateTime<Local>> {
             let times = sun_times::sun_times(
                 self.rtc.date().unwrap(),
                 self.latitude,
@@ -37,16 +33,13 @@ pub mod clock {
             );
 
             match times {
-                Some((sunrise, _sunset)) => Some(DateTime::from_naive_utc_and_offset(
-                    sunrise.naive_utc(),
-                    FixedOffset::west_opt(5 * 3600).unwrap(),
-                )),
+                Some((sunrise, _sunset)) => Some(sunrise.with_timezone(&Local)),
                 None => None,
             }
         }
 
-        pub fn sunset_times(&mut self) -> Option<DateTime<FixedOffset>> {
-            //Calculate date in utc
+        /// Calculate sunset time and represent it in local timezone.
+        pub fn sunset_times(&mut self) -> Option<DateTime<Local>> {
             let prop_date = self.rtc.date().unwrap();
 
             let year = prop_date.year();
@@ -58,10 +51,7 @@ pub mod clock {
 
             let times = sun_times::sun_times(date, self.latitude, self.longitude, self.altitude);
             match times {
-                Some((_sunrise, sunset)) => Some(DateTime::from_naive_utc_and_offset(
-                    sunset.naive_utc(),
-                    FixedOffset::west_opt(5 * 3600).unwrap(),
-                )),
+                Some((_sunrise, sunset)) => Some(sunset.with_timezone(&Local)),
                 None => None, // Handle the case where `None` is returned
             }
         }
@@ -126,14 +116,14 @@ pub mod clock {
             self.rtc.datetime().unwrap()
         }
 
+        fn rtc_now_utc(&mut self) -> DateTime<Utc> {
+            DateTime::<Utc>::from_naive_utc_and_offset(self.get_date_time(), Utc)
+        }
+
         /// Method for returning a boolean for if it is after sunrsie today
         pub fn after_sunrise(&mut self) -> bool {
             if let Some(sunrise) = self.sunrise_times() {
-                let current_time: MappedLocalTime<DateTime<FixedOffset>> = self
-                    .get_date_time()
-                    .and_local_timezone(FixedOffset::west_opt(5 * 3600).unwrap());
-                // println!("{:?}", current_time);
-                current_time.single().unwrap() >= sunrise
+                self.rtc_now_utc() >= sunrise.with_timezone(&Utc)
             } else {
                 false // Return false if sunrise is None
             }
@@ -142,11 +132,7 @@ pub mod clock {
         /// Method for returning a boolean for if it is after sunset today
         pub fn after_sunset(&mut self) -> bool {
             if let Some(sunset) = self.sunset_times() {
-                let current_time: MappedLocalTime<DateTime<FixedOffset>> = self
-                    .get_date_time()
-                    .and_local_timezone(FixedOffset::west_opt(5 * 3600).unwrap());
-                // println!("{:?}", current_time);
-                current_time.single().unwrap() >= sunset
+                self.rtc_now_utc() >= sunset.with_timezone(&Utc)
             } else {
                 false // Return false if sunset is None
             }
@@ -154,11 +140,7 @@ pub mod clock {
 
         ///Returns a unix timestamp based on the current date time provided
         pub fn datetime_to_unix_timestamp(&mut self) -> i64 {
-            let current_time: MappedLocalTime<DateTime<FixedOffset>> = self
-                .get_date_time()
-                .and_local_timezone(FixedOffset::west_opt(5 * 3600).unwrap());
-            let unix_timestamp = current_time.single().unwrap().timestamp();
-            unix_timestamp
+            self.rtc_now_utc().timestamp()
         }
     }
 }
