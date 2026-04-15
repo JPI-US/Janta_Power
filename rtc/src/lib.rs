@@ -29,25 +29,32 @@ impl Rtc {
 
     /// Core init flow:
     /// 1. Set timezone first so all subsequent time reads are DST-aware
-    /// 2. Read RTC — if sane, set system time and return immediately
-    /// 3. If RTC is invalid, check wifi and attempt NTP sync as fallback
+    /// 2. Unless `force_ntp`: read RTC — if sane, set system time and return immediately
+    /// 3. If RTC is skipped, invalid, or insane: check wifi and attempt NTP sync as fallback
     /// 4. If NTP succeeds, write corrected UTC time back to RTC
     /// 5. If both fail, panic — time is unrecoverable
-    pub fn init(&mut self, wifi: &Wifi, tz: &str) {
+    ///
+    /// `force_ntp`: skip trusting RTC on this boot (always run SNTP and write RTC), e.g. bring-up
+    /// when you know the battery-backed clock is garbage.
+    pub fn init(&mut self, wifi: &Wifi, tz: &str, force_ntp: bool) {
         timezone::set_timezone(tz);
 
-        if let Some(rtc_time) = self.read() {
-            if Self::is_sane(&rtc_time) {
-                Self::set_system_time(rtc_time);
-                info!(
-                    "System time restored from RTC — local time: {}",
-                    timezone::local_time()
-                );
-                return;
+        if !force_ntp {
+            if let Some(rtc_time) = self.read() {
+                if Self::is_sane(&rtc_time) {
+                    Self::set_system_time(rtc_time);
+                    info!(
+                        "System time restored from RTC — local time: {}",
+                        timezone::local_time()
+                    );
+                    return;
+                }
+                warn!("RTC time outside sane range — falling back to NTP.");
+            } else {
+                warn!("RTC read failed — falling back to NTP.");
             }
-            warn!("RTC time outside sane range — falling back to NTP.");
         } else {
-            warn!("RTC read failed — falling back to NTP.");
+            info!("Skipping RTC read — forced NTP (policy); will sync and write RTC from SNTP.");
         }
 
         match wifi.state() {

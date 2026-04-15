@@ -151,14 +151,16 @@ fn main() -> anyhow::Result<()> {
         wifi.reconnect_if_disconnected()?;
     }
 
-    // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`)
+    // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`).
+    // If true, never trust DS3231 on this boot — always SNTP then write RTC (debug / bad battery).
+    const FORCE_NTP_SKIP_RTC: bool = true;
     let mut tz_buf = [0u8; 96];
     let tz_posix_str = nvs
         .get_str("tz_posix", &mut tz_buf)?
         .unwrap_or(sw.default_tz_posix);
     {
         let mut rtc = Rtc::new(bus);
-        rtc.init(&wifi, tz_posix_str);
+        rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC);
     }
     let local_time_boot = rtc::timezone::local_time();
     let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
@@ -176,7 +178,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://mqtt.jantaus.com:9443",
-        "device1A_pub",
+        "device1_pub",
         &real_mqtt_user,
         &real_mqtt_pass,
     )?);

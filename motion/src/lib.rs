@@ -257,6 +257,23 @@ pub mod motion {
                     min: clock.get_minutes(),
                     sec: clock.get_seconds(),
                 };
+                let rtc_naive = clock.get_date_time();
+                log::info!(
+                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Clock/DS3231 components)",
+                    sun.year,
+                    sun.doy,
+                    sun.lat,
+                    sun.long,
+                    timezone_hours,
+                    sun.hour,
+                    sun.min,
+                    sun.sec
+                );
+                log::info!(
+                    "NOAA time cross-check: Local::now={} | DS3231 naive={} (compare: civil local vs chip; NOAASun expects local civil + tz)",
+                    Local::now().format("%Y-%m-%d %H:%M:%S %:z"),
+                    rtc_naive
+                );
                 log::info!("Tracking in progress");
                 let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
 
