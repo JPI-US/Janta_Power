@@ -1,7 +1,7 @@
 pub mod motion {
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use astronav::coords::noaa_sun::NOAASun;
-    use chrono::Local;
+    use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
     use std::time::{Duration, Instant};
     use esp_idf_svc::hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver};
@@ -245,21 +245,23 @@ pub mod motion {
             if clock.after_sunrise() && !clock.after_sunset() {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
-                // Use runtime local offset (DST-aware via TZ/tzset) for NOAA calculations.
-                let timezone_hours = (Local::now().offset().local_minus_utc() as f32) / 3600.0;
+                // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
+                // (same instant as settimeofday after RTC/NTP) so h/m/s match tz_offset_h.
+                let now = Local::now();
+                let timezone_hours = (now.offset().local_minus_utc() as f32) / 3600.0;
                 let sun = NOAASun {
-                    year: clock.get_year(),
-                    doy: clock.get_day() as u16,
+                    year: now.year() as u16,
+                    doy: now.ordinal() as u16,
                     long: clock.get_longitude() as f32,
                     lat: clock.get_latitude() as f32,
                     timezone: timezone_hours,
-                    hour: clock.get_hour(),
-                    min: clock.get_minutes(),
-                    sec: clock.get_seconds(),
+                    hour: now.hour() as u8,
+                    min: now.minute() as u8,
+                    sec: now.second() as u8,
                 };
                 let rtc_naive = clock.get_date_time();
                 log::info!(
-                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Clock/DS3231 components)",
+                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
                     sun.year,
                     sun.doy,
                     sun.lat,
@@ -270,8 +272,8 @@ pub mod motion {
                     sun.sec
                 );
                 log::info!(
-                    "NOAA time cross-check: Local::now={} | DS3231 naive={} (compare: civil local vs chip; NOAASun expects local civil + tz)",
-                    Local::now().format("%Y-%m-%d %H:%M:%S %:z"),
+                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={}",
+                    now.format("%Y-%m-%d %H:%M:%S %:z"),
                     rtc_naive
                 );
                 log::info!("Tracking in progress");

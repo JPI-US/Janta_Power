@@ -153,7 +153,7 @@ fn main() -> anyhow::Result<()> {
 
     // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`).
     // If true, never trust DS3231 on this boot — always SNTP then write RTC (debug / bad battery).
-    const FORCE_NTP_SKIP_RTC: bool = true;
+    const FORCE_NTP_SKIP_RTC: bool = false;
     let mut tz_buf = [0u8; 96];
     let tz_posix_str = nvs
         .get_str("tz_posix", &mut tz_buf)?
