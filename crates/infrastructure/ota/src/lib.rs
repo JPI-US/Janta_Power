@@ -231,23 +231,26 @@ impl<'a> OtaUpdater<'a> {
 
             match flash_download {
                 Ok(_) => {
-                    // Saving new version to NVS
+                    // Stash the version we're leaving so the post-reboot boot
+                    // flow can publish `logs/firmware_update` with both versions.
+                    nvs.set_str("prev_version", &self.current_version.to_string())?;
+
                     info!("Saving new version to nvs!");
-                    nvs.set_str("version", &remote_version.to_string())?; 
-                    nvs.set_u8("first_boot", 1)?; 
+                    nvs.set_str("version", &remote_version.to_string())?;
+                    nvs.set_u8("first_boot", 1)?;
 
-                    let topic = format!("{}/firmware/status", self.device_id);
-                    self.mqtt_client.publish(&topic, b"OTA firmware downloaded, preparing esp restart!")?;
-
-                    // Reboot into new firmware
+                    // Note: no MQTT publish here. The `firmware_update` success
+                    // event is emitted from `main.rs` on the next boot, once the
+                    // new firmware has actually booted and passed validation.
                     info!("Reebooting firmware in 3 seconds...");
                     thread::sleep(Duration::from_secs(3));
-                    esp_idf_svc::hal::reset::restart();                     
+                    esp_idf_svc::hal::reset::restart();
                 }
                 Err(e) => {
                     info!("Firmware download failed: {:?}", e);
-                    let topic = format!("{}/firmware/status", self.device_id);
-                    self.mqtt_client.publish(&topic, b"OTA update failed!")?; 
+                    // Propagate so the caller publishes a single failure event
+                    // via `Telemetry::publish_firmware_update_failure_if`.
+                    return Err(anyhow::anyhow!("Firmware download failed: {:?}", e));
                 }
             }
         }

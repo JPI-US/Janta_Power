@@ -187,9 +187,21 @@ fn main() -> anyhow::Result<()> {
     const ALLOW_BOOT_VALIDATION: bool = true;
     const PUBLISH_MQTT: bool = true;
 
+    // Load firmware version early so the boot-log publish can include it.
+    let mut version_buf = [0u8; 32];
+    const DEFAULT_VERSION: &str = "1.0.6";
+    if PERSIST_NVS {
+        nvs.set_str("version", "1.0.6")?;
+    }
+    let current_version: Version = nvs
+        .get_str("version", &mut version_buf)?
+        .map(|s| s.trim().parse::<Version>())
+        .transpose()?
+        .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
-        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, PUBLISH_MQTT)
+        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, &current_version, PUBLISH_MQTT)
     } else {
         info!("Boot validation disabled");
         true
@@ -210,6 +222,36 @@ fn main() -> anyhow::Result<()> {
                 info!("Boot validation passed, now marking firmware as valid");
                 valid_ota.mark_running_slot_valid()?;
                 nvs.set_u8("first_boot", 0)?;
+
+                // If a `prev_version` was stashed by the OTA path, we just
+                // successfully booted into the new firmware. Publish the
+                // `logs/firmware_update` success event and only clear the
+                // stash on publish success (so a transient publish failure
+                // doesn't lose the signal).
+                let mut prev_ver_buf = [0u8; 32];
+                if let Some(prev_str) = nvs.get_str("prev_version", &mut prev_ver_buf)? {
+                    match prev_str.trim().parse::<Version>() {
+                        Ok(prev_version) => {
+                            let published = infra::Telemetry::publish_firmware_update_success_if(
+                                sw.device_id,
+                                &mut mqtt,
+                                &prev_version,
+                                &current_version,
+                                PUBLISH_MQTT,
+                            );
+                            if published {
+                                let _ = nvs.remove("prev_version");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "prev_version in NVS is not valid semver ({:?}), clearing: {:?}",
+                                prev_str, e
+                            );
+                            let _ = nvs.remove("prev_version");
+                        }
+                    }
+                }
             } else {
                 error!("Boot validation failed, rolling back firmware");
                 valid_ota.mark_running_slot_invalid_and_reboot();
@@ -220,20 +262,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
-
-    let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.0.6";
-
-    if PERSIST_NVS {
-        nvs.set_str("version", "1.0.6")?;
-    }
-
-    // Read current version from NVS (or default).
-    let current_version: Version = nvs
-        .get_str("version", &mut version_buf)?
-        .map(|s| s.trim().parse::<Version>())
-        .transpose()?
-        .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+    // (current_version was loaded earlier, before boot_diagnostic, so the
+    // boot-log publish could include `firmware_version`.)
 
     const ALLOW_OTA: bool = true;
 
@@ -257,7 +287,12 @@ fn main() -> anyhow::Result<()> {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         if let Err(e) = updater.run_version_compare(&mut nvs) {
-            mqtt.publish(&infra::topic(sw.device_id, "firmware/status"), b"OTA update failed!")?;
+            infra::Telemetry::publish_firmware_update_failure_if(
+                sw.device_id,
+                &mut mqtt,
+                &current_version,
+                PUBLISH_MQTT,
+            );
             error!("Version compare failed: {:?}", e);
         } else {
             info!("Version compare succeeded");
@@ -672,7 +707,13 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn boot_diagnostic(device_id: &str, wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mqtt: bool) -> bool {
+fn boot_diagnostic(
+    device_id: &str,
+    wifi: &mut Wifi,
+    mqtt: &mut Mqtt,
+    current_version: &Version,
+    publish_mqtt: bool,
+) -> bool {
     info!("Starting boot validation in 5 seconds...");
     thread::sleep(Duration::from_secs(5));
 
@@ -707,7 +748,7 @@ fn boot_diagnostic(device_id: &str, wifi: &mut Wifi, mqtt: &mut Mqtt, publish_mq
             continue;
         }
 
-        if infra::Telemetry::publish_boot_check_if(device_id, mqtt, publish_mqtt) {
+        if infra::Telemetry::publish_boot_log_if(device_id, mqtt, current_version, publish_mqtt) {
             return true;
         }
         error!("MQTT publish failed immediately");

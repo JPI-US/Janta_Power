@@ -44,23 +44,111 @@ impl Telemetry {
         }
     }
 
-    pub fn publish_boot_check_if(device_id: &str, mqtt: &mut Mqtt, enabled: bool) -> bool {
+    pub fn publish_boot_log_if(
+        device_id: &str,
+        mqtt: &mut Mqtt,
+        version: &Version,
+        enabled: bool,
+    ) -> bool {
         if !enabled {
-            warn!("MQTT publish disabled: skipping boot check publish");
+            warn!("MQTT publish disabled: skipping boot log publish");
             return true;
         }
-        Self::publish_boot_check(device_id, mqtt)
+        Self::publish_boot_log(device_id, mqtt, version)
     }
 
-    pub fn publish_boot_check(device_id: &str, mqtt: &mut Mqtt) -> bool {
-        let t = topic(device_id, "boot");
-        match mqtt.publish(&t, b"Boot check...") {
+    pub fn publish_boot_log(device_id: &str, mqtt: &mut Mqtt, version: &Version) -> bool {
+        let current_time = rtc::timezone::local_time()
+            .format("%d/%m/%Y %H:%M:%S")
+            .to_string();
+        let payload = serde_json::json!({
+            "current_time": current_time,
+            "type": "boot",
+            "message": "Tower rebooted successfully",
+            "firmware_version": version.to_string(),
+            "component": "system",
+            "notes": "Scheduled reboot completed without errors",
+        })
+        .to_string();
+        let t = format!("tower/{}/logs/boot", device_id);
+        match mqtt.publish(&t, payload.as_bytes()) {
             Ok(_) => {
-                info!("MQTT boot diagnostic publish succeeded...");
+                info!("Published boot log to {}", t);
                 true
             }
             Err(e) => {
-                error!("MQTT boot diagnostic publish failed: {:?}", e);
+                error!("Failed to publish boot log: {:?}", e);
+                false
+            }
+        }
+    }
+
+    pub fn publish_firmware_update_success_if(
+        device_id: &str,
+        mqtt: &mut Mqtt,
+        previous_version: &Version,
+        current_version: &Version,
+        enabled: bool,
+    ) -> bool {
+        if !enabled {
+            warn!("MQTT publish disabled: skipping firmware_update success publish");
+            return true;
+        }
+        let current_time = rtc::timezone::local_time()
+            .format("%d/%m/%Y %H:%M:%S")
+            .to_string();
+        let payload = serde_json::json!({
+            "current_time": current_time,
+            "type": "firmware_update",
+            "message": "Firmware successfully updated",
+            "previous_version": previous_version.to_string(),
+            "current_version": current_version.to_string(),
+            "notes": "No errors during update",
+        })
+        .to_string();
+        let t = format!("tower/{}/logs/firmware_update", device_id);
+        match mqtt.publish(&t, payload.as_bytes()) {
+            Ok(_) => {
+                info!("Published firmware_update success to {}", t);
+                true
+            }
+            Err(e) => {
+                error!("Failed to publish firmware_update success: {:?}", e);
+                false
+            }
+        }
+    }
+
+    pub fn publish_firmware_update_failure_if(
+        device_id: &str,
+        mqtt: &mut Mqtt,
+        current_version: &Version,
+        enabled: bool,
+    ) -> bool {
+        if !enabled {
+            warn!("MQTT publish disabled: skipping firmware_update failure publish");
+            return true;
+        }
+        let current_time = rtc::timezone::local_time()
+            .format("%d/%m/%Y %H:%M:%S")
+            .to_string();
+        let payload = serde_json::json!({
+            "current_time": current_time,
+            "type": "firmware_update",
+            "message": "Firmware update unsuccessful",
+            "previous_version": current_version.to_string(),
+            "current_version": current_version.to_string(),
+            "notes": "Did not update due to failures",
+        })
+        .to_string();
+        let t = format!("tower/{}/logs/firmware_update", device_id);
+        match mqtt.publish(&t, payload.as_bytes()) {
+            Ok(_) => {
+                info!("Published firmware_update failure to {}", t);
+                true
+            }
+            Err(e) => {
+                error!("Failed to publish firmware_update failure: {:?}", e);
                 false
             }
         }
