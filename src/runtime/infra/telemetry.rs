@@ -56,7 +56,8 @@ impl Telemetry {
         }
         Self::publish_boot_log(device_id, mqtt, version)
     }
-
+//Description: Tower logs
+//This is where the boot log is published
     pub fn publish_boot_log(device_id: &str, mqtt: &mut Mqtt, version: &Version) -> bool {
         let current_time = rtc::timezone::local_time()
             .format("%d/%m/%Y %H:%M:%S")
@@ -82,7 +83,8 @@ impl Telemetry {
             }
         }
     }
-
+//Description: Tower logs
+//This is where the firmware update success is published
     pub fn publish_firmware_update_success_if(
         device_id: &str,
         mqtt: &mut Mqtt,
