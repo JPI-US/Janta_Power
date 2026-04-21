@@ -185,7 +185,6 @@ fn main() -> anyhow::Result<()> {
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);
 
     const ALLOW_BOOT_VALIDATION: bool = true;
-    const PUBLISH_MQTT: bool = true;
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
@@ -201,7 +200,7 @@ fn main() -> anyhow::Result<()> {
 
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
-        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, &current_version, PUBLISH_MQTT)
+        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, &current_version)
     } else {
         info!("Boot validation disabled");
         true
@@ -232,13 +231,20 @@ fn main() -> anyhow::Result<()> {
                 if let Some(prev_str) = nvs.get_str("prev_version", &mut prev_ver_buf)? {
                     match prev_str.trim().parse::<Version>() {
                         Ok(prev_version) => {
-                            let published = infra::Telemetry::publish_firmware_update_success_if(
-                                sw.device_id,
-                                &mut mqtt,
-                                &prev_version,
-                                &current_version,
-                                PUBLISH_MQTT,
-                            );
+                            let current_time = rtc::timezone::local_time()
+                                .format(network::telemetry::TIME_FORMAT)
+                                .to_string();
+                            let payload = network::telemetry::FirmwareUpdateLog {
+                                current_time: &current_time,
+                                event_type: "firmware_update",
+                                message: "Firmware successfully updated",
+                                previous_version: &prev_version.to_string(),
+                                current_version: &current_version.to_string(),
+                                notes: "No errors during update",
+                            };
+                            let topic = network::telemetry::topic::logs_firmware_update(sw.device_id);
+                            let published =
+                                network::telemetry::publish_json(&mut mqtt, &topic, &payload).is_ok();
                             if published {
                                 let _ = nvs.remove("prev_version");
                             }
@@ -267,13 +273,14 @@ fn main() -> anyhow::Result<()> {
 
     const ALLOW_OTA: bool = true;
 
-    infra::Telemetry::publish_status_heartbeat_if(
-        sw.device_id,
-        &mut mqtt,
-        formatted_time.clone(),
-        &current_version,
-        PUBLISH_MQTT,
-    );
+    {
+        let payload = network::telemetry::Heartbeat {
+            current_time: &formatted_time,
+            firmware_version: &current_version.to_string(),
+        };
+        let topic = network::telemetry::topic::status(sw.device_id);
+        let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
+    }
 
     let mut updater = OtaUpdater::new_ota(
         current_version.clone(),
@@ -287,12 +294,20 @@ fn main() -> anyhow::Result<()> {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         if let Err(e) = updater.run_version_compare(&mut nvs) {
-            infra::Telemetry::publish_firmware_update_failure_if(
-                sw.device_id,
-                &mut mqtt,
-                &current_version,
-                PUBLISH_MQTT,
-            );
+            let current_time = rtc::timezone::local_time()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let version_str = current_version.to_string();
+            let payload = network::telemetry::FirmwareUpdateLog {
+                current_time: &current_time,
+                event_type: "firmware_update",
+                message: "Firmware update unsuccessful",
+                previous_version: &version_str,
+                current_version: &version_str,
+                notes: "Did not update due to failures",
+            };
+            let topic = network::telemetry::topic::logs_firmware_update(sw.device_id);
+            let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
             error!("Version compare failed: {:?}", e);
         } else {
             info!("Version compare succeeded");
@@ -479,7 +494,6 @@ fn main() -> anyhow::Result<()> {
                     sw.device_id,
                     &mut mqtt,
                     b"Critical failure: Limit switch failure at the Office Tower!",
-                    PUBLISH_MQTT,
                 );
             }
         }
@@ -500,7 +514,6 @@ fn main() -> anyhow::Result<()> {
                 sw.device_id,
                 &mut mqtt,
                 b"Critical failure: NVS state untrusted but homing disabled at the Office Tower!",
-                PUBLISH_MQTT,
             );
         }
     } else {
@@ -562,7 +575,6 @@ fn main() -> anyhow::Result<()> {
                         sw.device_id,
                         &mut mqtt,
                         CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
-                        PUBLISH_MQTT,
                     );
                 }
             }
@@ -606,7 +618,6 @@ fn main() -> anyhow::Result<()> {
             &mut mqtt,
             &mut wifi,
             &current_version,
-            PUBLISH_MQTT,
             PERSIST_NVS,
             sw.device_id,
             sw.home_heading_deg,
@@ -650,7 +661,6 @@ fn main() -> anyhow::Result<()> {
                         sw.device_id,
                         &mut mqtt,
                         CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
-                        PUBLISH_MQTT,
                     );
                 }
             }
@@ -669,7 +679,6 @@ fn main() -> anyhow::Result<()> {
                 &mut nvs,
                 &mut wifi,
                 current_datetime.clone(),
-                PUBLISH_MQTT,
                 PERSIST_NVS,
                 ALLOW_OTA,
                 sw.device_id,
@@ -692,14 +701,15 @@ fn main() -> anyhow::Result<()> {
             warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        //Description: Heartbeat ping: This is where I am actually pinging but you can find the topic in telemetry.rs
-        infra::Telemetry::publish_status_heartbeat_if(
-            sw.device_id,
-            &mut mqtt,
-            current_datetime.clone(),
-            &current_version,
-            PUBLISH_MQTT,
-        );
+        // Heartbeat ping: see `network::telemetry::topic::status` for the topic string.
+        {
+            let payload = network::telemetry::Heartbeat {
+                current_time: &current_datetime,
+                firmware_version: &current_version.to_string(),
+            };
+            let topic = network::telemetry::topic::status(sw.device_id);
+            let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
+        }
 
         const LOOP_SLEEP_SECS: u64 = 300;
         std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
@@ -712,7 +722,6 @@ fn boot_diagnostic(
     wifi: &mut Wifi,
     mqtt: &mut Mqtt,
     current_version: &Version,
-    publish_mqtt: bool,
 ) -> bool {
     info!("Starting boot validation in 5 seconds...");
     thread::sleep(Duration::from_secs(5));
@@ -748,7 +757,19 @@ fn boot_diagnostic(
             continue;
         }
 
-        if infra::Telemetry::publish_boot_log_if(device_id, mqtt, current_version, publish_mqtt) {
+        let current_time = rtc::timezone::local_time()
+            .format(network::telemetry::TIME_FORMAT)
+            .to_string();
+        let payload = network::telemetry::BootLog {
+            current_time: &current_time,
+            event_type: "boot",
+            message: "Tower rebooted successfully",
+            firmware_version: &current_version.to_string(),
+            component: network::telemetry::Component::System,
+            notes: "Scheduled reboot completed without errors",
+        };
+        let topic = network::telemetry::topic::logs_boot(device_id);
+        if network::telemetry::publish_json(mqtt, &topic, &payload).is_ok() {
             return true;
         }
         error!("MQTT publish failed immediately");

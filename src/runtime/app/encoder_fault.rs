@@ -105,7 +105,6 @@ impl EncoderFaultRecovery {
         mqtt: &mut Mqtt,
         wifi: &mut Wifi<'_>,
         current_version: &Version,
-        publish_mqtt: bool,
         persist_nvs: bool,
         device_id: &str,
         home_heading_deg: f32,
@@ -123,7 +122,6 @@ impl EncoderFaultRecovery {
                 device_id,
                 mqtt,
                 b"Critical failure: encoder fault recovery disabled in switchboard at the Office Tower!",
-                publish_mqtt,
             );
         }
 
@@ -136,7 +134,7 @@ impl EncoderFaultRecovery {
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
-            self.housekeeping(wifi, mqtt, current_version, publish_mqtt, device_id)?;
+            self.housekeeping(wifi, mqtt, current_version, device_id)?;
             std::thread::sleep(Duration::from_secs(90));
             return Ok(true);
         }
@@ -149,12 +147,12 @@ impl EncoderFaultRecovery {
 
             if self.probe_failure_count >= MAX_PROBE_FAILURES {
                 log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
-                self.switch_to_stepper_only_daily(motion, nvs, mqtt, publish_mqtt, persist_nvs, device_id)?;
+                self.switch_to_stepper_only_daily(motion, nvs, mqtt, persist_nvs, device_id)?;
                 return Ok(false);
             }
 
             self.next_probe_at = Some(now_i + probe_interval);
-            self.housekeeping(wifi, mqtt, current_version, publish_mqtt, device_id)?;
+            self.housekeeping(wifi, mqtt, current_version, device_id)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
         }
@@ -198,7 +196,6 @@ impl EncoderFaultRecovery {
                 device_id,
                 mqtt,
                 b"Critical failure: re-home after encoder recovery failed at the Office Tower!",
-                publish_mqtt,
             );
         }
 
@@ -217,7 +214,6 @@ impl EncoderFaultRecovery {
         wifi: &mut Wifi<'_>,
         mqtt: &mut Mqtt,
         current_version: &Version,
-        publish_mqtt: bool,
         device_id: &str,
     ) -> anyhow::Result<()> {
         if wifi.state() == WifiState::Disconnected {
@@ -225,15 +221,14 @@ impl EncoderFaultRecovery {
             wifi.reconnect_if_disconnected()?;
         }
         let formatted_time = rtc::timezone::local_time()
-            .format("%d/%m/%Y %H:%M:%S")
+            .format(network::telemetry::TIME_FORMAT)
             .to_string();
-        infra::Telemetry::publish_status_heartbeat_if(
-            device_id,
-            mqtt,
-            formatted_time,
-            current_version,
-            publish_mqtt,
-        );
+        let payload = network::telemetry::Heartbeat {
+            current_time: &formatted_time,
+            firmware_version: &current_version.to_string(),
+        };
+        let topic = network::telemetry::topic::status(device_id);
+        let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
         Ok(())
     }
 
@@ -243,7 +238,6 @@ impl EncoderFaultRecovery {
         motion: &mut Motion<'_>,
         nvs: &mut EspNvs<T>,
         mqtt: &mut Mqtt,
-        publish_mqtt: bool,
         persist_nvs: bool,
         device_id: &str,
     ) -> anyhow::Result<()> {
@@ -260,16 +254,13 @@ impl EncoderFaultRecovery {
         }
 
         // Critical: encoder probes exhausted; single alert topic, payload describes the failure.
+        // Still using the legacy `{id}/tower/status` topic until the tower/status migration.
         let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
-        if publish_mqtt {
-            let t = infra::topic(device_id, "tower/status");
-            if let Err(e) = mqtt.publish(&t, mqtt_message.as_bytes()) {
-                log::warn!("Failed to publish critical status to {}: {:?}", t, e);
-            } else {
-                log::info!("Published critical status to {}", t);
-            }
+        let t = infra::topic(device_id, "tower/status");
+        if let Err(e) = mqtt.publish(&t, mqtt_message.as_bytes()) {
+            log::warn!("Failed to publish critical status to {}: {:?}", t, e);
         } else {
-            log::info!("MQTT publish disabled: {}", mqtt_message);
+            log::info!("Published critical status to {}", t);
         }
 
         self.mode_switched_daily = true;

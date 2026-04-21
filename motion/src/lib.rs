@@ -235,7 +235,6 @@ pub mod motion {
             nvs: &mut EspNvs<T>,
             wifi: &mut Wifi<'_>,
             formatted_time: String,
-            publish_mqtt: bool,
             persist_nvs: bool,
             allow_ota: bool,
             device_id: &str,
@@ -336,20 +335,12 @@ pub mod motion {
                 self.relay_off();
 
                 let tower_angle = location as f64 + angle_offset;
-                let payload = serde_json::json!({
-                    "current_time": formatted_time,
-                    "tower_angle": tower_angle,
-                })
-                .to_string();
-                if publish_mqtt {
-                    let topic = format!("tower/{}/data/angle", device_id);
-                    match mqtt.publish(&topic, payload.as_bytes()) {
-                        Ok(_) => log::info!("Published tower angle to {}", topic),
-                        Err(e) => log::error!("Failed to publish tower angle: {:?}", e),
-                    }
-                } else {
-                    log::info!("MQTT publish disabled: skipping tower angle publish");
-                }
+                let payload = network::telemetry::Angle {
+                    current_time: &formatted_time,
+                    tower_angle,
+                };
+                let topic = network::telemetry::topic::data_angle(device_id);
+                let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
                         return false;
             } 
             else {// Sunset Operation 
@@ -366,22 +357,16 @@ pub mod motion {
                             // Publish and persist home error ticks if captured.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
-                                if publish_mqtt {
-                                    let topic = format!("{}/tower/home_error_ticks", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
-                                        log::error!(
-                                            "Failed to publish home_error_ticks: {:?}",
-                                            e
-                                        );
-                                    } else {
-                                        log::info!(
-                                            "Published home_error_ticks={}",
-                                            home_error_ticks
-                                        );
-                                    }
+                                let topic = format!("{}/tower/home_error_ticks", device_id);
+                                if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
+                                    log::error!(
+                                        "Failed to publish home_error_ticks: {:?}",
+                                        e
+                                    );
                                 } else {
                                     log::info!(
-                                        "MQTT publish disabled: skipping home_error_ticks publish"
+                                        "Published home_error_ticks={}",
+                                        home_error_ticks
                                     );
                                 }
 
@@ -413,20 +398,12 @@ pub mod motion {
                             );
                             // Critical: sunset home verification could not find limit switch.
                             loop {
-                                if publish_mqtt {
-                                    let t = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
-                                        log::warn!(
-                                            "Failed to publish critical status to {}: {:?}",
-                                            t,
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    log::info!(
-                                        "MQTT publish disabled: {}",
-                                        std::str::from_utf8(CRITICAL_TOWER_LIMIT_SWITCH)
-                                            .unwrap_or("critical")
+                                let t = format!("{}/tower/status", device_id);
+                                if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
+                                    log::warn!(
+                                        "Failed to publish critical status to {}: {:?}",
+                                        t,
+                                        e
                                     );
                                 }
                                 thread::sleep(Duration::from_secs(900));
@@ -487,15 +464,11 @@ pub mod motion {
                             // Publish and persist home error ticks if captured.
                             if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
                                 let payload = format!("{}", home_error_ticks);
-                                if publish_mqtt {
-                                    let topic = format!("{}/tower/home_error_ticks", device_id);
-                                    if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
-                                        log::error!("Failed to publish home_error_ticks: {:?}", e);
-                                    } else {
-                                        log::info!("Published home_error_ticks={}", home_error_ticks);
-                                    }
+                                let topic = format!("{}/tower/home_error_ticks", device_id);
+                                if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
+                                    log::error!("Failed to publish home_error_ticks: {:?}", e);
                                 } else {
-                                    log::info!("MQTT publish disabled: skipping home_error_ticks publish");
+                                    log::info!("Published home_error_ticks={}", home_error_ticks);
                                 }
 
                                 if persist_nvs {
@@ -517,20 +490,12 @@ pub mod motion {
                             log::error!("Limit switch has returned false, limit switch could not be found");
                             // Critical: move-to-sleep homing could not find limit switch.
                             loop {
-                                if publish_mqtt {
-                                    let t = format!("{}/tower/status", device_id);
-                                    if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
-                                        log::warn!(
-                                            "Failed to publish critical status to {}: {:?}",
-                                            t,
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    log::info!(
-                                        "MQTT publish disabled: {}",
-                                        std::str::from_utf8(CRITICAL_TOWER_LIMIT_SWITCH)
-                                            .unwrap_or("critical")
+                                let t = format!("{}/tower/status", device_id);
+                                if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
+                                    log::warn!(
+                                        "Failed to publish critical status to {}: {:?}",
+                                        t,
+                                        e
                                     );
                                 }
                                 thread::sleep(Duration::from_secs(900));

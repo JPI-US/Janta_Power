@@ -118,7 +118,6 @@ pub struct GuardrailsSwitches {
 
 #[derive(Copy, Clone, Debug)]
 pub struct EffectsSwitches {
-    pub publish_mqtt: bool,
     pub persist_nvs: bool,
     pub allow_ota: bool,
     pub allow_boot_validation: bool,
@@ -286,7 +285,6 @@ pub const fn normal() -> Switchboard {
             },
         },
         effects: EffectsSwitches {
-            publish_mqtt: true,
             persist_nvs: true,
             allow_ota: true,
             allow_boot_validation: true,
