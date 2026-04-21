@@ -335,19 +335,20 @@ pub mod motion {
                         self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
 
-                let payload = format!(
-                            "Current datetime: {}, and current tower angle: {}",
-                            formatted_time, 
-                            location as f64 + angle_offset
-                        );
+                let tower_angle = location as f64 + angle_offset;
+                let payload = serde_json::json!({
+                    "current_time": formatted_time,
+                    "tower_angle": tower_angle,
+                })
+                .to_string();
                 if publish_mqtt {
-                    let topic = format!("{}/data", device_id);
+                    let topic = format!("tower/{}/data/angle", device_id);
                     match mqtt.publish(&topic, payload.as_bytes()) {
-                            Ok(_) => log::info!("Published data payload successfully"),
-                            Err(e) => log::error!("Failed to publish data payload: {:?}", e),
-                        }
-                        } else {
-                    log::info!("MQTT publish disabled: skipping tracking data payload publish");
+                        Ok(_) => log::info!("Published tower angle to {}", topic),
+                        Err(e) => log::error!("Failed to publish tower angle: {:?}", e),
+                    }
+                } else {
+                    log::info!("MQTT publish disabled: skipping tower angle publish");
                 }
                         return false;
             } 
