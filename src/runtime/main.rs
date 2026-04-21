@@ -176,12 +176,10 @@ fn main() -> anyhow::Result<()> {
         .expect("Mqtt password not found")
         .to_string();
 
-    let mut mqtt = Box::new(Mqtt::new_mqtt(
-        "mqttS://mqtt.jantaus.com:9443",
-        "device1A_pub",
-        &real_mqtt_user,
-        &real_mqtt_pass,
-    )?);
+        let mut mqtt = Box::new(Mqtt::new_mqtt(
+            "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
+            "esp32_thing_001",
+        )?);
 
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);

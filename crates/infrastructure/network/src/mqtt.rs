@@ -15,22 +15,38 @@ pub struct Mqtt {
     message_queue: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
 }
 
-const CA_CERT: &CStr = unsafe{
-    CStr::from_bytes_with_nul_unchecked(concat!(include_str!("../fullchain.pem"), "\0").as_bytes())
+const ROOT_CA: &CStr = unsafe {
+    CStr::from_bytes_with_nul_unchecked(
+        concat!(include_str!("../AmazonRootCA1.pem"), "\0").as_bytes(),
+    )
+};
+
+const DEVICE_CERT: &CStr = unsafe {
+    CStr::from_bytes_with_nul_unchecked(
+        concat!(include_str!("../device.pem.crt"), "\0").as_bytes(),
+    )
+};
+
+const PRIVATE_KEY: &CStr = unsafe {
+    CStr::from_bytes_with_nul_unchecked(
+        concat!(include_str!("../private.pem.key"), "\0").as_bytes(),
+    )
 };
 impl Mqtt {
     /// Create a new TLS-secured MQTT client
-    pub fn new_mqtt(broker_url: &str, client_id: &str, user: &str, pass: &str) -> Result<Self> {
-
-
+    pub fn new_mqtt(broker_url: &str, client_id: &str) -> Result<Self> {
         let mqtt_config = MqttClientConfiguration {
             client_id: Some(client_id),
-            username: Some(user),
-            password: Some(pass),
-            server_certificate: Some(X509::pem(CA_CERT)),
+
+            // AWS IoT Core requirements
+            server_certificate: Some(X509::pem(ROOT_CA)),
+            client_certificate: Some(X509::pem(DEVICE_CERT)),
+            private_key: Some(X509::pem(PRIVATE_KEY)),
+
             keep_alive_interval: Some(Duration::from_secs(60)),
+            use_global_ca_store: false,
             ..Default::default()
-        };
+        }; // New AWS config
 
         info!("Attempting to create MQTT client...");
         info!("Broker URL: {}", broker_url);
@@ -38,14 +54,12 @@ impl Mqtt {
         let connected = Arc::new(AtomicBool::new(false));
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
-        let message_queue_clone = message_queue.clone();
 
-        let (client, mut connection) = EspMqttClient::new(
+        let (mut client, mut connection) = EspMqttClient::new(
             broker_url,
             &mqtt_config,
         )?;
-
-        info!("MQTT client created successfully!"); 
+        info!("MQTT client created successfully!");
 
         thread::spawn(move || {
             while let Ok(event) = connection.next() {
@@ -53,29 +67,27 @@ impl Mqtt {
                     EventPayload::Connected(_) => {
                         info!("MQTT Connected");
                         connected_clone.store(true, Ordering::SeqCst);
+
+                        // publish inside thread if needed
                     }
                     EventPayload::Disconnected => {
-                        warn!("MQTT Disconnected");
+                        warn!("MQTT Disconnected, will queue messages temporarily...");
+                        warn!("Retrying momentarilly...");
                         connected_clone.store(false, Ordering::SeqCst);
+                        // trigger reconnect
                     }
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
-                    EventPayload::Received { topic, data, .. } => {
-                        if let Some(topic_str) = topic {
-                            info!("MQTT Received: topic={}, payload_len={}", topic_str, data.len());
-                            if let Ok(mut queue) = message_queue_clone.lock() {
-                                queue.push_back((topic_str.to_string(), data.to_vec()));
-                            }
-                        } else {
-                            warn!("MQTT Received message with no topic");
-                        }
-                    }
                     EventPayload::Error(e) => error!("MQTT error: {:?}", e),
                     _ => {}
                 }
             }
         });
 
-        Ok(Self {client, connected, message_queue})
+        Ok(Self {
+            client,
+            connected,
+            message_queue,
+        })
     }
 
     // Expose the flag safely
