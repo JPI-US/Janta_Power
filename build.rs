@@ -97,6 +97,7 @@ fn generate_constants() {
     constants.push_str("// MQTT Configuration\n");
     constants.push_str(&get_env("MQTT_USER", "device1A", "str"));
     constants.push_str(&get_env("MQTT_PASSWORD", "device1A", "str"));
+    constants.push_str(&get_env("DEVICE_ID", "1A", "str"));
     constants.push_str("\n");
     
     // Timezone

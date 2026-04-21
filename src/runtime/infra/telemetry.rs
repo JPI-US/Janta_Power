@@ -10,8 +10,9 @@ pub fn topic(device_id: &str, suffix: &str) -> String {
 
 pub struct Telemetry;
 
+//This is where the status heartbeat is published for the main loop
 impl Telemetry {
-    pub fn publish_firmware_version_if(
+    pub fn publish_status_heartbeat_if(
         device_id: &str,
         mqtt: &mut Mqtt,
         formatted_time: String,
@@ -19,27 +20,27 @@ impl Telemetry {
         enabled: bool,
     ) {
         if !enabled {
-            warn!("MQTT publish disabled: skipping firmware version publish");
+            warn!("MQTT publish disabled: skipping status heartbeat publish");
             return;
         }
-        Self::publish_firmware_version(device_id, mqtt, formatted_time, version);
+        Self::publish_status_heartbeat(device_id, mqtt, formatted_time, version);
     }
 
-    pub fn publish_firmware_version(
+    pub fn publish_status_heartbeat(
         device_id: &str,
         mqtt: &mut Mqtt,
         formatted_time: String,
         version: &Version,
     ) {
-        let payload = format!(
-            "Current time: {}, version is: {}",
-            formatted_time.clone(),
-            version.to_string()
-        );
-        let t = topic(device_id, "firmware/version");
+        let payload = serde_json::json!({
+            "current_time": formatted_time,
+            "firmware_version": version.to_string(),
+        })
+        .to_string();
+        let t = format!("tower/{}/status", device_id);
         match mqtt.publish(&t, payload.as_bytes()) {
-            Ok(_) => info!("Published firmware version"),
-            Err(e) => warn!("Failed to publish firmware version: {:?}", e),
+            Ok(_) => info!("Published status heartbeat to {}", t),
+            Err(e) => warn!("Failed to publish status heartbeat: {:?}", e),
         }
     }
 

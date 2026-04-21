@@ -227,7 +227,7 @@ impl EncoderFaultRecovery {
         let formatted_time = rtc::timezone::local_time()
             .format("%d/%m/%Y %H:%M:%S")
             .to_string();
-        infra::Telemetry::publish_firmware_version_if(
+        infra::Telemetry::publish_status_heartbeat_if(
             device_id,
             mqtt,
             formatted_time,

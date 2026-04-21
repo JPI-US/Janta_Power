@@ -168,7 +168,9 @@ const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
 /// Switchboard: policy/data only.
 #[derive(Copy, Clone, Debug)]
 pub struct Switchboard {
-    /// MQTT topic prefix; same string as `MQTT_USER` from env (build-time constants).
+    /// MQTT topic prefix; sourced from `DEVICE_ID` in `.env` (e.g. `"2a"`).
+    /// Used as the tower id in AWS topics like `tower/{device_id}/status`.
+    /// Broker auth is separate and still uses `MQTT_USER`.
     pub device_id: &'static str,
 
     // Timing
@@ -216,7 +218,7 @@ pub struct Switchboard {
 
 pub const fn normal() -> Switchboard {
     Switchboard {
-        device_id: crate::constants::MQTT_USER,
+        device_id: crate::constants::DEVICE_ID,
 
         wifi_connect_delay_secs: 20,
         tracking_loop_sleep_secs: 300,

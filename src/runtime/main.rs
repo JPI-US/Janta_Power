@@ -237,7 +237,7 @@ fn main() -> anyhow::Result<()> {
 
     const ALLOW_OTA: bool = true;
 
-    infra::Telemetry::publish_firmware_version_if(
+    infra::Telemetry::publish_status_heartbeat_if(
         sw.device_id,
         &mut mqtt,
         formatted_time.clone(),
@@ -657,10 +657,11 @@ fn main() -> anyhow::Result<()> {
             warn!("Wifi disconnected, attempting to reconnect...");
             wifi.reconnect_if_disconnected()?;
         }
-        infra::Telemetry::publish_firmware_version_if(
+        //Description: Heartbeat ping: This is where I am actually pinging but you can find the topic in telemetry.rs
+        infra::Telemetry::publish_status_heartbeat_if(
             sw.device_id,
             &mut mqtt,
-            formatted_time.clone(),
+            current_datetime.clone(),
             &current_version,
             PUBLISH_MQTT,
         );
