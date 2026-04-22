@@ -18,6 +18,8 @@ pub mod motion {
     mod homing;
     mod move_exec;
 
+    use encoder::ENC_TICKS_PER_DEG;
+
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
 
@@ -223,7 +225,86 @@ pub mod motion {
             self.relay.set_high().unwrap_or_default();
         }
 
+        /// Consume the sunset-homing drift captured in `last_home_error_ticks`,
+        /// publish it to `tower/{id}/data/encoder_error_ticks`, and (optionally)
+        /// persist the raw tick count to NVS for post-reboot inspection.
+        ///
+        /// The encoder tick delta is categorized against
+        /// `HOME_ERROR_ACCEPTABLE_DEG`:
+        /// - `> +threshold`  → `undershoot`
+        /// - `< -threshold`  → `overshoot`
+        /// - otherwise       → `acceptable`
+        ///
+        /// Called from the two sunset-time homing sites inside
+        /// `set_tower_position`. If no drift was captured this run, logs a
+        /// warning and returns without publishing.
+        fn report_home_error_ticks<T: NvsPartitionId>(
+            &mut self,
+            mqtt: &mut Mqtt,
+            nvs: &mut EspNvs<T>,
+            device_id: &str,
+            persist_nvs: bool,
+        ) {
+            let Some(home_error_ticks) = self.take_last_home_error_ticks() else {
+                log::warn!("No home_error_ticks captured on this homing run");
+                return;
+            };
 
+            let error_deg = home_error_ticks as f32 / ENC_TICKS_PER_DEG;
+            let (category, result) = if error_deg > HOME_ERROR_ACCEPTABLE_DEG {
+                (
+                    network::telemetry::EncoderErrorCategory::Undershoot,
+                    format!(
+                        "I undershot by: {:.2}° ({} ticks)",
+                        error_deg, home_error_ticks
+                    ),
+                )
+            } else if error_deg < -HOME_ERROR_ACCEPTABLE_DEG {
+                (
+                    network::telemetry::EncoderErrorCategory::Overshoot,
+                    format!(
+                        "I overshot by: {:.2}° ({} ticks)",
+                        error_deg.abs(),
+                        home_error_ticks
+                    ),
+                )
+            } else {
+                (
+                    network::telemetry::EncoderErrorCategory::Acceptable,
+                    format!(
+                        "I performed within the acceptable range ({:.2}°, {} ticks)",
+                        error_deg, home_error_ticks
+                    ),
+                )
+            };
+
+            let now = Local::now()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let payload = network::telemetry::EncoderErrorTicks {
+                current_time: &now,
+                encoder_error_ticks: home_error_ticks,
+                category,
+                result: &result,
+            };
+            let topic = network::telemetry::topic::data_encoder_error_ticks(device_id);
+            let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
+
+            if persist_nvs {
+                match nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks) {
+                    Ok(()) => log::info!(
+                        "Stored home_error_ticks in NVS: {}",
+                        home_error_ticks
+                    ),
+                    Err(e) => log::warn!(
+                        "Failed to store home_error_ticks in NVS: {:?}",
+                        e
+                    ),
+                }
+            } else {
+                log::warn!("NVS persist disabled: skipping home_error_ticks store");
+            }
+        }
 
         pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             &mut self,
@@ -353,45 +434,7 @@ pub mod motion {
                         let ok = self.find_limit_switch_ccw();
                         if ok {
                             log::info!("Home verification homing succeeded");
-
-                            // Publish and persist home error ticks if captured.
-                            if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
-                                let payload = format!("{}", home_error_ticks);
-                                let topic = format!("{}/tower/home_error_ticks", device_id);
-                                if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
-                                    log::error!(
-                                        "Failed to publish home_error_ticks: {:?}",
-                                        e
-                                    );
-                                } else {
-                                    log::info!(
-                                        "Published home_error_ticks={}",
-                                        home_error_ticks
-                                    );
-                                }
-
-                                if persist_nvs {
-                                    if let Err(e) =
-                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
-                                    {
-                                        log::warn!(
-                                            "Failed to store home_error_ticks in NVS: {:?}",
-                                            e
-                                        );
-                                    } else {
-                                        log::info!(
-                                            "Stored home_error_ticks in NVS: {}",
-                                            home_error_ticks
-                                        );
-                                    }
-                                } else {
-                                    log::warn!(
-                                        "NVS persist disabled: skipping home_error_ticks store"
-                                    );
-                                }
-                            } else {
-                                log::warn!("No home_error_ticks captured on this homing run");
-                            }
+                            self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
                         } else {
                             log::error!(
                                 "Home verification failed: limit switch could not be found"
@@ -460,31 +503,7 @@ pub mod motion {
                     match limit_sw_status{
                         true => {
                             log::info!("Limit switch has returned true");
-
-                            // Publish and persist home error ticks if captured.
-                            if let Some(home_error_ticks) = self.take_last_home_error_ticks() {
-                                let payload = format!("{}", home_error_ticks);
-                                let topic = format!("{}/tower/home_error_ticks", device_id);
-                                if let Err(e) = mqtt.publish(&topic, payload.as_bytes()) {
-                                    log::error!("Failed to publish home_error_ticks: {:?}", e);
-                                } else {
-                                    log::info!("Published home_error_ticks={}", home_error_ticks);
-                                }
-
-                                if persist_nvs {
-                                    if let Err(e) =
-                                        nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks)
-                                    {
-                                        log::warn!("Failed to store home_error_ticks in NVS: {:?}", e);
-                                    } else {
-                                        log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks);
-                                    }
-                                } else {
-                                    log::warn!("NVS persist disabled: skipping home_error_ticks store");
-                                }
-                            } else {
-                                log::warn!("No home_error_ticks captured on this homing run");
-                            }
+                            self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
                         },
                         false => {
                             log::error!("Limit switch has returned false, limit switch could not be found");

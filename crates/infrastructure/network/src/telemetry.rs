@@ -168,11 +168,32 @@ pub struct Angle<'a> {
     pub tower_angle: f64,
 }
 
-/// `tower/{id}/data/encoder_error_ticks` — encoder drift captured at homing.
+/// `tower/{id}/data/encoder_error_ticks` — encoder drift captured at the
+/// moment the limit switch fires during sunset homing.
+///
+/// `encoder_error_ticks` is the raw drift (daytime CW ticks minus sunset CCW
+/// ticks, relative to the previous zero reference). Sign follows encoder
+/// convention: positive = switch fired before encoder thought we were home
+/// (undershoot), negative = encoder passed home before switch fired (overshoot).
+///
+/// `category` is a structured bucket derived from the magnitude in degrees,
+/// suitable for dashboard filters. `result` is the same information rendered
+/// as a human-readable string for log panels / notifications.
 #[derive(Serialize)]
 pub struct EncoderErrorTicks<'a> {
     pub current_time: &'a str,
-    pub ticks: i32,
+    pub encoder_error_ticks: i32,
+    pub category: EncoderErrorCategory,
+    pub result: &'a str,
+}
+
+/// Structured bucket for the encoder drift metric.
+#[derive(Copy, Clone, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EncoderErrorCategory {
+    Acceptable,
+    Undershoot,
+    Overshoot,
 }
 
 /// `tower/{id}/component/{component}/status` — per-component health snapshot.

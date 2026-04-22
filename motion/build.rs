@@ -66,6 +66,10 @@ fn generate_constants() {
     constants.push_str("// Tracking Constants\n");
     constants.push_str(&get_env("TRACKING_DEADBAND_DEG", "5.0", "f32"));
     constants.push_str(&get_env("HOME_HEADING_DEG", "90.0", "f32"));
+    // Absolute threshold (in degrees) below which sunset homing drift is
+    // reported as `acceptable`. Outside the band it is classified as either
+    // `undershoot` (positive drift) or `overshoot` (negative drift).
+    constants.push_str(&get_env("HOME_ERROR_ACCEPTABLE_DEG", "2.5", "f32"));
     constants.push_str("\n");
     
     // Timezone

@@ -6,7 +6,7 @@ use super::{
 };
 
 // Output-shaft encoder calibration from build-time constants.
-const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
+pub(super) const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
 
 impl Motion<'_> {
     // CW is positive; 0 ticks is limit-switch home after zeroing.
