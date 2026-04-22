@@ -21,15 +21,35 @@ const ROOT_CA: &CStr = unsafe {
     )
 };
 
+// Cert/key filenames are derived from `DEVICE_ID` in `.env` via this crate's
+// `build.rs` (which re-exports it as a rustc-env var). Provisioning workflow:
+// drop `tower_{DEVICE_ID}-certificate.pem.crt` + `tower_{DEVICE_ID}-private.pem.key`
+// into this directory and set `DEVICE_ID` in `.env`; no source edits per tower.
 const DEVICE_CERT: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
-        concat!(include_str!("../device.pem.crt"), "\0").as_bytes(),
+        concat!(
+            include_str!(concat!(
+                "../tower_",
+                env!("DEVICE_ID"),
+                "-certificate.pem.crt"
+            )),
+            "\0"
+        )
+        .as_bytes(),
     )
 };
 
 const PRIVATE_KEY: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
-        concat!(include_str!("../private.pem.key"), "\0").as_bytes(),
+        concat!(
+            include_str!(concat!(
+                "../tower_",
+                env!("DEVICE_ID"),
+                "-private.pem.key"
+            )),
+            "\0"
+        )
+        .as_bytes(),
     )
 };
 impl Mqtt {

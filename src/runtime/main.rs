@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
     // the deferred-items list in the MQTT refactor notes).
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
-        "esp32_thing_001",
+        "tower_5",
     )?);
 
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
