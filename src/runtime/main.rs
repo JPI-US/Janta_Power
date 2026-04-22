@@ -160,9 +160,9 @@ fn main() -> anyhow::Result<()> {
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.0.6";
+    const DEFAULT_VERSION: &str = "1.1";
     if PERSIST_NVS {
-        nvs.set_str("version", "1.0.6")?;
+        nvs.set_str("version", "1.1")?;
     }
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
@@ -674,7 +674,7 @@ fn main() -> anyhow::Result<()> {
             info!("Tracking disabled");
         }
 
-        info!("Tracking loop duration (v1.0.6): {:?}", now.elapsed());
+        info!("Tracking loop duration (v1.1): {:?}", now.elapsed());
         
         // Housekeeping
         if wifi.state() == WifiState::Disconnected {
