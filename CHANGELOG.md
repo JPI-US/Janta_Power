@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.1.1] - 2026-04-22
+
+Config-hygiene and homing-reliability follow-up to v1.1.0. No behavioural
+changes in the happy path for the Sadler T6 deployment (values already
+matched the hardcoded literals being replaced); firmware is safe to flash
+over v1.1.0 without recommissioning.
+
+### Fixed
+
+- **Tower coordinates now actually honour `.env`.** `main.rs` was
+  hardcoding `tower_latitude = 33.75944` and `tower_longitude = -96.82722`,
+  silently ignoring `TOWER_LATITUDE` / `TOWER_LONGITUDE` from `.env`
+  (despite `build.rs` generating the constants and the `Switchboard`
+  carrying the fields). NOAA sun-angle math now reads from
+  `sw.default_tower_latitude` / `sw.default_tower_longitude`, so changing
+  `.env` and reflashing actually moves the sun.
+- **CCW limit-switch search radius expanded from 10° to 350°.** Boot /
+  recovery homing (`motion/src/motion/homing.rs::find_limit_switch_ccw`)
+  previously gave up after sweeping only 10° CCW; if the switch wasn't
+  within that narrow window the device would fall through to the
+  critical-error path. The sweep now covers almost a full revolution, so
+  the switch is found on any valid tower orientation.
+
+### Removed
+
+- **`TIMEZONE_OFFSET_HOURS` env var and all downstream plumbing** — the
+  build constants (`TIMEZONE_OFFSET_HOURS`, `TIMEZONE_OFFSET_HOURS_I32`),
+  the `Switchboard::default_tz_offset_hours` field, and the NVS write of
+  `"offset_hours"` are gone. No code reads them anywhere; `TZ_POSIX` +
+  `rtc::timezone::local_time()` / `chrono::Local` own timezone conversion
+  end-to-end (and do so DST-aware, unlike the fixed integer offset).
+- **`TOWER_ID` env var and all plumbing** — build const, the
+  `Switchboard::default_tower_id` field, and the hardcoded `tower_id`
+  literal in `main.rs` are gone. The value only ever surfaced in a single
+  boot `info!(…)` line; `DEVICE_ID` is now the single source of tower
+  identity (it's what MQTT topics route through — `tower/{DEVICE_ID}/…`),
+  and the boot log now prints `sw.device_id` instead.
+
 ## [1.1.0] - 2026-04-21
 
 Major telemetry rework aligning the device with AWS IoT Core topic conventions

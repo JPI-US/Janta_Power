@@ -102,12 +102,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     if PERSIST_NVS {
-        match nvs.set_i32("offset_hours", sw.default_tz_offset_hours) {
-            Ok(_) => info!("Timezone offset has been updated"),
-            Err(e) => error!("Timezone offset was not updated {:?}", e),
-        };
-    }
-    if PERSIST_NVS {
         match nvs.set_str("tz_posix", sw.default_tz_posix) {
             Ok(_) => info!("POSIX TZ string has been updated"),
             Err(e) => error!("tz_posix was not updated {:?}", e),
@@ -293,8 +287,11 @@ fn main() -> anyhow::Result<()> {
     }
     
     // PHASE 5: MOTION INITIALIZATION ------------------------------------------
-    // Tower location (Sadler, TX): 33.75944 N, -96.82722 W
-    let tower_latitude: f64 = 33.75944;
+    // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
+    // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
+    // defaults are (re)written into NVS on every boot, so updating `.env` and
+    // reflashing updates the tower coordinates on the next boot.
+    let tower_latitude: f64 = sw.default_tower_latitude;
     if PERSIST_NVS {
         match nvs.set_str("tower_latitude", &tower_latitude.to_string()) {
             Ok(_) => info!("Tower latitude has been updated"),
@@ -302,7 +299,7 @@ fn main() -> anyhow::Result<()> {
         };
     }
 
-    let tower_longitude: f64 = -96.82722;
+    let tower_longitude: f64 = sw.default_tower_longitude;
     if PERSIST_NVS {
         match nvs.set_str("tower_longitude", &tower_longitude.to_string()) {
             Ok(_) => info!("Tower longitude has been updated"),
@@ -311,7 +308,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Tower location from NVS
-    let tower_id: u32 = 1;
     let latitude = nvs
         .get_str("tower_latitude", &mut buffer)?
         .unwrap_or("0")
@@ -325,7 +321,7 @@ fn main() -> anyhow::Result<()> {
     let altitude: f64 = 0.0;
 
     info!("Retrieved latitude: {}, and longitude: {}", latitude, longitude);
-    info!("Tower id: {}, Lat: {}, Lon: {}, Alt: {}", tower_id, latitude, longitude, altitude);
+    info!("Device: {}, Lat: {}, Lon: {}, Alt: {}", sw.device_id, latitude, longitude, altitude);
 
     // Hardware initialization
     let mut calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);

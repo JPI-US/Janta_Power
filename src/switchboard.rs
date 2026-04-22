@@ -190,14 +190,12 @@ pub struct Switchboard {
     // Defaults currently written into NVS on boot
     pub default_wifi_ssid: &'static str,
     pub default_wifi_pass: &'static str,
-    pub default_tz_offset_hours: i32,
     /// POSIX `TZ` string for libc (`setenv` + `tzset`); build default from `TZ_POSIX` in `.env`.
     pub default_tz_posix: &'static str,
 
     // Tower defaults
     pub default_tower_latitude: f64,
     pub default_tower_longitude: f64,
-    pub default_tower_id: u32,
     pub default_ota_updater: &'static str,
     pub default_ota_password: &'static str,
 
@@ -227,7 +225,6 @@ pub const fn normal() -> Switchboard {
 
         default_wifi_ssid: crate::constants::WIFI_SSID,
         default_wifi_pass: crate::constants::WIFI_PASSWORD,
-        default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,
         default_tz_posix: crate::constants::TZ_POSIX,
 
         default_ota_updater: "device1A",
@@ -235,7 +232,6 @@ pub const fn normal() -> Switchboard {
 
         default_tower_latitude: crate::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::constants::TOWER_LONGITUDE,
-        default_tower_id: crate::constants::TOWER_ID,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {

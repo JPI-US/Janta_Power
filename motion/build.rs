@@ -71,11 +71,10 @@ fn generate_constants() {
     // `undershoot` (positive drift) or `overshoot` (negative drift).
     constants.push_str(&get_env("HOME_ERROR_ACCEPTABLE_DEG", "2.5", "f32"));
     constants.push_str("\n");
-    
-    // Timezone
-    constants.push_str("// Timezone\n");
-    constants.push_str(&get_env("TIMEZONE_OFFSET_HOURS", "-5.0", "f32"));
-    
+
+    // Timezone is DST-aware via runtime libc TZ/tzset (owned by runtime crate).
+    // Motion reads local time via `chrono::Local`; no build-time offset needed.
+
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
     
     // Tell Cargo to rerun if .env changes

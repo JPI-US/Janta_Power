@@ -100,22 +100,17 @@ fn generate_constants() {
     constants.push_str(&get_env("DEVICE_ID", "1A", "str"));
     constants.push_str("\n");
     
-    // Timezone
-    constants.push_str("// Timezone\n");
-    constants.push_str(&get_env("TIMEZONE_OFFSET_HOURS", "-5.0", "f32"));
-    let tz_str = std::env::var("TIMEZONE_OFFSET_HOURS").unwrap_or_else(|_| "-5.0".to_string());
-    let tz_i32: i32 = tz_str.parse().unwrap_or(-5);
-    constants.push_str(&format!("pub const TIMEZONE_OFFSET_HOURS_I32: i32 = {};\n", tz_i32));
+    // Timezone — DST-aware via libc setenv("TZ") + tzset. Fixed-offset constants
+    // were removed in v1.1.0; TZ_POSIX alone drives all local-time conversion.
     let tz_posix = std::env::var("TZ_POSIX").unwrap_or_else(|_| "CST6CDT,M3.2.0,M11.1.0".to_string());
     constants.push_str("// POSIX TZ string for libc setenv/tzset (DST-aware local time)\n");
     constants.push_str(&format!("pub const TZ_POSIX: &str = {:?};\n", tz_posix));
     constants.push_str("\n");
 
     // Tower location (MQTT topic root is DEVICE_ID above).
-    constants.push_str("// Device & Tower defaults\n");
+    constants.push_str("// Tower location defaults\n");
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
-    constants.push_str(&get_env("TOWER_ID", "1", "u32"));
     constants.push_str("\n");
 
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
