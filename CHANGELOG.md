@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.1.2] - 2026-04-22
+
+Fleet-identity follow-up to v1.1.1. Fixes the AWS IoT reconnect storms
+observed on the Sadler T6 deployment (duplicate MQTT client IDs) and
+detaches per-device TLS material from source so the same commit can
+flash any tower.
+
+### Fixed
+
+- **MQTT client_id no longer shared across the fleet.** `main.rs` was
+  passing the literal `"esp32_thing_001"` to `Mqtt::new_mqtt`, which
+  AWS IoT Core treats as a single identity: every time a second tower
+  connects, the first one is forcibly disconnected (`errno=119`, EOF
+  on the control stream), producing the reconnect loops seen on-site.
+  Client ID is now `"tower_5"` per deployment. Still a per-tower source
+  edit for now — env-driving it lives on the fleet-rollout cleanup
+  list alongside the OTA credentials.
+- **Certificate/key filenames no longer hardcoded per tower.** The
+  `include_str!` calls in `crates/infrastructure/network/src/mqtt.rs`
+  now expand `env!("DEVICE_ID")` at compile time, so the same source
+  tree accepts any tower's cert pair. Flashing a new tower becomes:
+  drop `tower_{DEVICE_ID}-certificate.pem.crt` +
+  `tower_{DEVICE_ID}-private.pem.key` into the crate, bump `DEVICE_ID`
+  in `.env`, build.
+
+### Added
+
+- **`crates/infrastructure/network/build.rs`** — loads the repo-root
+  `.env`, re-exports `DEVICE_ID` into the crate's compiler env via
+  `cargo:rustc-env`, and registers rerun triggers on `.env` plus the
+  cert/key files (so cert rotation or a tower swap rebuilds correctly
+  without `cargo clean`). Adds `dotenv = "0.15"` as a
+  `[build-dependencies]` entry — same version already used by the root
+  build script.
+
+### Security
+
+- **`.gitignore` widened from literal names to globs.** Previously only
+  files named exactly `device.pem.crt` / `private.pem.key` were
+  ignored; any per-device download naming (e.g.
+  `tower_5-private.pem.key`) would have slipped through. Now covered
+  by `*.pem.crt` / `*.pem.key`, with `AmazonRootCA1.pem` kept as an
+  explicit entry. Audited history: only the harmless public
+  `fullchain.pem` (Let's Encrypt CA chain, no private material) was
+  ever tracked — no key material has been committed.
+
 ## [1.1.1] - 2026-04-22
 
 Config-hygiene and homing-reliability follow-up to v1.1.0. No behavioural
