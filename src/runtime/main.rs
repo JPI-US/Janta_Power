@@ -236,7 +236,6 @@ fn main() -> anyhow::Result<()> {
                                 .to_string();
                             let payload = network::telemetry::FirmwareUpdateLog {
                                 current_time: &current_time,
-                                event_type: "firmware_update",
                                 message: "Firmware successfully updated",
                                 previous_version: &prev_version.to_string(),
                                 current_version: &current_version.to_string(),
@@ -300,7 +299,6 @@ fn main() -> anyhow::Result<()> {
             let version_str = current_version.to_string();
             let payload = network::telemetry::FirmwareUpdateLog {
                 current_time: &current_time,
-                event_type: "firmware_update",
                 message: "Firmware update unsuccessful",
                 previous_version: &version_str,
                 current_version: &version_str,
@@ -762,7 +760,6 @@ fn boot_diagnostic(
             .to_string();
         let payload = network::telemetry::BootLog {
             current_time: &current_time,
-            event_type: "boot",
             message: "Tower rebooted successfully",
             firmware_version: &current_version.to_string(),
             component: network::telemetry::Component::System,

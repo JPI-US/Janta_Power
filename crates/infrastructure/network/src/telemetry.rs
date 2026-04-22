@@ -70,7 +70,7 @@ pub enum Component {
     Motor,
     Encoder,
     LightSensor,
-    HomingSensor,
+    LimitSwitch,
     System,
 }
 
@@ -80,7 +80,7 @@ impl Component {
             Component::Motor => "motor",
             Component::Encoder => "encoder",
             Component::LightSensor => "light_sensor",
-            Component::HomingSensor => "homing_sensor",
+            Component::LimitSwitch => "limit_switch",
             Component::System => "system",
         }
     }
@@ -108,8 +108,6 @@ pub struct Heartbeat<'a> {
 #[derive(Serialize)]
 pub struct BootLog<'a> {
     pub current_time: &'a str,
-    #[serde(rename = "type")]
-    pub event_type: &'a str,
     pub message: &'a str,
     pub firmware_version: &'a str,
     pub component: Component,
@@ -120,8 +118,6 @@ pub struct BootLog<'a> {
 #[derive(Serialize)]
 pub struct FirmwareUpdateLog<'a> {
     pub current_time: &'a str,
-    #[serde(rename = "type")]
-    pub event_type: &'a str,
     pub message: &'a str,
     pub previous_version: &'a str,
     pub current_version: &'a str,
@@ -129,24 +125,35 @@ pub struct FirmwareUpdateLog<'a> {
 }
 
 /// `tower/{id}/logs/error` — structured error event.
+///
+/// `value` + `unit` are optional and only appear in the JSON when the error
+/// carries a measurable reading (e.g. motor current, board temperature). For
+/// non-numeric errors (limit switch not found, NVS corruption, ...) leave
+/// them `None` and `serde` will omit the fields entirely.
 #[derive(Serialize)]
 pub struct ErrorLog<'a> {
     pub current_time: &'a str,
-    #[serde(rename = "type")]
-    pub event_type: &'a str,
     pub message: &'a str,
     pub component: Component,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'a str>,
     pub notes: &'a str,
 }
 
 /// `tower/{id}/logs/warning` — structured warning event.
+///
+/// Same optional `value` + `unit` contract as `ErrorLog`; see its docstring.
 #[derive(Serialize)]
 pub struct WarningLog<'a> {
     pub current_time: &'a str,
-    #[serde(rename = "type")]
-    pub event_type: &'a str,
     pub message: &'a str,
     pub component: Component,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<&'a str>,
     pub notes: &'a str,
 }
 
@@ -154,8 +161,6 @@ pub struct WarningLog<'a> {
 #[derive(Serialize)]
 pub struct InfoLog<'a> {
     pub current_time: &'a str,
-    #[serde(rename = "type")]
-    pub event_type: &'a str,
     pub message: &'a str,
     pub component: Component,
     pub notes: &'a str,
