@@ -89,19 +89,6 @@ fn main() -> anyhow::Result<()> {
     const PERSIST_NVS: bool = true;
 
     if PERSIST_NVS {
-        match nvs.set_str("mqtt_user", sw.default_mqtt_user) {
-            Ok(_) => info!("Mqtt username updated"),
-            Err(e) => error!("Mqtt username not updated {:?}", e),
-        };
-    }
-    if PERSIST_NVS {
-        match nvs.set_str("mqtt_pass", sw.default_mqtt_pass) {
-            Ok(_) => info!("Mqtt password updated"),
-            Err(e) => error!("Mqtt password not updated {:?}", e),
-        };
-    }
-
-    if PERSIST_NVS {
         match nvs.set_str("wifi_ssid", sw.default_wifi_ssid) {
             Ok(_) => info!("Wifi ssid updated"),
             Err(e) => error!("Wifi ssid not updated {:?}", e),
@@ -163,19 +150,14 @@ fn main() -> anyhow::Result<()> {
     info!("{}", formatted_time);
 
     // MQTT
-    let real_mqtt_user = nvs
-        .get_str("mqtt_user", &mut buffer)?
-        .expect("Mqtt username not found")
-        .to_string();
-    let real_mqtt_pass = nvs
-        .get_str("mqtt_pass", &mut buffer)?
-        .expect("Mqtt password not found")
-        .to_string();
-
-        let mut mqtt = Box::new(Mqtt::new_mqtt(
-            "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
-            "esp32_thing_001",
-        )?);
+    // AWS IoT Core uses TLS client certificates baked into the firmware for
+    // authentication; no username/password plumbing is required at runtime.
+    // Broker URL + client ID are still hardcoded here (cleanup pending — see
+    // the deferred-items list in the MQTT refactor notes).
+    let mut mqtt = Box::new(Mqtt::new_mqtt(
+        "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
+        "esp32_thing_001",
+    )?);
 
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);

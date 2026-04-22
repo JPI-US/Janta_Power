@@ -93,10 +93,10 @@ fn generate_constants() {
     constants.push_str(&get_env("WIFI_PASSWORD", "@Powerfuture22", "str"));
     constants.push_str("\n");
     
-    // MQTT Configuration
-    constants.push_str("// MQTT Configuration\n");
-    constants.push_str(&get_env("MQTT_USER", "device1A", "str"));
-    constants.push_str(&get_env("MQTT_PASSWORD", "device1A", "str"));
+    // Device identity (used as MQTT topic prefix: `tower/{device_id}/...`).
+    // AWS IoT Core handles broker auth via TLS client certs, so no username /
+    // password is plumbed here.
+    constants.push_str("// Device Identity\n");
     constants.push_str(&get_env("DEVICE_ID", "1A", "str"));
     constants.push_str("\n");
     
@@ -111,7 +111,7 @@ fn generate_constants() {
     constants.push_str(&format!("pub const TZ_POSIX: &str = {:?};\n", tz_posix));
     constants.push_str("\n");
 
-    // Tower location (MQTT topic root is MQTT_USER above)
+    // Tower location (MQTT topic root is DEVICE_ID above).
     constants.push_str("// Device & Tower defaults\n");
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));

@@ -169,17 +169,12 @@ const DEFAULT_RECOVERY_MOVES: &[RecoveryMoveSpec] = &[
 pub struct Switchboard {
     /// MQTT topic prefix; sourced from `DEVICE_ID` in `.env` (e.g. `"2a"`).
     /// Used as the tower id in AWS topics like `tower/{device_id}/status`.
-    /// Broker auth is separate and still uses `MQTT_USER`.
     pub device_id: &'static str,
 
     // Timing
     pub wifi_connect_delay_secs: u64,
     pub tracking_loop_sleep_secs: u64,
     pub ota_check_delay_secs: u64,
-
-    // MQTT
-    pub mqtt_broker_url: &'static str,
-    pub mqtt_client_id: &'static str,
 
     // Firmware + persistence keys
     pub default_version: &'static str,
@@ -193,8 +188,6 @@ pub struct Switchboard {
     pub home_heading_deg: f32,
 
     // Defaults currently written into NVS on boot
-    pub default_mqtt_user: &'static str,
-    pub default_mqtt_pass: &'static str,
     pub default_wifi_ssid: &'static str,
     pub default_wifi_pass: &'static str,
     pub default_tz_offset_hours: i32,
@@ -223,9 +216,6 @@ pub const fn normal() -> Switchboard {
         tracking_loop_sleep_secs: 300,
         ota_check_delay_secs: 3,
 
-        mqtt_broker_url: "mqttS://mqtt.jantaus.com:9443",
-        mqtt_client_id: "device1A_pub",
-
         default_version: "1.0.4",
         heading_tag: "heading",
 
@@ -235,8 +225,6 @@ pub const fn normal() -> Switchboard {
         enc_home_tol_ticks: 50,
         home_heading_deg: crate::constants::HOME_HEADING_DEG,
 
-        default_mqtt_user: crate::constants::MQTT_USER,
-        default_mqtt_pass: crate::constants::MQTT_PASSWORD,
         default_wifi_ssid: crate::constants::WIFI_SSID,
         default_wifi_pass: crate::constants::WIFI_PASSWORD,
         default_tz_offset_hours: crate::constants::TIMEZONE_OFFSET_HOURS_I32,
