@@ -7,18 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [1.1.0] - 2026-04-21
+
+Major telemetry rework aligning the device with AWS IoT Core topic conventions
+and structured JSON payloads, plus RTC-backed local time for every runtime path.
+
 ### Added
 
-- `rtc` crate: DS3231 read/write, POSIX `TZ` via `setenv`/`tzset`, `settimeofday`, SNTP fallback with timeout (ported from standalone bring-up).
-- Build-time `TZ_POSIX` / switchboard `default_tz_posix`; NVS key `tz_posix` seeded on boot (with other defaults).
+- **`network::telemetry` module** — single source of truth for MQTT topic
+  builders (`topic::status`, `topic::logs_{boot,firmware_update,error,warning,info}`,
+  `topic::data_{angle,encoder_error_ticks}`, `topic::component_status`),
+  structured payload structs (`Heartbeat`, `BootLog`, `FirmwareUpdateLog`,
+  `ErrorLog`, `WarningLog`, `InfoLog`, `Angle`, `EncoderErrorTicks`,
+  `ComponentStatus`), a generic `publish_json` helper, and a convenience
+  `publish_error` for the common `ErrorLog` case.
+- **`Component` enum** (`motor`, `encoder`, `light_sensor`, `limit_switch`,
+  `system`) attached to every log / component-status payload.
+- **`Severity` enum** (`online`, `warning`, `fault`) for the
+  `tower/{id}/component/*/status` topic.
+- **`EncoderErrorCategory` enum** (`acceptable`, `undershoot`, `overshoot`)
+  plus a human-readable `result` string on `tower/{id}/data/encoder_error_ticks`
+  payloads; drift is categorised against the new build-time constant
+  `HOME_ERROR_ACCEPTABLE_DEG` (2.5° default).
+- **`infra::error_loop(device_id, mqtt, component, message, notes)`** —
+  republishes a structured `ErrorLog` every 15 minutes until the device is
+  reset; replaces `Telemetry::critical_failure_loop`.
+- **`Motion::report_home_error_ticks`** — helper that consumes the stashed
+  sunset-homing drift, classifies it against the threshold, and publishes a
+  structured payload to `tower/{id}/data/encoder_error_ticks`.
+- **Optional `value` / `unit` fields** on `ErrorLog` and `WarningLog` (skipped
+  from JSON when `None`) so numeric errors carry their reading alongside the
+  message.
+- **`rtc` crate**: DS3231 read/write, POSIX `TZ` via `setenv`/`tzset`,
+  `settimeofday`, SNTP fallback with timeout (ported from standalone bring-up).
+- **Build-time `TZ_POSIX` / switchboard `default_tz_posix`**; NVS key `tz_posix`
+  seeded on boot with other defaults.
 
 ### Changed
 
-- Boot time: **RTC-first** (sane year range on the DS3231) restores system time from the chip; otherwise **Wi‑Fi + SNTP** (60s timeout) writes UTC to the RTC and system clock. Removed the previous **SNTP-first** blocking wait before MQTT.
-- Wall-clock strings and daily encoder date rollover use **`chrono::Local`** after `TZ` is set (no longer `SystemTime` + fixed `offset_hours` only for those paths). `offset_hours` remains in NVS for compatibility and motion/NOAA-related constants.
-- Encoder-fault housekeeping timestamp and Stepper-only daily reset date now use the same local-time source (`rtc::timezone::local_time`), removing mixed UTC/local date boundaries in runtime paths.
-- `clock` crate sunrise/sunset and `after_sunrise`/`after_sunset` no longer hardcode UTC-5; comparisons now use RTC UTC time and timezone-aware conversions instead.
-- Motion NOAA sun-angle timezone now uses runtime local UTC offset (DST-aware via `TZ`/`tzset`) instead of a fixed build-time `TIMEZONE_OFFSET_HOURS` constant.
+- **All MQTT topics migrated to the AWS IoT Core convention**
+  (`tower/{device_id}/...`):
+  - `{id}/tower/status` heartbeat → `tower/{id}/status`.
+  - Boot log → `tower/{id}/logs/boot` (JSON `BootLog`).
+  - Firmware update success/failure → `tower/{id}/logs/firmware_update`
+    (JSON `FirmwareUpdateLog`).
+  - Critical failures (10 call sites: boot homing, re-home-after-recovery,
+    sunset/sleep homing, encoder probe exhaustion, switchboard misconfig) →
+    `tower/{id}/logs/error` (JSON `ErrorLog`) with `component` tagging.
+  - Tracking heading → `tower/{id}/data/angle` (JSON `Angle`).
+  - End-of-day encoder drift → `tower/{id}/data/encoder_error_ticks`
+    (JSON `EncoderErrorTicks` with `category` + `result`).
+- **Payloads are now structured JSON** across every topic; the previous raw
+  byte / plain-text bodies (e.g. `"Critical failure: Limit switch failure at
+  the Office Tower!"`) are gone. Downstream automation should parse JSON, not
+  match on body substrings.
+- **Boot time**: **RTC-first** (sane year range on the DS3231) restores system
+  time from the chip; otherwise **Wi-Fi + SNTP** (60s timeout) writes UTC to
+  the RTC and system clock. Removed the previous **SNTP-first** blocking wait
+  before MQTT.
+- **Local-time consistency**: wall-clock strings, daily encoder date rollover,
+  encoder-fault housekeeping timestamp, and `clock` crate
+  `after_sunrise`/`after_sunset` all now use the same `rtc::timezone::local_time()`
+  (or `chrono::Local` after `TZ` is set) source. No more mixed UTC/local
+  boundaries across runtime paths.
+- **Motion NOAA sun-angle timezone** now uses runtime local UTC offset
+  (DST-aware via `TZ` / `tzset`) instead of the fixed build-time
+  `TIMEZONE_OFFSET_HOURS` constant.
+- **`Component::HomingSensor` renamed to `Component::LimitSwitch`** (wire
+  value: `"limit_switch"`) to match the physical hardware naming.
+- **Ordering invariant documented** on `Motion::force_zero_if_limit_switch_pressed`
+  and `poll_limit_switch_zeroing`: the drift-capture step must run before the
+  encoder re-zero or the end-of-day metric is silently destroyed.
+
+### Removed
+
+- `PUBLISH_MQTT` publish gate and every `if publish_mqtt { ... }` check
+  threaded through `boot_diagnostic`, `encoder_fault::tick`,
+  `tracking_loop::tick`, `Motion::set_tower_position`,
+  `housekeeping`, and `switch_to_stepper_only_daily`. Will return behind a
+  future admin mode.
+- `Telemetry::critical_failure_loop`, the `Telemetry` struct, and
+  `infra::topic()` — replaced by `infra::error_loop` + `network::telemetry`.
+- `infra::Telemetry::publish_{status_heartbeat,boot_log,firmware_update_success,firmware_update_failure}_if`
+  helpers — call sites now use `publish_json` directly with the shared payload
+  structs.
+- Raw byte-string critical-alert constants: `CRITICAL_TOWER_LIMIT_SWITCH`,
+  `CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY`.
+- Hardcoded `event_type` field from every log payload (was always
+  topic-determined; redundant with the destination topic).
+- **Dead MQTT username / password plumbing** — AWS IoT Core authenticates via
+  TLS client certificates, so `MQTT_USER` / `MQTT_PASSWORD` env vars, the
+  NVS `"mqtt_user"` / `"mqtt_pass"` keys, and the `Switchboard` fields
+  `mqtt_broker_url`, `mqtt_client_id`, `default_mqtt_user`,
+  `default_mqtt_pass` (and their initialisers) were all deleted.
+- `src/runtime/infra/telemetry.rs` downsized from a mixed topic + publisher +
+  loop module to a single `error_loop` helper.
+
+### Fixed
+
+- Structured log payloads now carry `current_time` and, where relevant,
+  `firmware_version`, on every event — previously some paths emitted bodies
+  without either.
+
+### Known limitations
+
+- **OTA HTTP credentials** for the updater are still duplicated between
+  `switchboard` defaults and call sites (e.g. `motion`); change both or
+  centralise to avoid drift.
+- **MQTT client ID** is still the hardcoded `"esp32_thing_001"` in `main.rs`;
+  deploying more than one tower with the same firmware will cause AWS IoT to
+  disconnect the previous session on each new connect. Must be made
+  per-device before fleet deploy.
+- **Broker URL** is still hardcoded in `main.rs`; should move to `.env` /
+  switchboard.
+- **OTA security**: firmware image signature verification is still not
+  implemented.
+- **NVS boot writes**: when persistence is enabled, Wi-Fi and timezone keys
+  are overwritten from firmware defaults each boot — field-tuned values will
+  not survive unless policy is changed.
+- **Version string triplicate**: the current firmware version is hardcoded in
+  three places (`main.rs` `DEFAULT_VERSION`, `main.rs` unconditional NVS
+  write, `switchboard::default_version`) and they disagree. OTA version
+  comparison may report stale values until consolidated to
+  `env!("CARGO_PKG_VERSION")`.
+
+### Notes for operators
+
+- Every topic is now `tower/{device_id}/...`. Topic prefix is sourced from
+  the `DEVICE_ID` env var at build time; each physical tower must be flashed
+  with its own value.
+- Every payload is JSON; route AWS rules on payload fields
+  (`component`, `category`, etc.) rather than topic substrings.
+- `tower/{id}/logs/error` receives a republish every 15 minutes while the
+  device is wedged on a critical failure; route alerts accordingly to avoid
+  paging storms (e.g. aggregate over 30-minute windows).
 
 ## [1.0.0] - 2026-04-08
 
