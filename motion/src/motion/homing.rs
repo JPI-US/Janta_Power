@@ -116,9 +116,9 @@ impl Motion<'_> {
 
         self.relay_on();
         // Current wiring convention: negative step command moves CCW.
-        log::info!("Looking for the limit switch (CCW search, max 350°)");
+        log::info!("Looking for the limit switch (CCW search, max 10)");
 
-        let mut max_steps = calculate_steps(-350.0);
+        let mut max_steps = calculate_steps(-10.0);
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {

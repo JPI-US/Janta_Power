@@ -26,9 +26,9 @@ pub mod motion {
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
-    /// `tower/status` payload: limit switch not found during sunset verify or sleep homing.
-    const CRITICAL_TOWER_LIMIT_SWITCH: &[u8] =
-        b"Critical failure: Limit switch failure at the Office Tower!";
+    /// Interval between republishes of a critical error while the device is
+    /// wedged (mirrors `src/runtime/infra/telemetry.rs::CRITICAL_REPUBLISH_INTERVAL`).
+    const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
 
     // Keep step math in one place.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
@@ -439,17 +439,19 @@ pub mod motion {
                             log::error!(
                                 "Home verification failed: limit switch could not be found"
                             );
-                            // Critical: sunset home verification could not find limit switch.
                             loop {
-                                let t = format!("{}/tower/status", device_id);
-                                if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
-                                    log::warn!(
-                                        "Failed to publish critical status to {}: {:?}",
-                                        t,
-                                        e
-                                    );
-                                }
-                                thread::sleep(Duration::from_secs(900));
+                                let now = Local::now()
+                                    .format(network::telemetry::TIME_FORMAT)
+                                    .to_string();
+                                let _ = network::telemetry::publish_error(
+                                    mqtt,
+                                    device_id,
+                                    &now,
+                                    network::telemetry::Component::LimitSwitch,
+                                    "Limit switch not found during sunset home verification",
+                                    "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.",
+                                );
+                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
                             }
                         }
                     }
@@ -507,17 +509,19 @@ pub mod motion {
                         },
                         false => {
                             log::error!("Limit switch has returned false, limit switch could not be found");
-                            // Critical: move-to-sleep homing could not find limit switch.
                             loop {
-                                let t = format!("{}/tower/status", device_id);
-                                if let Err(e) = mqtt.publish(&t, CRITICAL_TOWER_LIMIT_SWITCH) {
-                                    log::warn!(
-                                        "Failed to publish critical status to {}: {:?}",
-                                        t,
-                                        e
-                                    );
-                                }
-                                thread::sleep(Duration::from_secs(900));
+                                let now = Local::now()
+                                    .format(network::telemetry::TIME_FORMAT)
+                                    .to_string();
+                                let _ = network::telemetry::publish_error(
+                                    mqtt,
+                                    device_id,
+                                    &now,
+                                    network::telemetry::Component::LimitSwitch,
+                                    "Limit switch not found during move-to-sleep homing",
+                                    "End-of-day homing sweep failed to locate the limit switch.",
+                                );
+                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
                             }
                         }
                     }

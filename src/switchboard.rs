@@ -224,7 +224,7 @@ pub const fn normal() -> Switchboard {
         ota_check_delay_secs: 3,
 
         mqtt_broker_url: "mqttS://mqtt.jantaus.com:9443",
-        mqtt_client_id: "device2a_pub",
+        mqtt_client_id: "device1A_pub",
 
         default_version: "1.0.4",
         heading_tag: "heading",

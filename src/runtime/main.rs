@@ -43,10 +43,6 @@ use wifi::wifi::{Wifi, WifiState};
 
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
-/// `tower/status` when re-homing fails after Stepper-only transition (encoder probe recovery).
-/// Distinct from boot/sunset limit-search failures so alerts match the real sequence.
-const CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY: &[u8] = b"Critical failure: Re-homing failed in Stepper-only mode after encoder recovery. Limit switch not found or homing move aborted.";
-
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::normal();
 
@@ -488,10 +484,12 @@ fn main() -> anyhow::Result<()> {
                     "Homing FAILED (dir={}): limit switch could not be found",
                     HOMING_DIRECTION.as_str()
                 );
-                infra::Telemetry::critical_failure_loop(
+                infra::error_loop(
                     sw.device_id,
                     &mut mqtt,
-                    b"Critical failure: Limit switch failure at the Office Tower!",
+                    network::telemetry::Component::LimitSwitch,
+                    "Limit switch not found during boot homing",
+                    "Boot-time homing sweep completed without detecting the limit switch; tower orientation unknown.",
                 );
             }
         }
@@ -508,10 +506,12 @@ fn main() -> anyhow::Result<()> {
     } else if should_home_by_mode {
         log::warn!("Homing skipped: HOMING_ENABLED=false");
         if !trust_nvs_state {
-            infra::Telemetry::critical_failure_loop(
+            infra::error_loop(
                 sw.device_id,
                 &mut mqtt,
-                b"Critical failure: NVS state untrusted but homing disabled at the Office Tower!",
+                network::telemetry::Component::System,
+                "Homing disabled with untrusted NVS state",
+                "HOMING_ENABLED=false but persisted heading could not be trusted; manual intervention required.",
             );
         }
     } else {
@@ -569,10 +569,12 @@ fn main() -> anyhow::Result<()> {
                 }
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::Telemetry::critical_failure_loop(
+                    infra::error_loop(
                         sw.device_id,
                         &mut mqtt,
-                        CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
+                        network::telemetry::Component::LimitSwitch,
+                        "Re-home failed after encoder recovery",
+                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
                     );
                 }
             }
@@ -655,10 +657,12 @@ fn main() -> anyhow::Result<()> {
                 }
                 false => {
                     error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::Telemetry::critical_failure_loop(
+                    infra::error_loop(
                         sw.device_id,
                         &mut mqtt,
-                        CRITICAL_FAILURE_REHOME_AFTER_ENCODER_RECOVERY,
+                        network::telemetry::Component::LimitSwitch,
+                        "Re-home failed after encoder recovery",
+                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
                     );
                 }
             }

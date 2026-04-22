@@ -228,3 +228,31 @@ pub fn publish_json<T: Serialize>(mqtt: &mut Mqtt, topic: &str, payload: &T) -> 
         }
     }
 }
+
+/// Build an `ErrorLog` and publish it to `tower/{device_id}/logs/error`.
+///
+/// Convenience wrapper for the common case where `value` and `unit` are not
+/// applicable. Callers supply their own `current_time` string so this crate
+/// stays neutral on time-source (rtc vs chrono::Local vs test clocks).
+///
+/// For errors that carry a scalar reading (e.g. over-temp with degrees), build
+/// the `ErrorLog` struct directly and call `publish_json`.
+pub fn publish_error(
+    mqtt: &mut Mqtt,
+    device_id: &str,
+    current_time: &str,
+    component: Component,
+    message: &str,
+    notes: &str,
+) -> Result<()> {
+    let topic = topic::logs_error(device_id);
+    let payload = ErrorLog {
+        current_time,
+        message,
+        component,
+        value: None,
+        unit: None,
+        notes,
+    };
+    publish_json(mqtt, &topic, &payload)
+}

@@ -249,7 +249,7 @@ impl<'a> OtaUpdater<'a> {
                 Err(e) => {
                     info!("Firmware download failed: {:?}", e);
                     // Propagate so the caller publishes a single failure event
-                    // via `Telemetry::publish_firmware_update_failure_if`.
+                    // via `network::telemetry::publish_json` + `FirmwareUpdateLog`.
                     return Err(anyhow::anyhow!("Firmware download failed: {:?}", e));
                 }
             }

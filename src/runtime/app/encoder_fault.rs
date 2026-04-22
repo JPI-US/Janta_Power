@@ -118,10 +118,12 @@ impl EncoderFaultRecovery {
         }
 
         if !cfg.enabled {
-            infra::Telemetry::critical_failure_loop(
+            infra::error_loop(
                 device_id,
                 mqtt,
-                b"Critical failure: encoder fault recovery disabled in switchboard at the Office Tower!",
+                network::telemetry::Component::System,
+                "Encoder fault recovery disabled in switchboard",
+                "Switchboard disables encoder fault recovery; device cannot proceed when encoder has faulted.",
             );
         }
 
@@ -192,10 +194,12 @@ impl EncoderFaultRecovery {
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         if !ok {
-            infra::Telemetry::critical_failure_loop(
+            infra::error_loop(
                 device_id,
                 mqtt,
-                b"Critical failure: re-home after encoder recovery failed at the Office Tower!",
+                network::telemetry::Component::LimitSwitch,
+                "Re-home failed after drift correction",
+                "Heading drift exceeded tolerance and the re-home sweep could not locate the limit switch.",
             );
         }
 
@@ -253,15 +257,23 @@ impl EncoderFaultRecovery {
             SnapshotStore::new(nvs, persist_nvs).save_encoder_daily_mode(true);
         }
 
-        // Critical: encoder probes exhausted; single alert topic, payload describes the failure.
-        // Still using the legacy `{id}/tower/status` topic until the tower/status migration.
-        let mqtt_message = format!("Encoders failed ({} probe failures), switched to Stepper-only. Will retry at midnight.", self.probe_failure_count);
-        let t = infra::topic(device_id, "tower/status");
-        if let Err(e) = mqtt.publish(&t, mqtt_message.as_bytes()) {
-            log::warn!("Failed to publish critical status to {}: {:?}", t, e);
-        } else {
-            log::info!("Published critical status to {}", t);
-        }
+        // One-shot critical: encoder probes exhausted; device falls back to
+        // Stepper-only mode until midnight retry.
+        let notes = format!(
+            "Probe failures reached the daily threshold ({}); device will retry encoder recovery at midnight.",
+            self.probe_failure_count
+        );
+        let current_time = rtc::timezone::local_time()
+            .format(network::telemetry::TIME_FORMAT)
+            .to_string();
+        let _ = network::telemetry::publish_error(
+            mqtt,
+            device_id,
+            &current_time,
+            network::telemetry::Component::Encoder,
+            "Encoder probes exhausted, switched to Stepper-only",
+            &notes,
+        );
 
         self.mode_switched_daily = true;
         self.active = false;

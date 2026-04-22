@@ -1,31 +1,29 @@
-use log::warn;
+use std::time::Duration;
 
 use network::mqtt::Mqtt;
+use network::telemetry::{publish_error, Component, TIME_FORMAT};
 
-/// Build a device-prefixed MQTT topic (legacy `{id}/{suffix}` shape).
+/// Interval between republishes of a critical error while the device is wedged.
+const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
+
+/// Publish a structured `ErrorLog` to `tower/{id}/logs/error` every 15 minutes
+/// until the device is reset. Used by runtime call sites where no recovery is
+/// possible (boot homing failure, re-home failure, switchboard misconfig).
 ///
-/// Retained for the `tower/status` critical-failure loop until that topic
-/// is migrated to the new AWS `tower/{id}/logs/error` shape. New code should
-/// use `network::telemetry::topic::*` instead.
-pub fn topic(device_id: &str, suffix: &str) -> String {
-    format!("{}/{}", device_id, suffix)
-}
-
-pub struct Telemetry;
-
-impl Telemetry {
-    /// Critical alert on the legacy `{id}/tower/status` topic: republish `msg`
-    /// every 15 minutes until the device is reset.
-    ///
-    /// Migrates to `network::telemetry::topic::logs_error` + `ErrorLog` payload
-    /// during the `tower/status` topic migration.
-    pub fn critical_failure_loop(device_id: &str, mqtt: &mut Mqtt, msg: &[u8]) -> ! {
-        let t = topic(device_id, "tower/status");
-        loop {
-            if let Err(e) = mqtt.publish(&t, msg) {
-                warn!("Failed to publish critical status to {}: {:?}", t, e);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(900));
-        }
+/// Motion has its own inline version of this loop using `chrono::Local` so it
+/// doesn't need to depend on the `rtc` crate.
+pub fn error_loop(
+    device_id: &str,
+    mqtt: &mut Mqtt,
+    component: Component,
+    message: &str,
+    notes: &str,
+) -> ! {
+    loop {
+        let now = rtc::timezone::local_time()
+            .format(TIME_FORMAT)
+            .to_string();
+        let _ = publish_error(mqtt, device_id, &now, component, message, notes);
+        std::thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
     }
 }
