@@ -1,6 +1,6 @@
 pub mod clock {
     use chrono::prelude::*;
-    use ds323x::{DateTimeAccess, Ds323x, NaiveDate, Rtcc};
+    use ds323x::{DateTimeAccess, Ds323x, Rtcc};
 
     pub struct Clock<I2C> {
         rtc: Ds323x<I2C>,
@@ -24,14 +24,19 @@ pub mod clock {
         }
 
         /// Calculate sunrise time and represent it in local timezone.
+        ///
+        /// Astronomy lookup needs the LOCAL civil date at the tower, not the
+        /// UTC date the DS3231 holds. For any longitude west of Greenwich the
+        /// two dates diverge after UTC-midnight (19:00 CDT / 18:00 CST at
+        /// Sadler); passing the UTC date causes `sun_times` to return
+        /// tomorrow's events, which flips `after_sunrise` back to `false` and
+        /// trips the sunset-home branch roughly an hour before real sunset.
+        /// `Local::now()` reads the system clock (seeded from the DS3231 at
+        /// boot) and applies the `TZ=CST6CDT,...` rules set via `tzset`, so
+        /// it's DST-aware without any extra plumbing and never touches Wi-Fi.
         pub fn sunrise_times(&mut self) -> Option<DateTime<Local>> {
-            let times = sun_times::sun_times(
-                self.rtc.date().unwrap(),
-                self.latitude,
-                self.longitude,
-                self.altitude,
-            );
-
+            let date = Local::now().date_naive();
+            let times = sun_times::sun_times(date, self.latitude, self.longitude, self.altitude);
             match times {
                 Some((sunrise, _sunset)) => Some(sunrise.with_timezone(&Local)),
                 None => None,
@@ -39,20 +44,13 @@ pub mod clock {
         }
 
         /// Calculate sunset time and represent it in local timezone.
+        /// See `sunrise_times` for the UTC-vs-local date rationale.
         pub fn sunset_times(&mut self) -> Option<DateTime<Local>> {
-            let prop_date = self.rtc.date().unwrap();
-
-            let year = prop_date.year();
-            let month = prop_date.month();
-            let day = prop_date.day();
-
-            let date = NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
-                .expect("Invalid date provided");
-
+            let date = Local::now().date_naive();
             let times = sun_times::sun_times(date, self.latitude, self.longitude, self.altitude);
             match times {
                 Some((_sunrise, sunset)) => Some(sunset.with_timezone(&Local)),
-                None => None, // Handle the case where `None` is returned
+                None => None,
             }
         }
 
