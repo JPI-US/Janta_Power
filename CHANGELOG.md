@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.1.3] - 2026-04-22
+
+Stable release of Encoder + RTC + AWS.
+
+### Fixed
+
+- Sunset homing no longer fires an hour early during DST: the clock crate's
+  `sunrise_times` / `sunset_times` now use the local civil date (DST-aware
+  via `TZ`) instead of the DS3231's UTC date, which was rolling the lookup
+  to "tomorrow" at 19:00 CDT / 18:00 CST.
+
 ## [1.1.2] - 2026-04-22
 
 Fleet-identity follow-up to v1.1.1. Fixes the AWS IoT reconnect storms
