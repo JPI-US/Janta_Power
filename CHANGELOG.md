@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
-## [1.1.3] - 2026-04-22
+## [1.1.3] - 2026-04-23
 
 Stable release of Encoder + RTC + AWS.
 
