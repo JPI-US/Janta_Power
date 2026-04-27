@@ -11,7 +11,13 @@ _No unreleased changes._
 
 ## [1.1.3] - 2026-04-23
 
-Stable release of Encoder + RTC + AWS.
+Stable release of Encoder + RTC + AWS with fleet-safe tower identity.
+
+### Added
+
+- MQTT client ID and OTA metadata lookup now derive from `DEVICE_ID`, so
+  changing towers no longer requires source edits for `tower_5` / `tower_6`
+  identity.
 
 ### Fixed
 

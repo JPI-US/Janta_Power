@@ -146,11 +146,12 @@ fn main() -> anyhow::Result<()> {
     // MQTT
     // AWS IoT Core uses TLS client certificates baked into the firmware for
     // authentication; no username/password plumbing is required at runtime.
-    // Broker URL + client ID are still hardcoded here (cleanup pending — see
-    // the deferred-items list in the MQTT refactor notes).
+    // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
+    // fleet identity stays in `.env` with the MQTT topic/cert identity.
+    let mqtt_client_id = format!("tower_{}", sw.device_id);
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
-        "tower_5",
+        &mqtt_client_id,
     )?);
 
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
@@ -160,9 +161,9 @@ fn main() -> anyhow::Result<()> {
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.1.2";
+    const DEFAULT_VERSION: &str = "1.1.3";
     if PERSIST_NVS {
-        nvs.set_str("version", "1.1.2")?;
+        nvs.set_str("version", "1.1.3")?;
     }
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
@@ -674,7 +675,7 @@ fn main() -> anyhow::Result<()> {
             info!("Tracking disabled");
         }
 
-        info!("Tracking loop duration (v1.1.2): {:?}", now.elapsed());
+        info!("Tracking loop duration (v1.1.3): {:?}", now.elapsed());
         
         // Housekeeping
         if wifi.state() == WifiState::Disconnected {

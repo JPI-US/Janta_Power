@@ -163,8 +163,12 @@ impl<'a> OtaUpdater<'a> {
 
     pub fn run_version_compare<T: NvsPartitionId>(&mut self, nvs: &mut EspNvs<T>) -> Result<()> {
 
-        // Retrieve remote version
-        let remote_json = self.get_remote_version("https://firmware.jantaus.com/firmware/test2/metadata.json")?;
+        // Retrieve remote version metadata for this tower.
+        let metadata_url = format!(
+            "https://firmware.jantaus.com/firmware/test2/metadata{}.json",
+            self.device_id
+        );
+        let remote_json = self.get_remote_version(&metadata_url)?;
 
         // Extact the "version" field from JSON and verify its not empty
         let remote_version: Version = remote_json
