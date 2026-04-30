@@ -59,6 +59,14 @@ pub mod topic {
             component.as_str()
         )
     }
+
+    pub fn diagnostics_cmd(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics")
+    }
+
+    pub fn diagnostics_ack(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics/ack")
+    }
 }
 
 // ---------- Shared enums ----------
@@ -207,6 +215,16 @@ pub struct ComponentStatus<'a> {
     pub current_time: &'a str,
     pub status: Severity,
     pub notes: &'a str,
+}
+
+/// `tower/{id}/cmd/diagnostics/ack` — acknowledgement for remote diagnostics commands.
+#[derive(Serialize)]
+pub struct DiagnosticsAck<'a> {
+    pub current_time: &'a str,
+    pub request_id: &'a str,
+    pub cmd: &'a str,
+    pub status: &'a str,
+    pub message: &'a str,
 }
 
 // ---------- Publisher ----------

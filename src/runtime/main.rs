@@ -148,7 +148,8 @@ fn main() -> anyhow::Result<()> {
     // authentication; no username/password plumbing is required at runtime.
     // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
     // fleet identity stays in `.env` with the MQTT topic/cert identity.
-    let mqtt_client_id = format!("tower_{}", sw.device_id);
+    let mqtt_client_id = "esp32_thing_001";
+    //format!("tower_{}", sw.device_id);
     let mut mqtt = Box::new(Mqtt::new_mqtt(
         "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
         &mqtt_client_id,
@@ -238,6 +239,8 @@ fn main() -> anyhow::Result<()> {
     } else {
         info!("Normal boot firmware already validated");
     }
+
+    diagnostics::mqtt::subscribe(&mut mqtt, sw.device_id)?;
 
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
@@ -690,6 +693,10 @@ fn main() -> anyhow::Result<()> {
             };
             let topic = network::telemetry::topic::status(sw.device_id);
             let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
+        }
+
+        if let Err(e) = diagnostics::mqtt::process_one(&mut mqtt, sw.device_id) {
+            warn!("Diagnostics command processing failed: {:?}", e);
         }
 
         const LOOP_SLEEP_SECS: u64 = 300;
