@@ -653,7 +653,20 @@ fn main() -> anyhow::Result<()> {
         }
 
         const TRACKING_ENABLED: bool = true;
-        if TRACKING_ENABLED {
+        let (activity, activity_reason, last_sun_angle, last_target_heading) = if TRACKING_ENABLED {
+            let motion_mode_str = match motion_mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            let mut activity = if motion_mode == MotionMode::StepperOnly {
+                String::from("stepper_only_tracking")
+            } else {
+                String::from("tracking")
+            };
+            let mut activity_reason = format!(
+                "Tracking enabled in {}; tower heading is {:.2} degrees",
+                motion_mode_str, actual_heading
+            );
             let outcome = app::tracking_loop::tick(
                 &mut motion,
                 &mut calculation,
@@ -670,13 +683,24 @@ fn main() -> anyhow::Result<()> {
 
             if outcome != MoveOutcome::Completed {
                 warn!("Last move aborted: {:?}", outcome);
+                activity = String::from("tracking_aborted");
+                activity_reason = format!("Last tracking move aborted: {:?}", outcome);
+            } else {
+                activity_reason = format!("Tracking tick completed; tower heading is {:.2} degrees", actual_heading);
             }
             if let Err(e) = encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg, &mut motion, &mut nvs, PERSIST_NVS) {
                 error!("Error in encoder fault recovery: {:?}", e);
             }
+            (activity, activity_reason, None, None)
         } else {
             info!("Tracking disabled");
-        }
+            (
+                String::from("tracking_disabled"),
+                String::from("Tracking is disabled by runtime configuration"),
+                None,
+                None,
+            )
+        };
 
         info!("Tracking loop duration (v1.1.3): {:?}", now.elapsed());
         
@@ -695,7 +719,26 @@ fn main() -> anyhow::Result<()> {
             let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
         }
 
-        if let Err(e) = diagnostics::mqtt::process_one(&mut mqtt, sw.device_id) {
+        let motion_mode_str = match motion_mode {
+            MotionMode::StepperOnly => "StepperOnly",
+            MotionMode::EncoderGuarded => "EncoderGuarded",
+        };
+        let mqtt_connected = mqtt.is_connected();
+        let wifi_connected = matches!(wifi.state(), WifiState::Connected(_));
+        let firmware_version = current_version.to_string();
+        let status_snapshot = diagnostics::mqtt::StatusSnapshot {
+            device_id: sw.device_id,
+            firmware_version: &firmware_version,
+            mqtt_connected,
+            wifi_connected,
+            motion_mode: motion_mode_str,
+            current_heading: actual_heading,
+            activity: &activity,
+            activity_reason: &activity_reason,
+            sun_angle: last_sun_angle,
+            target_heading: last_target_heading,
+        };
+        if let Err(e) = diagnostics::mqtt::process_one(&mut mqtt, sw.device_id, &status_snapshot) {
             warn!("Diagnostics command processing failed: {:?}", e);
         }
 

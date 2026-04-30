@@ -227,6 +227,26 @@ pub struct DiagnosticsAck<'a> {
     pub message: &'a str,
 }
 
+/// `tower/{id}/cmd/diagnostics/ack` — read-only tower status snapshot.
+#[derive(Serialize)]
+pub struct DiagnosticsStatus<'a> {
+    pub current_time: &'a str,
+    pub request_id: &'a str,
+    pub cmd: &'a str,
+    pub status: &'a str,
+    pub message: &'a str,
+    pub activity: &'a str,
+    pub activity_reason: &'a str,
+    pub device_id: &'a str,
+    pub firmware_version: &'a str,
+    pub mqtt_connected: bool,
+    pub wifi_connected: bool,
+    pub motion_mode: &'a str,
+    pub current_heading: f32,
+    pub sun_angle: Option<f64>,
+    pub target_heading: Option<f64>,
+}
+
 // ---------- Publisher ----------
 
 /// Serialize `payload` as JSON and publish it to `topic`.
