@@ -32,6 +32,8 @@ pub mod motion {
 
     // Keep step math in one place.
     pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
+    const DIAGNOSTICS_OVERRIDE_TOKEN: &str = "MuditJanta@123";
+    const NIGHT_SLEEP_SECS: u64 = 600;
 
     #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
@@ -217,6 +219,177 @@ pub mod motion {
 
         pub fn location(&mut self) -> f32 {
             self.location
+        }
+
+        fn process_sleep_diagnostics(
+            &self,
+            mqtt: &mut Mqtt,
+            device_id: &str,
+            current_version: &Version,
+            wifi: &Wifi<'_>,
+        ) {
+            let Some((incoming_topic, payload)) = mqtt.try_receive() else {
+                return;
+            };
+
+            let command_topic = network::telemetry::topic::diagnostics_cmd(device_id);
+            if incoming_topic != command_topic {
+                log::warn!(
+                    "Ignoring MQTT message on unexpected topic while sleeping: {} (expected {})",
+                    incoming_topic,
+                    command_topic
+                );
+                return;
+            }
+
+            let payload_str = match std::str::from_utf8(&payload) {
+                Ok(value) => value,
+                Err(e) => {
+                    log::error!("Sleep diagnostics payload is not UTF-8: {:?}", e);
+                    self.publish_sleep_ack(
+                        mqtt,
+                        device_id,
+                        "",
+                        "unknown",
+                        "error",
+                        "Command payload must be UTF-8",
+                    );
+                    return;
+                }
+            };
+
+            let command: serde_json::Value = match serde_json::from_str(payload_str) {
+                Ok(value) => value,
+                Err(e) => {
+                    log::error!("Failed to parse sleep diagnostics JSON: {:?}", e);
+                    self.publish_sleep_ack(
+                        mqtt,
+                        device_id,
+                        "",
+                        "unknown",
+                        "error",
+                        "Command payload must be valid JSON",
+                    );
+                    return;
+                }
+            };
+
+            let cmd = command
+                .get("cmd")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            let request_id = command
+                .get("request_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let override_ok = command
+                .get("override")
+                .and_then(|value| value.as_str())
+                .map(|value| value == DIAGNOSTICS_OVERRIDE_TOKEN)
+                .unwrap_or(false);
+
+            log::info!(
+                "Sleep diagnostics command received: cmd={} request_id={} override={}",
+                cmd,
+                request_id,
+                override_ok
+            );
+
+            match cmd {
+                "get_status" => self.publish_sleep_status(
+                    mqtt,
+                    device_id,
+                    current_version,
+                    wifi,
+                    request_id,
+                    cmd,
+                    override_ok,
+                ),
+                "ping" => {
+                    let message = if override_ok {
+                        "Tower is sleeping after sunset; override accepted"
+                    } else {
+                        "Tower is sleeping after sunset; read-only ping acknowledged"
+                    };
+                    self.publish_sleep_ack(mqtt, device_id, request_id, cmd, "sleeping", message);
+                }
+                _ => {
+                    let message = if override_ok {
+                        "Override accepted, but this command is not implemented while sleeping"
+                    } else {
+                        "Tower is sleeping after sunset; command ignored without override"
+                    };
+                    self.publish_sleep_ack(mqtt, device_id, request_id, cmd, "sleeping", message);
+                }
+            }
+        }
+
+        fn publish_sleep_ack(
+            &self,
+            mqtt: &mut Mqtt,
+            device_id: &str,
+            request_id: &str,
+            cmd: &str,
+            status: &str,
+            message: &str,
+        ) {
+            let current_time = Local::now()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let payload = network::telemetry::DiagnosticsAck {
+                current_time: &current_time,
+                request_id,
+                cmd,
+                status,
+                message,
+            };
+            let ack_topic = network::telemetry::topic::diagnostics_ack(device_id);
+            let _ = network::telemetry::publish_json(mqtt, &ack_topic, &payload);
+        }
+
+        fn publish_sleep_status(
+            &self,
+            mqtt: &mut Mqtt,
+            device_id: &str,
+            current_version: &Version,
+            wifi: &Wifi<'_>,
+            request_id: &str,
+            cmd: &str,
+            override_ok: bool,
+        ) {
+            let current_time = Local::now()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let motion_mode = match self.motion_mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            let message = if override_ok {
+                "Tower is sleeping after sunset; override accepted"
+            } else {
+                "Tower is sleeping after sunset"
+            };
+            let payload = network::telemetry::DiagnosticsStatus {
+                current_time: &current_time,
+                request_id,
+                cmd,
+                status: "sleeping",
+                message,
+                activity: "sleeping_after_sunset",
+                activity_reason: "Sunset has passed; tower is homed and waiting for sunrise",
+                device_id,
+                firmware_version: &current_version.to_string(),
+                mqtt_connected: mqtt.is_connected(),
+                wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                motion_mode,
+                current_heading: self.location,
+                sun_angle: self.last_tracking_snapshot.map(|snapshot| snapshot.sun_angle),
+                target_heading: self.last_tracking_snapshot.map(|snapshot| snapshot.target_heading),
+                angle_offset: self.last_tracking_snapshot.map(|snapshot| snapshot.angle_offset),
+                last_move_outcome: None,
+            };
+            let ack_topic = network::telemetry::topic::diagnostics_ack(device_id);
+            let _ = network::telemetry::publish_json(mqtt, &ack_topic, &payload);
         }
 
         pub fn flip_relay(&mut self) {
@@ -510,8 +683,9 @@ pub mod motion {
                             log::info!("OTA disabled: skipping periodic OTA check");
                             last_check = Instant::now();
                         }
+                        self.process_sleep_diagnostics(mqtt, device_id, &current_version, wifi);
                         log::info!("Still waiting for sunrise...");
-                        std::thread::sleep(std::time::Duration::from_secs(600));
+                        std::thread::sleep(std::time::Duration::from_secs(NIGHT_SLEEP_SECS));
                     }
 
                     return true;
