@@ -4,6 +4,11 @@ use semver::Version;
 
 use crate::infra::SnapshotStore;
 
+pub struct TrackingTickResult {
+    pub outcome: motion::MoveOutcome,
+    pub snapshot: Option<motion::TrackingSnapshot>,
+}
+
 /// Run one tracking tick and persist stable state.
 pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     motion: &mut motion::Motion,
@@ -17,7 +22,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     persist_nvs: bool,
     allow_ota: bool,
     device_id: &str,
-) -> motion::MoveOutcome {
+) -> TrackingTickResult {
     let tracking_done = motion.set_tower_position(
         calculation,
         *actual_heading,
@@ -31,9 +36,10 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
         allow_ota,
         device_id,
     );
+    let snapshot = motion.last_tracking_snapshot();
 
     // Persist only after completed moves.
-    match motion.take_last_move_outcome() {
+    let outcome = match motion.take_last_move_outcome() {
         Some(motion::MoveOutcome::Completed) => {
             *actual_heading = motion.location();
             SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
@@ -53,6 +59,8 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             }
             motion::MoveOutcome::Completed
         }
-    }
+    };
+
+    TrackingTickResult { outcome, snapshot }
 }
 

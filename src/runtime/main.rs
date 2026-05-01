@@ -653,7 +653,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         const TRACKING_ENABLED: bool = true;
-        let (activity, activity_reason, last_sun_angle, last_target_heading) = if TRACKING_ENABLED {
+        let (activity, activity_reason, last_sun_angle, last_target_heading, last_angle_offset, last_move_outcome) = if TRACKING_ENABLED {
             let motion_mode_str = match motion_mode {
                 MotionMode::StepperOnly => "StepperOnly",
                 MotionMode::EncoderGuarded => "EncoderGuarded",
@@ -667,7 +667,7 @@ fn main() -> anyhow::Result<()> {
                 "Tracking enabled in {}; tower heading is {:.2} degrees",
                 motion_mode_str, actual_heading
             );
-            let outcome = app::tracking_loop::tick(
+            let tick_result = app::tracking_loop::tick(
                 &mut motion,
                 &mut calculation,
                 &mut actual_heading,
@@ -680,6 +680,16 @@ fn main() -> anyhow::Result<()> {
                 ALLOW_OTA,
                 sw.device_id,
             );
+            let outcome = tick_result.outcome;
+            let (last_sun_angle, last_target_heading, last_angle_offset) = match tick_result.snapshot {
+                Some(snapshot) => (
+                    Some(snapshot.sun_angle),
+                    Some(snapshot.target_heading),
+                    Some(snapshot.angle_offset),
+                ),
+                None => (None, None, None),
+            };
+            let last_move_outcome = format!("{:?}", outcome);
 
             if outcome != MoveOutcome::Completed {
                 warn!("Last move aborted: {:?}", outcome);
@@ -691,12 +701,21 @@ fn main() -> anyhow::Result<()> {
             if let Err(e) = encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg, &mut motion, &mut nvs, PERSIST_NVS) {
                 error!("Error in encoder fault recovery: {:?}", e);
             }
-            (activity, activity_reason, None, None)
+            (
+                activity,
+                activity_reason,
+                last_sun_angle,
+                last_target_heading,
+                last_angle_offset,
+                Some(last_move_outcome),
+            )
         } else {
             info!("Tracking disabled");
             (
                 String::from("tracking_disabled"),
                 String::from("Tracking is disabled by runtime configuration"),
+                None,
+                None,
                 None,
                 None,
             )
@@ -737,6 +756,8 @@ fn main() -> anyhow::Result<()> {
             activity_reason: &activity_reason,
             sun_angle: last_sun_angle,
             target_heading: last_target_heading,
+            angle_offset: last_angle_offset,
+            last_move_outcome: last_move_outcome.as_deref(),
         };
         if let Err(e) = diagnostics::mqtt::process_one(&mut mqtt, sw.device_id, &status_snapshot) {
             warn!("Diagnostics command processing failed: {:?}", e);

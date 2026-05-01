@@ -49,6 +49,13 @@ pub mod motion {
         AbortedOvershoot,
     }
 
+    #[derive(Debug, Copy, Clone)]
+    pub struct TrackingSnapshot {
+        pub sun_angle: f64,
+        pub target_heading: f64,
+        pub angle_offset: f64,
+    }
+
     pub fn calculate_steps(offset_deg: f32) -> i64 {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
@@ -96,6 +103,8 @@ pub mod motion {
 
         // Last attempted move outcome, consumed by `take_last_move_outcome`.
         last_move_outcome: Option<MoveOutcome>,
+        // Last daytime tracking calculation, used by remote diagnostics.
+        last_tracking_snapshot: Option<TrackingSnapshot>,
 
         // Tracking soft limits.
         soft_limits_enabled: bool,
@@ -166,6 +175,7 @@ pub mod motion {
                 overshoot_expected_ticks: None,
 
                 last_move_outcome: None,
+                last_tracking_snapshot: None,
 
                 soft_limits_enabled: false,
                 soft_limit_min_deg: 0.0,
@@ -394,7 +404,13 @@ pub mod motion {
                     target_raw,
                     target_clamped
                 );
-                log::info!("Sun Angle: {}", sun.azimuth_in_deg());
+                let sun_angle = sun.azimuth_in_deg();
+                self.last_tracking_snapshot = Some(TrackingSnapshot {
+                    sun_angle,
+                    target_heading: target_clamped,
+                    angle_offset,
+                });
+                log::info!("Sun Angle: {}", sun_angle);
                 // Daytime tracking: no move in deadband, otherwise step by offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     self.relay_off();
@@ -533,4 +549,4 @@ pub mod motion {
     }
 }
 
-pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
+pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TrackingSnapshot};

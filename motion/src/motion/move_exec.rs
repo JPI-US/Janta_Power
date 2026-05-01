@@ -1,6 +1,6 @@
 // Stepper movement execution and safety checks.
 
-use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
+use super::{Motion, MotionMode, MoveOutcome, TrackingSnapshot, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -13,6 +13,10 @@ impl Motion<'_> {
 
     pub fn take_last_move_outcome(&mut self) -> Option<MoveOutcome> {
         self.last_move_outcome.take()
+    }
+
+    pub fn last_tracking_snapshot(&self) -> Option<TrackingSnapshot> {
+        self.last_tracking_snapshot
     }
 
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {

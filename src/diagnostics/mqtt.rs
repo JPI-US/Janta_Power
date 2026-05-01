@@ -21,6 +21,8 @@ pub struct StatusSnapshot<'a> {
     pub activity_reason: &'a str,
     pub sun_angle: Option<f64>,
     pub target_heading: Option<f64>,
+    pub angle_offset: Option<f64>,
+    pub last_move_outcome: Option<&'a str>,
 }
 
 pub fn subscribe(mqtt: &mut Mqtt, device_id: &str) -> anyhow::Result<()> {
@@ -147,6 +149,8 @@ fn publish_status(
         current_heading: snapshot.current_heading,
         sun_angle: snapshot.sun_angle,
         target_heading: snapshot.target_heading,
+        angle_offset: snapshot.angle_offset,
+        last_move_outcome: snapshot.last_move_outcome,
     };
     let ack_topic = topic::diagnostics_ack(device_id);
     publish_json(mqtt, &ack_topic, &payload)

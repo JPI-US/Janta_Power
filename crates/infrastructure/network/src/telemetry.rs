@@ -245,6 +245,8 @@ pub struct DiagnosticsStatus<'a> {
     pub current_heading: f32,
     pub sun_angle: Option<f64>,
     pub target_heading: Option<f64>,
+    pub angle_offset: Option<f64>,
+    pub last_move_outcome: Option<&'a str>,
 }
 
 // ---------- Publisher ----------
