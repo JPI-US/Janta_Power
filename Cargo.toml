@@ -2,11 +2,13 @@
 members = [
     "crates/ui/buttons",
     "crates/drivers/rgb_led",
+    "crates/diagnostics",
     "crates/sensors/sensors",
     "crates/infrastructure/clock",
     "crates/infrastructure/wifi",
     "crates/infrastructure/network",
     "crates/infrastructure/ota",
+    "crates/infrastructure/serial_console",
     "rtc",
 ]
 
@@ -51,6 +53,7 @@ esp-idf-hal = { version = "0.45", default-features = false, features = [
 ] }
 
 anyhow = "1.0"               #NEW: Moved from 1.0.93 to 1.0
+board_diagnostics = { package = "diagnostics", path = "crates/diagnostics" }
 embedded-svc = "0.28.0"
 motion = { path = "motion" }
 rtc = { path = "rtc" }
@@ -71,6 +74,7 @@ rgb = "0.8.50"
 heapless = "0.8.0"
 chrono = { version = "0.4.40", features = ["clock"] }
 semver = "1.0.26"               #New
+serial_console = { path = "crates/infrastructure/serial_console" }
 
 serde = { version = "1.0", features = ["derive"] } #New config parsing 
 serde_json = "1.0"  #JSON command parsing

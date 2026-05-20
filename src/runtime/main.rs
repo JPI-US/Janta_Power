@@ -45,6 +45,7 @@ use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::normal();
+    const MQTT_BROKER_URL: &str = "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883";
 
     // PHASE 1: INITIALIZATION --------------------------------------------------
     esp_idf_svc::sys::link_patches();
@@ -149,11 +150,7 @@ fn main() -> anyhow::Result<()> {
     // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
     // fleet identity stays in `.env` with the MQTT topic/cert identity.
     let mqtt_client_id = "esp32_thing_001";
-    //format!("tower_{}", sw.device_id);
-    let mut mqtt = Box::new(Mqtt::new_mqtt(
-        "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
-        &mqtt_client_id,
-    )?);
+    let mut mqtt = Box::new(Mqtt::new_mqtt(MQTT_BROKER_URL, mqtt_client_id)?);
 
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);
@@ -171,6 +168,35 @@ fn main() -> anyhow::Result<()> {
         .map(|s| s.trim().parse::<Version>())
         .transpose()?
         .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+    let current_version_string = current_version.to_string();
+
+    // Diagnostics phases 1 and 2 keep the main loop as the single owner of
+    // hardware/NVS. A background listener answers read-only requests from this
+    // cached snapshot, and queued control commands are handed back to the main loop.
+    let diagnostics_snapshot = diagnostics::mqtt::new_shared_snapshot(
+        diagnostics::mqtt::OwnedStatusSnapshot {
+            device_id: sw.device_id.to_string(),
+            firmware_version: current_version_string.clone(),
+            mqtt_connected: mqtt.is_connected(),
+            wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+            motion_mode: String::from("booting"),
+            current_heading: sw.home_heading_deg,
+            activity: String::from("booting"),
+            activity_reason: String::from("Tower is booting and initializing subsystems"),
+            sun_angle: None,
+            target_heading: None,
+            angle_offset: None,
+            last_move_outcome: None,
+        },
+    );
+    // Phase 2 adds a bounded handoff queue for diagnostics commands that must
+    // execute on the main loop because they mutate live control state.
+    let diagnostics_command_state = diagnostics::mqtt::new_shared_command_state();
+    let (diagnostics_control_tx, diagnostics_control_rx) =
+        diagnostics::mqtt::new_control_channel(8);
+    // Serial diagnostics uses the USB/JTAG console but stays on the main loop
+    // so the runtime keeps single ownership of motion, NVS, and shared I2C.
+    let mut serial_diagnostics = diagnostics::serial::SerialDiagnosticsRuntime::new()?;
 
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
@@ -240,7 +266,18 @@ fn main() -> anyhow::Result<()> {
         info!("Normal boot firmware already validated");
     }
 
-    diagnostics::mqtt::subscribe(&mut mqtt, sw.device_id)?;
+    // Run diagnostics intake on its own MQTT client so commands are not delayed
+    // behind the long tracking loop sleep. This thread reads the shared snapshot
+    // directly and enqueues any hardware-affecting command back to the main loop.
+    let diagnostics_mqtt_client_id = format!("{}_diagnostics", mqtt_client_id);
+    diagnostics::mqtt::spawn_listener(
+        MQTT_BROKER_URL,
+        &diagnostics_mqtt_client_id,
+        sw.device_id,
+        diagnostics_snapshot.clone(),
+        diagnostics_command_state.clone(),
+        diagnostics_control_tx,
+    )?;
 
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
@@ -502,6 +539,28 @@ fn main() -> anyhow::Result<()> {
 
     // Mark this boot as Normal so next boot can trust NVS.
     infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
+    // Publish a post-boot baseline snapshot before entering the steady-state
+    // tracking loop so diagnostics can report a useful initial status.
+    diagnostics::mqtt::update_snapshot(
+        &diagnostics_snapshot,
+        diagnostics::mqtt::OwnedStatusSnapshot {
+            device_id: sw.device_id.to_string(),
+            firmware_version: current_version_string.clone(),
+            mqtt_connected: mqtt.is_connected(),
+            wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+            motion_mode: match motion_mode {
+                MotionMode::StepperOnly => String::from("StepperOnly"),
+                MotionMode::EncoderGuarded => String::from("EncoderGuarded"),
+            },
+            current_heading: actual_heading,
+            activity: String::from("idle"),
+            activity_reason: String::from("Tower finished boot and is ready for tracking"),
+            sun_angle: None,
+            target_heading: None,
+            angle_offset: None,
+            last_move_outcome: None,
+        },
+    );
 
     // PHASE 8: MAIN TRACKING LOOP ---------------------------------------------
     let mut previous_motion_mode = motion_mode;
@@ -738,33 +797,53 @@ fn main() -> anyhow::Result<()> {
             let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
         }
 
-        let motion_mode_str = match motion_mode {
-            MotionMode::StepperOnly => "StepperOnly",
-            MotionMode::EncoderGuarded => "EncoderGuarded",
-        };
-        let mqtt_connected = mqtt.is_connected();
-        let wifi_connected = matches!(wifi.state(), WifiState::Connected(_));
-        let firmware_version = current_version.to_string();
-        let status_snapshot = diagnostics::mqtt::StatusSnapshot {
-            device_id: sw.device_id,
-            firmware_version: &firmware_version,
-            mqtt_connected,
-            wifi_connected,
-            motion_mode: motion_mode_str,
-            current_heading: actual_heading,
-            activity: &activity,
-            activity_reason: &activity_reason,
-            sun_angle: last_sun_angle,
-            target_heading: last_target_heading,
-            angle_offset: last_angle_offset,
-            last_move_outcome: last_move_outcome.as_deref(),
-        };
-        if let Err(e) = diagnostics::mqtt::process_one(&mut mqtt, sw.device_id, &status_snapshot) {
-            warn!("Diagnostics command processing failed: {:?}", e);
-        }
+        // Refresh the shared diagnostics snapshot once per main-loop pass. The
+        // diagnostics thread serves `get_status` from this cached state instead
+        // of reaching into live control objects from another thread.
+        diagnostics::mqtt::update_snapshot(
+            &diagnostics_snapshot,
+            diagnostics::mqtt::OwnedStatusSnapshot {
+                device_id: sw.device_id.to_string(),
+                firmware_version: current_version_string.clone(),
+                mqtt_connected: mqtt.is_connected(),
+                wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                motion_mode: match motion_mode {
+                    MotionMode::StepperOnly => String::from("StepperOnly"),
+                    MotionMode::EncoderGuarded => String::from("EncoderGuarded"),
+                },
+                current_heading: actual_heading,
+                activity,
+                activity_reason,
+                sun_angle: last_sun_angle,
+                target_heading: last_target_heading,
+                angle_offset: last_angle_offset,
+                last_move_outcome,
+            },
+        );
 
         const LOOP_SLEEP_SECS: u64 = 300;
-        std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
+        // Replace the old monolithic 300-second sleep with short slices so the
+        // main loop can service queued diagnostics control commands promptly.
+        let sleep_deadline = std::time::Instant::now() + Duration::from_secs(LOOP_SLEEP_SECS);
+        sleep_with_diagnostics_control_until(
+            sleep_deadline,
+            &diagnostics_control_rx,
+            &diagnostics_snapshot,
+            &diagnostics_command_state,
+            &mut serial_diagnostics,
+            &current_version_string,
+            &mut motion,
+            &mut nvs,
+            bus,
+            &mut mqtt,
+            &wifi,
+            sw.device_id,
+            sw.home_heading_deg,
+            motion_mode,
+            &mut actual_heading,
+            PERSIST_NVS,
+            &mut need_rehome_stepper_only,
+        )?;
 
     }
 }
@@ -866,4 +945,194 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
             false
         }
     }
+}
+
+fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
+    deadline: std::time::Instant,
+    control_rx: &diagnostics::mqtt::ControlCommandReceiver,
+    diagnostics_snapshot: &diagnostics::mqtt::SharedStatusSnapshot,
+    diagnostics_command_state: &diagnostics::mqtt::SharedCommandState,
+    serial_diagnostics: &mut diagnostics::serial::SerialDiagnosticsRuntime,
+    firmware_version: &str,
+    motion: &mut Motion<'_>,
+    nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
+    bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    mqtt: &mut Mqtt,
+    wifi: &Wifi<'_>,
+    device_id: &str,
+    home_heading_deg: f32,
+    motion_mode: MotionMode,
+    actual_heading: &mut f32,
+    persist_nvs: bool,
+    need_rehome_stepper_only: &mut bool,
+) -> anyhow::Result<()> {
+    const SLEEP_SLICE_MS: u64 = 100;
+
+    while std::time::Instant::now() < deadline {
+        // Service any queued diagnostics commands during the idle window
+        // between tracking passes without giving up main-loop ownership.
+        service_diagnostics_control_commands(
+            control_rx,
+            diagnostics_snapshot,
+            diagnostics_command_state,
+            firmware_version,
+            motion,
+            nvs,
+            bus,
+            mqtt,
+            wifi,
+            device_id,
+            home_heading_deg,
+            motion_mode,
+            actual_heading,
+            persist_nvs,
+            need_rehome_stepper_only,
+        )?;
+
+        if serial_diagnostics.poll(
+            diagnostics_command_state,
+            firmware_version,
+            motion,
+            nvs,
+            bus,
+            home_heading_deg,
+            motion_mode,
+            actual_heading,
+            persist_nvs,
+            need_rehome_stepper_only,
+        )? {
+            diagnostics::mqtt::update_snapshot(
+                diagnostics_snapshot,
+                diagnostics::mqtt::OwnedStatusSnapshot {
+                    device_id: device_id.to_string(),
+                    firmware_version: firmware_version.to_string(),
+                    mqtt_connected: mqtt.is_connected(),
+                    wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                    motion_mode: match motion_mode {
+                        MotionMode::StepperOnly => String::from("StepperOnly"),
+                        MotionMode::EncoderGuarded => String::from("EncoderGuarded"),
+                    },
+                    current_heading: *actual_heading,
+                    activity: String::from("serial_diagnostics"),
+                    activity_reason: String::from(
+                        "Serial diagnostics command processed on the main control loop",
+                    ),
+                    sun_angle: None,
+                    target_heading: None,
+                    angle_offset: None,
+                    last_move_outcome: Some(String::from("SerialDiagnostics")),
+                },
+            );
+        }
+
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        thread::sleep(remaining.min(Duration::from_millis(SLEEP_SLICE_MS)));
+    }
+
+    Ok(())
+}
+
+fn service_diagnostics_control_commands<T: esp_idf_svc::nvs::NvsPartitionId>(
+    control_rx: &diagnostics::mqtt::ControlCommandReceiver,
+    diagnostics_snapshot: &diagnostics::mqtt::SharedStatusSnapshot,
+    diagnostics_command_state: &diagnostics::mqtt::SharedCommandState,
+    firmware_version: &str,
+    motion: &mut Motion<'_>,
+    nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
+    bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    mqtt: &mut Mqtt,
+    wifi: &Wifi<'_>,
+    device_id: &str,
+    home_heading_deg: f32,
+    motion_mode: MotionMode,
+    actual_heading: &mut f32,
+    persist_nvs: bool,
+    need_rehome_stepper_only: &mut bool,
+) -> anyhow::Result<()> {
+    const MAX_COMMANDS_PER_SLICE: usize = 4;
+
+    for _ in 0..MAX_COMMANDS_PER_SLICE {
+        let command = match control_rx.try_recv() {
+            Ok(command) => command,
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                warn!("Diagnostics control queue disconnected; no further control commands will run");
+                break;
+            }
+        };
+
+        match command {
+            diagnostics::mqtt::ControlCommand::ExecuteFirstWave {
+                request_id,
+                cmd,
+                command,
+            } => {
+                // This path runs on the main loop, not the diagnostics thread,
+                // so motor/NVS access stays serialized in one place.
+                let transcript = diagnostics::executor::execute_first_wave_command(
+                    command,
+                    firmware_version,
+                    motion,
+                    nvs,
+                    bus,
+                    home_heading_deg,
+                    motion_mode,
+                    actual_heading,
+                    persist_nvs,
+                    need_rehome_stepper_only,
+                );
+                let completion = diagnostics::mqtt::complete_control_command(
+                    diagnostics_command_state,
+                    &request_id,
+                );
+                diagnostics::mqtt::update_snapshot(
+                    diagnostics_snapshot,
+                    diagnostics::mqtt::OwnedStatusSnapshot {
+                        device_id: device_id.to_string(),
+                        firmware_version: firmware_version.to_string(),
+                        mqtt_connected: mqtt.is_connected(),
+                        wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                        motion_mode: match motion_mode {
+                            MotionMode::StepperOnly => String::from("StepperOnly"),
+                            MotionMode::EncoderGuarded => String::from("EncoderGuarded"),
+                        },
+                        current_heading: *actual_heading,
+                        activity: if transcript.status == "completed" {
+                            format!("{}_completed", cmd)
+                        } else {
+                            format!("{}_failed", cmd)
+                        },
+                        activity_reason: transcript.message.clone(),
+                        sun_angle: None,
+                        target_heading: None,
+                        angle_offset: None,
+                        last_move_outcome: Some(cmd.clone()),
+                    },
+                );
+                if completion == diagnostics::mqtt::ControlCompletionDisposition::PublishFinalResult {
+                    if let Err(e) = diagnostics::mqtt::publish_transcript(
+                        mqtt,
+                        device_id,
+                        &request_id,
+                        &cmd,
+                        &transcript,
+                    ) {
+                        warn!("Failed to publish diagnostics control result: {:?}", e);
+                    }
+                } else {
+                    warn!(
+                        "Suppressing late diagnostics control result for request_id={}",
+                        request_id
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
