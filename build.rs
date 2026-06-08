@@ -97,7 +97,7 @@ fn generate_constants() {
     // AWS IoT Core handles broker auth via TLS client certs, so no username /
     // password is plumbed here.
     constants.push_str("// Device Identity\n");
-    constants.push_str(&get_env("DEVICE_ID", "1A", "str"));
+    constants.push_str(&get_env("DEVICE_ID", "10", "str"));
     constants.push_str("\n");
     
     // Timezone — DST-aware via libc setenv("TZ") + tzset. Fixed-offset constants
