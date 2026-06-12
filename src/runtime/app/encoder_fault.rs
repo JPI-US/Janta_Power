@@ -9,7 +9,7 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::{infra, infra::SnapshotStore};
 
 // Local direction enum used by encoder fault recovery.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Direction {
     Cw,
     Ccw,

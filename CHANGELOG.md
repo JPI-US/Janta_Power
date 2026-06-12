@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+* Implemented maintenance buttons. 
+  *  Holding maintenance button on startup enters maintenance mode, indicated by a solid blue LED. 
+  * Pressing East or West begins movement, indicated by a magenta or teal LED, respectively.
+  * Holding maintenance button while moving stops movement.
+  * Double pressing maintenance button while not moving exits and continues normal boot.
+
+### Changed
+* Moved motor and button initialization to the beginning of `main`.
 
 ## [1.1.3] - 2026-04-23
 
