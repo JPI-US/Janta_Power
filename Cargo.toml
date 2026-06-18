@@ -8,6 +8,7 @@ members = [
     "crates/infrastructure/network",
     "crates/infrastructure/ota",
     "rtc",
+    "bringup/hdc1080-test",
 ]
 
 [package]
