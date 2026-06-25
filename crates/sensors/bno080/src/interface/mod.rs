@@ -1,8 +1,5 @@
 pub mod i2c;
 
-#[cfg(test)]
-pub mod mock_i2c_port;
-
 use core::ops::Shl;
 
 use embedded_hal::delay::DelayNs;

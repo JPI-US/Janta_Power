@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Removed
 - Removed extraneous non-code files from certain crates.
-- Fixed broken tests that were causing errors
 - Removed `rttdebug` code that was causing errors
+- Removed `mock_i2c_port.rs` and `i2c` tests that were causing errors
+
+## Fixed
+- Fixed broken motor and sensor tests that were causing errors
 
 ## [1.1.3] - 2026-04-23
 
