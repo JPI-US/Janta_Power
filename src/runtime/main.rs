@@ -90,9 +90,9 @@ fn main() -> anyhow::Result<()> {
     led.display_none();
 
     // Button inputs (reserved for manual control)
-    let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance 
-    let east_button = PinDriver::input(peripherals.pins.gpio4).unwrap(); // East Button
-    let west_button = PinDriver::input(peripherals.pins.gpio6).unwrap(); // West Button
+    let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap();
+    let ccw_button = PinDriver::input(peripherals.pins.gpio4).unwrap();
+    let cw_button = PinDriver::input(peripherals.pins.gpio6).unwrap();
 
     // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
 
@@ -119,7 +119,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     // Capture maintenance mode
-    capture_maintenance_mode(&mut motion, &mut led, maintenance_button, east_button, west_button);
+    capture_maintenance_mode(&mut motion, &mut led, maintenance_button, ccw_button, cw_button);
 
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
@@ -819,8 +819,8 @@ fn capture_maintenance_mode(
     motion: &mut Motion,
     led: &mut Led,
     maintenance_button: PinDriver<Gpio5, Input>,
-    east_button: PinDriver<Gpio4, Input>,
-    west_button: PinDriver<Gpio6, Input>
+    ccw_button: PinDriver<Gpio4, Input>,
+    cw_button: PinDriver<Gpio6, Input>
 ) {
     if maintenance_button.is_low() {
         return;
@@ -835,16 +835,16 @@ fn capture_maintenance_mode(
     const DOUBLE_CLICK_MS: Duration = Duration::from_millis(250);
 
     loop {
-        let east = east_button.is_high();
-        let west = west_button.is_high();
+        let ccw = ccw_button.is_high();
+        let cw = cw_button.is_high();
         let maintenance = maintenance_button.is_high();
         let maintenance_pressed = maintenance && !last_maintenance;
         last_maintenance = maintenance;
 
         let now = Instant::now();
 
-        // Don't move if East and West are both pressed
-        if east && west {
+        // Don't move if CCW and CW are both pressed
+        if ccw && cw {
             move_direction = None
         } 
         // Stop moving if maintenance button is single clicked,
@@ -860,13 +860,11 @@ fn capture_maintenance_mode(
             move_direction = None;
             log::info!("[Maintenance Mode] Not moving");
         }
-        // Move CCW if East is pressed
-        else if east && !west {
+        else if ccw && !cw {
             move_direction = Some(Direction::Ccw);
             log::info!("[Maintenance Mode] Moving CCW");
         } 
-        // Move CW if West is pressed
-        else if west && !east {
+        else if cw && !ccw {
             move_direction = Some(Direction::Cw);
             log::info!("[Maintenance Mode] Moving CW");
         }

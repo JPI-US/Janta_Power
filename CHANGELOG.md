@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 * Moved motor and button initialization to the beginning of `main`.
+* Changed `east_button` to `ccw_button` and `west_button` to `cw_button`.
 
 ## [1.1.3] - 2026-04-23
 
