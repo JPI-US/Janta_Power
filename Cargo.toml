@@ -7,7 +7,7 @@ members = [
     "crates/infrastructure/wifi",
     "crates/infrastructure/network",
     "crates/infrastructure/ota",
-    "rtc",
+    "crates/infrastructure/rtc",
 ]
 
 [package]
@@ -52,8 +52,8 @@ esp-idf-hal = { version = "0.45", default-features = false, features = [
 
 anyhow = "1.0"               #NEW: Moved from 1.0.93 to 1.0
 embedded-svc = "0.28.0"
-motion = { path = "motion" }
-rtc = { path = "rtc" }
+motion = { path = "crates/motion" }
+rtc = { path = "crates/infrastructure/rtc" }
 clock = { path = "crates/infrastructure/clock" }
 hdc1080 = { path = "crates/sensors/hdc1080" }
 sensors = { path = "crates/sensors/sensors" }

@@ -6,7 +6,7 @@ description = "DS3231 RTC + SNTP fallback + libc TZ"
 
 [dependencies]
 chrono = "0.4"
-ds323x = { path = "../crates/sensors/ds323x" }
+ds323x = { path = "../../sensors/ds323x" }
 embedded-hal = "1.0.0"
 esp-idf-svc = { version = "0.51", features = [
     "critical-section",
@@ -18,4 +18,4 @@ log = "0.4"
 shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
     "std",
 ] }
-wifi = { path = "../crates/infrastructure/wifi" }
+wifi = { path = "../../infrastructure/wifi" }
