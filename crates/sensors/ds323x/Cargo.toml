@@ -31,9 +31,6 @@ categories = ["embedded", "hardware-support", "no-std"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/eldruin/ds323x-rs"
 
-[profile.release]
-lto = true
-
 [dependencies.embedded-hal]
 version = "1.0.0"
 
