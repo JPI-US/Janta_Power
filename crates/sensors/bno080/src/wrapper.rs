@@ -92,8 +92,6 @@ where
 {
     /// Consume all available messages on the port without processing them
     pub fn eat_all_messages(&mut self, delay: &mut impl DelayNs) {
-        #[cfg(feature = "rttdebug")]
-        println!("eat_n");
         loop {
             let msg_count = self.eat_one_message(delay);
             if msg_count == 0 {
@@ -139,9 +137,6 @@ where
                 msg_count += 1;
                 self.handle_received_packet(received_len);
             }
-        } else {
-            #[cfg(feature = "rttdebug")]
-            rprintln!("handle1 err {:?}", res);
         }
 
         msg_count
@@ -153,12 +148,8 @@ where
     pub fn eat_one_message(&mut self, delay: &mut impl DelayNs) -> usize {
         let res = self.receive_packet_with_timeout(delay, 150);
         return if let Ok(received_len) = res {
-            #[cfg(feature = "rttdebug")]
-            rprintln!("e1 {}", received_len);
             received_len
         } else {
-            #[cfg(feature = "rttdebug")]
-            rprintln!("e1 err {:?}", res);
             0
         };
     }
@@ -167,9 +158,6 @@ where
         let payload_len = received_len - PACKET_HEADER_LENGTH;
         let payload = &self.packet_recv_buf[PACKET_HEADER_LENGTH..received_len];
         let mut cursor: usize = 1; //skip response type
-
-        #[cfg(feature = "rttdebug")]
-        rprintln!("AdvRsp: {}", payload_len);
 
         while cursor < payload_len {
             let _tag: u8 = payload[cursor];
@@ -229,8 +217,6 @@ where
         let mut outer_cursor: usize = PACKET_HEADER_LENGTH + 5; //skip header, timestamp
                                                                 //TODO need to skip more above for a payload-level timestamp??
         if received_len < outer_cursor {
-            #[cfg(feature = "rttdebug")]
-            rprintln!("bad lens: {} < {}", received_len, outer_cursor);
             return;
         }
 
@@ -291,8 +277,6 @@ where
         for cursor in 1..payload_len {
             let err: u8 = payload[cursor];
             self.last_error_received = err;
-            #[cfg(feature = "rttdebug")]
-            rprintln!("lerr: {:x}", err);
         }
     }
 
@@ -317,20 +301,14 @@ where
                 }
                 _ => {
                     self.last_command_chan_rid = report_id;
-                    #[cfg(feature = "rttdebug")]
-                    rprintln!("unh cmd: {}", report_id);
                 }
             },
             CHANNEL_EXECUTABLE => match report_id {
                 EXECUTABLE_DEVICE_RESP_RESET_COMPLETE => {
                     self.device_reset = true;
-                    #[cfg(feature = "rttdebug")]
-                    rprintln!("resp_reset {}", 1);
                 }
                 _ => {
                     self.last_exec_chan_rid = report_id;
-                    #[cfg(feature = "rttdebug")]
-                    rprintln!("unh exe: {:x}", report_id);
                 }
             },
             CHANNEL_HUB_CONTROL => {
@@ -343,37 +321,11 @@ where
                         } else if cmd_resp == SH2_INIT_SYSTEM {
                             self.init_received = true;
                         }
-                        #[cfg(feature = "rttdebug")]
-                        rprintln!("CMD_RESP: 0x{:X}", cmd_resp);
                     }
                     SHUB_PROD_ID_RESP => {
-                        #[cfg(feature = "rttdebug")]
-                        {
-                            //let reset_cause = msg[4 + 1];
-                            let sw_vers_major = msg[4 + 2];
-                            let sw_vers_minor = msg[4 + 3];
-                            rprintln!(
-                                "PID_RESP {}.{}",
-                                sw_vers_major,
-                                sw_vers_minor
-                            );
-                        }
-
                         self.prod_id_verified = true;
                     }
-                    SHUB_GET_FEATURE_RESP => {
-                        // 0xFC
-                        #[cfg(feature = "rttdebug")]
-                        rprintln!("feat resp: {}", msg[5]);
-                    }
-                    _ => {
-                        #[cfg(feature = "rttdebug")]
-                        rprintln!(
-                            "unh hbc: 0x{:X} {:x?}",
-                            report_id,
-                            &msg[..PACKET_HEADER_LENGTH]
-                        );
-                    }
+                    _ => {}
                 }
             }
             CHANNEL_SENSOR_REPORTS => {
@@ -381,8 +333,6 @@ where
             }
             _ => {
                 self.last_chan_received = chan_num;
-                #[cfg(feature = "rttdebug")]
-                rprintln!("unh chan 0x{:X}", chan_num);
             }
         }
     }
@@ -551,8 +501,6 @@ where
         &mut self,
         delay: &mut impl DelayNs,
     ) -> Result<(), WrapperError<SE>> {
-        #[cfg(feature = "rttdebug")]
-        rprintln!("request PID...");
         let cmd_body: [u8; 2] = [
             SHUB_PROD_ID_REQ, //request product ID
             0,                //reserved
@@ -573,8 +521,6 @@ where
 
         // process all incoming messages until we get a product id (or no more data)
         while !self.prod_id_verified {
-            #[cfg(feature = "rttdebug")]
-            rprintln!("read PID");
             let msg_count = self.handle_one_message(delay, 150u8);
             if msg_count < 1 {
                 break;
@@ -634,9 +580,6 @@ where
                 &mut self.packet_recv_buf,
             )
             .map_err(WrapperError::CommError)?;
-
-        #[cfg(feature = "rttdebug")]
-        rprintln!("srcv {} {}", send_packet_length, recv_packet_length);
 
         Ok(recv_packet_length)
     }

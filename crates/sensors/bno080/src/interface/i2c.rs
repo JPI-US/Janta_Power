@@ -1,9 +1,6 @@
 use super::{SensorCommon, SensorInterface, PACKET_HEADER_LENGTH};
 use embedded_hal::delay::DelayNs;
 
-#[cfg(feature = "rttdebug")]
-use panic_rtt_core::rprintln;
-
 /// the i2c address normally used by BNO080
 pub const DEFAULT_ADDRESS: u8 = 0x4A;
 /// alternate i2c address for BNO080
@@ -110,8 +107,6 @@ where
                     &self.seg_recv_buf[..PACKET_HEADER_LENGTH],
                 );
                 if promised_packet_len <= PACKET_HEADER_LENGTH {
-                    #[cfg(feature = "rttdebug")]
-                    rprintln!("WTFFF {}", promised_packet_len);
                     return Ok(0);
                 }
 
@@ -175,8 +170,6 @@ where
     }
 
     fn write_packet(&mut self, packet: &[u8]) -> Result<(), Self::SensorError> {
-        #[cfg(feature = "rttdebug")]
-        rprintln!("w {:x} {}", self.address, packet.len());
         self.i2c_port.write(self.address, &packet)?;
         Ok(())
     }
