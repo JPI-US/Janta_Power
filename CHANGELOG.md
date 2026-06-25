@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `rttdebug` code that was causing errors.
 - Removed `mock_i2c_port.rs` and `i2c` tests that were causing errors.
 - Removed `ds323x` tests that were causing errors.
+- Removed random `#NEW` comments on dependencies in `Cargo.toml` files.
 
 ## Added
 - Added example precommit hook to ensure code is formatted with `cargo fmt` before committing.

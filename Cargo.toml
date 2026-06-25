@@ -18,8 +18,8 @@ edition = "2021"
 resolver = "2"
 rust-version = "1.77"
 
-[package.metadata.esp-idf]# NEW
-partition_table = "partitions.csv" # NEW
+[package.metadata.esp-idf]
+partition_table = "partitions.csv"
 
 [[bin]]
 name = "tower"
@@ -50,7 +50,7 @@ esp-idf-hal = { version = "0.45", default-features = false, features = [
     "rmt-legacy",
 ] }
 
-anyhow = "1.0"               #NEW: Moved from 1.0.93 to 1.0
+anyhow = "1.0"
 embedded-svc = "0.28.0"
 motion = { path = "crates/motion" }
 rtc = { path = "crates/infrastructure/rtc" }
@@ -70,11 +70,11 @@ rgb = "0.8.50"
 #esp32-nimble = "0.11"
 heapless = "0.8.0"
 chrono = { version = "0.4.40", features = ["clock"] }
-semver = "1.0.26"               #New
+semver = "1.0.26"
 
-serde = { version = "1.0", features = ["derive"] } #New config parsing 
-serde_json = "1.0"  #JSON command parsing
-toml = "0.8"  #New config parsing 
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
 pid = "4.0.0"
 
 [build-dependencies]

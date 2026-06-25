@@ -14,7 +14,7 @@ esp-idf-svc = { version = "0.51", features = [
 ] }
 log = "0.4"
 chrono = { version = "0.4", features = ["clock"] }
-semver = "1.0.26"               #New
+semver = "1.0.26"
 astronav = { version = "0.2.5", features = ["noaa-sun"] }
 clock = { path = "../infrastructure/clock" }
 network = { path = "../infrastructure/network" }
