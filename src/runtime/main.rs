@@ -8,6 +8,7 @@ mod app;
 #[path = "../config.rs"]
 mod config;
 #[path = "../constants.rs"]
+#[allow(dead_code)]
 mod constants;
 #[path = "../diagnostics/mod.rs"]
 mod diagnostics;
