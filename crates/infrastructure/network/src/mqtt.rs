@@ -75,7 +75,7 @@ impl Mqtt {
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
 
-        let (mut client, mut connection) = EspMqttClient::new(
+        let (client, mut connection) = EspMqttClient::new(
             broker_url,
             &mqtt_config,
         )?;
