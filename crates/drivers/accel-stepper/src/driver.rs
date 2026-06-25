@@ -372,7 +372,7 @@ mod tests {
         driver.compute_new_speed();
 
         assert_eq!(driver.speed(), 0.0);
-        assert_eq!(driver.step_interval, Duration::new(0, 0));
+        assert_eq!(driver.step_interval, 0);
     }
 
     #[test]

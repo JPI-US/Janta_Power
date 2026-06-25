@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Removed extraneous non-code files from certain crates
+- Removed extraneous non-code files from certain crates.
+- Fix broken tests
 
 ## [1.1.3] - 2026-04-23
 

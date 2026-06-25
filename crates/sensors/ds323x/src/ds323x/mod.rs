@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn if_some_then_get_inner() {
-        match some_or_invalid_error::<u8, (), ()>(Some(1)) {
+        match some_or_invalid_error::<u8>(Some(1)) {
             Ok(1) => (),
             _ => panic!(),
         }
@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn if_none_then_error() {
-        match some_or_invalid_error::<u8, (), ()>(None) {
+        match some_or_invalid_error::<u8>(None) {
             Err(Error::InvalidDeviceState) => (),
             _ => panic!(),
         }
