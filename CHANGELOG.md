@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Changed
 - Suppressed dead code warnings.
 - Small code style changes.
-- Explicitly import `option::None` in `clock` to fix a strange warning.
+- Explicitly import `option::None` in `clock` and `main` to fix a strange warning.
 - Moved `motion` and `rtc` into `crates/`.
 - Ran `cargo fmt`.
 

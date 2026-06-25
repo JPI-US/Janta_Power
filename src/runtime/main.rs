@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local};
 use clock::Clock;
 use log::{error, info, warn};
+use core::option::Option::None;
 use std::thread;
 use std::time::Duration;
 
