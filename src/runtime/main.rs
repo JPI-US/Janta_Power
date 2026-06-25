@@ -1,9 +1,29 @@
+use core::option::Option::None;
+use std::{thread, time::Duration};
+
 use chrono::{DateTime, Local};
 use clock::Clock;
+use esp_idf_svc::{
+    eventloop::EspSystemEventLoop,
+    hal::{
+        gpio::PinDriver,
+        i2c::{I2cConfig, I2cDriver},
+        prelude::*,
+    },
+    log::EspLogger,
+    nvs::{EspDefaultNvsPartition, EspNvs},
+    ota::EspOta,
+};
 use log::{error, info, warn};
-use core::option::Option::None;
-use std::thread;
-use std::time::Duration;
+use motion::{Motion, MotionMode, MoveOutcome};
+use network::mqtt::Mqtt;
+use ota::OtaUpdater;
+use rgb_led::Led;
+use rtc::Rtc;
+use semver::Version;
+use wifi::wifi::{Wifi, WifiState};
+
+use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 mod app;
 #[path = "../config.rs"]
@@ -23,27 +43,6 @@ mod switchboard;
 pub extern "C" fn __pender() {
     // Intentionally empty.
 }
-
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop,
-    hal::{
-        gpio::PinDriver,
-        i2c::{I2cConfig, I2cDriver},
-        prelude::*,
-    },
-    log::EspLogger,
-    nvs::{EspDefaultNvsPartition, EspNvs},
-    ota::EspOta,
-};
-use motion::{Motion, MotionMode, MoveOutcome};
-use network::mqtt::Mqtt;
-use ota::OtaUpdater;
-use rgb_led::Led;
-use rtc::Rtc;
-use semver::Version;
-use wifi::wifi::{Wifi, WifiState};
-
-use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::normal();

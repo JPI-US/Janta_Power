@@ -1,11 +1,11 @@
-use anyhow::Result;
 use core::time::Duration;
+
+use anyhow::Result;
 use esp_idf_svc::hal::{
     gpio::OutputPin,
     peripheral::Peripheral,
     rmt::{config::TransmitConfig, FixedLengthSignal, PinState, Pulse, RmtChannel, TxRmtDriver},
 };
-
 pub use rgb::RGB8;
 
 pub struct Led<'a> {

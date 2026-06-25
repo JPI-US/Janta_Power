@@ -1,11 +1,12 @@
-#[allow(unused_imports)] // used for rustdoc links
-use crate::CummulativeSteps;
+use core::f32::EPSILON;
+
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use libm::F32Ext;
 
+#[allow(unused_imports)] // used for rustdoc links
+use crate::CummulativeSteps;
 use crate::{utils::Clamp, Device, StepContext, SystemClock};
-use core::f32::EPSILON;
 
 /// A stepper motor driver.
 ///
@@ -342,9 +343,9 @@ impl Driver {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, time::Duration};
+
     use super::*;
-    use std::cell::Cell;
-    use std::time::Duration;
 
     #[derive(Debug, Default)]
     struct DummyClock {

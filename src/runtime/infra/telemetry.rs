@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use network::mqtt::Mqtt;
-use network::telemetry::{publish_error, Component, TIME_FORMAT};
+use network::{
+    mqtt::Mqtt,
+    telemetry::{publish_error, Component, TIME_FORMAT},
+};
 
 /// Interval between republishes of a critical error while the device is wedged.
 const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);

@@ -70,8 +70,9 @@ impl SensorCommon {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::ops::Shr;
+
+    use super::*;
 
     #[test]
     fn test_parse_packet_header() {

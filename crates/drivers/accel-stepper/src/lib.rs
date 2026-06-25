@@ -85,6 +85,10 @@ mod hal_devices;
 mod multi_driver;
 mod utils;
 
+#[cfg(feature = "std")]
+pub use crate::clock::OperatingSystemClock;
+#[cfg(feature = "hal")]
+pub use crate::hal_devices::*;
 pub use crate::{
     clock::SystemClock,
     device::{fallible_func_device, func_device, Device, StepContext},
@@ -92,9 +96,3 @@ pub use crate::{
     multi_driver::MultiDriver,
     utils::CummulativeSteps,
 };
-
-#[cfg(feature = "std")]
-pub use crate::clock::OperatingSystemClock;
-
-#[cfg(feature = "hal")]
-pub use crate::hal_devices::*;

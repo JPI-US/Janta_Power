@@ -1,7 +1,8 @@
 // Limit-switch and homing helpers.
 
-use super::{calculate_steps, Motion, MoveOutcome};
 use std::time::{Duration, Instant};
+
+use super::{calculate_steps, Motion, MoveOutcome};
 
 impl Motion<'_> {
     pub fn switch_pressed(&mut self) -> bool {

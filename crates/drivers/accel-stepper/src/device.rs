@@ -1,4 +1,5 @@
 use core::time::Duration;
+
 use void::Void;
 
 /// An interface to the stepper motor.

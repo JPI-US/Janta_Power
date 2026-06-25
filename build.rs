@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 fn main() {
     // Set LD_LIBRARY_PATH for esp-clang to find libxml2.so.2 and other dependencies

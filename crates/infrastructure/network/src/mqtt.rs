@@ -1,19 +1,20 @@
+use std::{
+    collections::VecDeque,
+    ffi::CStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
+
 use anyhow::Result;
 use esp_idf_svc::{
     mqtt::client::{EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
     tls::X509,
 };
 use log::*;
-use std::collections::VecDeque;
-use std::ffi::CStr;
-use std::time::Duration;
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread,
-};
 pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,

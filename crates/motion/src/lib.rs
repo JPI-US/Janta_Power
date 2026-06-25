@@ -1,18 +1,21 @@
 pub mod motion {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use astronav::coords::noaa_sun::NOAASun;
     use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
-    use esp_idf_svc::hal::gpio::{
-        Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver,
+    use esp_idf_svc::{
+        hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
+        nvs::*,
     };
-    use esp_idf_svc::nvs::*;
     use network::mqtt::Mqtt;
     use ota::OtaUpdater;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
-    use std::thread;
-    use std::time::{Duration, Instant};
     use wifi::wifi::{Wifi, WifiState};
 
     // Focused motion modules.

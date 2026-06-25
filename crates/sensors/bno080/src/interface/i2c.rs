@@ -1,5 +1,6 @@
-use super::{SensorCommon, SensorInterface, PACKET_HEADER_LENGTH};
 use embedded_hal::delay::DelayNs;
+
+use super::{SensorCommon, SensorInterface, PACKET_HEADER_LENGTH};
 
 /// the i2c address normally used by BNO080
 pub const DEFAULT_ADDRESS: u8 = 0x4A;

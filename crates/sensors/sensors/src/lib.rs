@@ -1,9 +1,9 @@
 pub mod sensors {
-    use esp_idf_svc::hal::adc::{
-        AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated, EmptyAdcChannels, ADC1,
+    use esp_idf_svc::hal::{
+        adc::{AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated, EmptyAdcChannels, ADC1},
+        delay::Ets,
+        gpio::{Gpio2, Gpio3},
     };
-    use esp_idf_svc::hal::delay::Ets;
-    use esp_idf_svc::hal::gpio::{Gpio2, Gpio3};
     use hdc1080::Hdc1080;
 
     pub struct Sensors<'a, I2C> {

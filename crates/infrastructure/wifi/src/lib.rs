@@ -1,16 +1,18 @@
 pub mod wifi {
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        thread,
+        time::Duration,
+    };
+
     use anyhow;
-    use esp_idf_svc::eventloop::EspSystemEventLoop;
-    use esp_idf_svc::nvs::EspDefaultNvsPartition;
     use esp_idf_svc::wifi::{
         AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, PmfConfiguration,
         ScanMethod,
         /*  WifiWait*/
     };
+    use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
     use log::*;
-    use std::net::{IpAddr, Ipv4Addr};
-    use std::thread;
-    use std::time::Duration;
 
     /// Represents Wi-Fi connection states
     #[derive(Debug, PartialEq)]

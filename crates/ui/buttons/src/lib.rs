@@ -1,7 +1,8 @@
 pub mod buttons {
+    use std::time::{Duration, Instant};
+
     use button_driver::{Button, ButtonConfig};
     use esp_idf_svc::hal::gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver};
-    use std::time::{Duration, Instant};
 
     pub struct Buttons<'a> {
         m_button: Button<PinDriver<'a, Gpio5, Input>, Instant, Duration>,

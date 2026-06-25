@@ -1,7 +1,8 @@
 use core::time::Duration;
 
-use crate::{Device, StepContext};
 use embedded_hal::digital::OutputPin;
+
+use crate::{Device, StepContext};
 
 /// A [`Device`] which has step and direction pins.
 ///

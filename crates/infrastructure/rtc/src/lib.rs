@@ -3,13 +3,14 @@
 
 pub mod timezone;
 
+use std::{thread, time::Duration};
+
 use ds323x::{DateTimeAccess, Datelike, Ds323x, NaiveDate, NaiveDateTime, Timelike};
 use esp_idf_svc::{
     hal::i2c::I2cDriver,
     sntp::{EspSntp, SyncStatus},
 };
 use log::*;
-use std::{thread, time::Duration};
 use wifi::wifi::{Wifi, WifiState};
 
 const RTC_MIN_YEAR: i32 = 2024;

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Added
 - Added example precommit hook to ensure code is formatted with `cargo fmt` before committing.
+- Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
 
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.

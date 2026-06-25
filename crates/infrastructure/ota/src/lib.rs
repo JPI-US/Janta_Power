@@ -1,20 +1,22 @@
 //use std::io::{Read, Write};
+use std::{result::Result::Ok, thread, time::Duration};
+
+// use ota::OtaPartition; // hypothetical struct from ota crate
+use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use embedded_svc::http::client::{Client as HttpClient, Method};
-use esp_idf_svc::http::client::{Configuration as HttpConfiguration, EspHttpConnection};
-use esp_idf_svc::sys::esp_crt_bundle_attach;
-use esp_idf_svc::{nvs::EspNvs, nvs::*, ota::EspOta};
-use semver::Version;
-use serde_json::Value; // for Basic Auth header
-                       // use ota::OtaPartition; // hypothetical struct from ota crate
-use anyhow::Result;
-use esp_idf_svc::io::Error;
+use esp_idf_svc::{
+    http::client::{Configuration as HttpConfiguration, EspHttpConnection},
+    io::Error,
+    nvs::{EspNvs, *},
+    ota::EspOta,
+    sys::esp_crt_bundle_attach,
+};
 use log::*;
 use network::mqtt::Mqtt;
+use semver::Version;
+use serde_json::Value; // for Basic Auth header
 use sha2::{Digest, Sha256};
-use std::result::Result::Ok;
-use std::thread;
-use std::time::Duration;
 
 pub struct OtaUpdater<'a> {
     current_version: Version,

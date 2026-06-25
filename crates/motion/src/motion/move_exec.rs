@@ -1,10 +1,11 @@
 // Stepper movement execution and safety checks.
 
+use std::time::{Duration, Instant};
+
 use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
     INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
 };
-use std::time::{Duration, Instant};
 
 impl Motion<'_> {
     pub fn init(&mut self) {

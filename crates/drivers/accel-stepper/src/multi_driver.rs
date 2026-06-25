@@ -1,7 +1,9 @@
-use crate::{utils::DurationHelpers, Device, Driver, SystemClock};
+use core::time::Duration;
+
 #[allow(unused_imports)]
 use arrayvec::ArrayVec;
-use core::time::Duration;
+
+use crate::{utils::DurationHelpers, Device, Driver, SystemClock};
 
 /// Controller for moving multiple axes in a coordinated fashion.
 pub struct MultiDriver {

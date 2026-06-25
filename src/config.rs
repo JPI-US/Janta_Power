@@ -1,6 +1,6 @@
+use std::{fs, path::Path};
+
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 use toml;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

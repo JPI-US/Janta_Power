@@ -1,6 +1,5 @@
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::{info, warn};
-
 use motion::MotionMode;
 
 // NVS keys used by runtime state.

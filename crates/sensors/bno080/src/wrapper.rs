@@ -3,10 +3,11 @@ Copyright (c) 2020 Todd Stellanova
 LICENSE: BSD3 (see LICENSE file)
 */
 
-use crate::interface::{SensorInterface, PACKET_HEADER_LENGTH};
+use core::ops::Shr;
+
 use embedded_hal::delay::DelayNs;
 
-use core::ops::Shr;
+use crate::interface::{SensorInterface, PACKET_HEADER_LENGTH};
 
 //#[cfg(feature = "rttdebug")]
 //use panic_rtt_core::rprintln;
