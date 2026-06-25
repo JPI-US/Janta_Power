@@ -626,6 +626,7 @@ const CMD_RESP_ERROR_LIST: u8 = 1;
 const SHUB_PROD_ID_REQ: u8 = 0xF9;
 /// Report ID for Product ID response
 const SHUB_PROD_ID_RESP: u8 = 0xF8;
+#[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
 const SHUB_GET_FEATURE_RESP: u8 = 0xFC;
 const SHUB_REPORT_SET_FEATURE_CMD: u8 = 0xFD;
 // const SHUB_GET_FEATURE_REQ: u8 = 0xFE;

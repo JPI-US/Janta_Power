@@ -35,6 +35,7 @@ pub struct EncoderRecoverySwitches {
 
 impl EncoderRecoverySwitches {
     /// Fallback when not using switchboard (e.g. tests). Prefer building from sw.runtime.encoder_recovery.
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub const fn default() -> Self {
         Self {
             enabled: true,
@@ -65,6 +66,7 @@ impl EncoderFaultRecovery {
         }
     }
     
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn mode_switched_daily(&self) -> bool {
         self.mode_switched_daily
     }

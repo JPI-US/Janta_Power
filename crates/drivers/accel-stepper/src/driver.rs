@@ -340,17 +340,6 @@ mod tests {
     use std::cell::Cell;
     use std::time::Duration;
 
-    #[derive(Debug, Copy, Clone, PartialEq, Default)]
-    struct NopDevice;
-
-    impl Device for NopDevice {
-        type Error = ();
-
-        fn step(&mut self, _ctx: &StepContext) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
     #[derive(Debug, Default)]
     struct DummyClock {
         ticks: Cell<u32>,

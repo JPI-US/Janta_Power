@@ -47,6 +47,7 @@ pub struct LocationConfig {
 } */
 
 impl Config {
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn load() -> anyhow::Result<Self> {
         // Try external file first
         if Path::new("config.toml").exists() {
@@ -66,30 +67,37 @@ impl Config {
 
 // Helper functions for easy access
 impl Config {
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_wifi_ssid(&self) -> &str {
         &self.wifi.ssid
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_wifi_password(&self) -> &str {
         &self.wifi.password
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_latitude(&self) -> f64 {
         self.location.latitude
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_longitude(&self) -> f64 {
         self.location.longitude
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_altitude(&self) -> f64 {
         self.location.altitude
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_tower_id(&self) -> u32 {
         self.device.tower_id
     }
 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn get_timezone_offset(&self) -> i32 {
         self.location.timezone_offset_hours
     }

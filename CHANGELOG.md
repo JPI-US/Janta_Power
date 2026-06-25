@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed broken motor and sensor tests that were causing errors.
 - Fixed import in `driver.rs` being wrongly flagged as unused.
 
+## Changed
+- Suppressed dead code warnings.
+
 ## [1.1.3] - 2026-04-23
 
 Stable release of Encoder + RTC + AWS with fleet-safe tower identity.

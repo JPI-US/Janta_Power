@@ -63,6 +63,7 @@ pub mod motion {
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
         motor_clock: OperatingSystemClock,
         // Legacy field kept for compatibility.
+        #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,

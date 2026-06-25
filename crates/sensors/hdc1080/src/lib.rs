@@ -55,6 +55,7 @@ struct ConfigBitFlags;
 
 impl ConfigBitFlags {
     const RST: u16 = 0b1000_0000_0000_0000;
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     const HEAT: u16 = 0b0010_0000_0000_0000;
     const MODE: u16 = 0b0001_0000_0000_0000;
     const BTST: u16 = 0b0000_1000_0000_0000;

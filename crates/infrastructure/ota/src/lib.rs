@@ -14,12 +14,6 @@ use embedded_svc::{
         Method,
     }, 
 }; 
-use esp_idf_svc::io::{
-    utils::try_read_full,
-    Read,
-    Write,
-};
-use esp_idf_svc::io::EspIOError;
 use base64::{engine::general_purpose, Engine as _}; // for Basic Auth header
 // use ota::OtaPartition; // hypothetical struct from ota crate
 use anyhow::Result;
@@ -33,11 +27,13 @@ use sha2::{Sha256, Digest};
 
 pub struct OtaUpdater<'a> {
     current_version: Version, 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     mqtt_client: &'a mut Mqtt,
     device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
     username: Option<String>, 
     password: Option<String>, 
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     default_headers: Vec<(&'static str, &'static str)>,
 }
 
