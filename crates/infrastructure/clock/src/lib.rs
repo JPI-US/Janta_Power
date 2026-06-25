@@ -105,8 +105,8 @@ pub mod clock {
         }
 
         /// Method for setting a datetime string
-        pub fn set_date_time(&mut self, dateTime: &NaiveDateTime) {
-            self.rtc.set_datetime(dateTime);
+        pub fn set_date_time(&mut self, dateTime: &NaiveDateTime) -> Result<(), ds323x::Error> {
+            self.rtc.set_datetime(dateTime)
         }
 
         /// Method for returning a datetime string

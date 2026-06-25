@@ -42,27 +42,28 @@ impl<'d> Led<'d> {
         Ok(())
     }
 
-    pub fn display_warning(&mut self) {
-        self.set_color(RGB8::new(255, 222, 33));
+    pub fn display_warning(&mut self) -> Result<()> {
+        self.set_color(RGB8::new(255, 222, 33))
     }
 
-    pub fn display_healthy(&mut self) {
-        self.set_color(RGB8::new(0, 255, 0));
+    pub fn display_healthy(&mut self) -> Result<()> {
+        self.set_color(RGB8::new(0, 255, 0))
     }
 
-    pub fn display_error(&mut self) {
-        self.set_color(RGB8::new(255, 0, 0));
+    pub fn display_error(&mut self) -> Result<()> {
+        self.set_color(RGB8::new(255, 0, 0))
     }
 
-    pub fn display_maintenance(&mut self) {
-        self.set_color(RGB8::new(0, 0, 255));
+    pub fn display_maintenance(&mut self) -> Result<()> {
+        self.set_color(RGB8::new(0, 0, 255))
     }
 
-    pub fn display_connecting(&mut self) {
-        self.set_color(RGB8::new(255, 10, 200));
+    pub fn display_connecting(&mut self) -> Result<()> {
+        self.set_color(RGB8::new(255, 10, 200))?;
         std::thread::sleep(std::time::Duration::from_millis(350));
-        self.set_color(RGB8::new(150, 150, 150));
+        self.set_color(RGB8::new(150, 150, 150))?;
         std::thread::sleep(std::time::Duration::from_millis(350));
+        Ok(())
     }
 }
 

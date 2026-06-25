@@ -341,7 +341,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     motion.init();
-    led.display_healthy();
+    led.display_healthy()?;
     let _ = motion.run();
 
     // Runtime guardrails from switchboard
