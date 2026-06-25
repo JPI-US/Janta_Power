@@ -5,7 +5,7 @@ use crate::CummulativeSteps;
 use libm::F32Ext;
 
 use crate::{utils::Clamp, Device, StepContext, SystemClock};
-use core::{f32::EPSILON, time::Duration};
+use core::f32::EPSILON;
 
 /// A stepper motor driver.
 ///
@@ -338,6 +338,7 @@ impl Driver {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::time::Duration;
 
     #[derive(Debug, Copy, Clone, PartialEq, Default)]
     struct NopDevice;

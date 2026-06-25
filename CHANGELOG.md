@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `ds323x` tests that were causing errors.
 
 ## Fixed
-- Fixed broken motor and sensor tests that were causing errors
+- Fixed broken motor and sensor tests that were causing errors.
+- Fixed import in `driver.rs` being wrongly flagged as unused.
 
 ## [1.1.3] - 2026-04-23
 
