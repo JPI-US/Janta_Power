@@ -1,13 +1,18 @@
 [workspace]
 members = [
-    "crates/ui/buttons",
+    "crates/drivers/accel-stepper",
     "crates/drivers/rgb_led",
-    "crates/sensors/sensors",
     "crates/infrastructure/clock",
-    "crates/infrastructure/wifi",
     "crates/infrastructure/network",
     "crates/infrastructure/ota",
     "crates/infrastructure/rtc",
+    "crates/infrastructure/wifi",
+    "crates/motion",
+    "crates/sensors/bno080",
+    "crates/sensors/ds323x",
+    "crates/sensors/hdc1080",
+    "crates/sensors/sensors",
+    "crates/ui/buttons",
 ]
 
 [package]
