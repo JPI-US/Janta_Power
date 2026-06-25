@@ -1,5 +1,5 @@
 use core::option::Option::None;
-use std::{thread, time::Duration};
+use std::{thread, time::{Duration, Instant}};
 
 use chrono::{DateTime, Local};
 use clock::Clock;
@@ -22,6 +22,7 @@ use rgb_led::Led;
 use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
+use esp_idf_svc::hal::gpio::{Input, Gpio4, Gpio5, Gpio6};
 
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
@@ -55,7 +56,6 @@ fn main() -> anyhow::Result<()> {
     let sysloop = EspSystemEventLoop::take()?;
 
     // Hardware and persistent storage
-    let peripherals = Peripherals::take().unwrap();
     let nvs_default = EspDefaultNvsPartition::take()?;
 
     let mut nvs = match EspNvs::new(nvs_default.clone(), "storage", true) {
@@ -74,6 +74,8 @@ fn main() -> anyhow::Result<()> {
         last_run_normal, trust_nvs_state
     );
 
+    let peripherals = Peripherals::take().unwrap();
+
     // Encoder pins
     let encoder_a = peripherals.pins.gpio10;
     let encoder_b = peripherals.pins.gpio11;
@@ -84,6 +86,42 @@ fn main() -> anyhow::Result<()> {
     let config = I2cConfig::new().baudrate(10_u32.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
     let bus: &'static _ = shared_bus::new_std!(I2cDriver = i2c).unwrap();
+
+    // LED status
+    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
+    led.display_none()?;
+
+    // Button inputs (reserved for manual control)
+    let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap();
+    let ccw_button = PinDriver::input(peripherals.pins.gpio4).unwrap();
+    let cw_button = PinDriver::input(peripherals.pins.gpio6).unwrap();
+
+    // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
+
+    // Init motion early so that maintenance mode can use it
+    // Motion (motor, encoder, relay, limit switch)
+    let mut motion = Motion::new(
+        peripherals.pins.gpio15,
+        peripherals.pins.gpio16,
+        peripherals.pins.gpio17,
+        peripherals.pins.gpio14,
+        encoder_a,
+        encoder_b,
+    );
+
+    motion.init();
+    let _ = motion.run();
+
+    // Runtime guardrails from switchboard
+    motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
+    motion.set_soft_limits(
+        sw.runtime.guardrails.soft_limits_enabled,
+        sw.runtime.guardrails.soft_limit_min_deg,
+        sw.runtime.guardrails.soft_limit_max_deg,
+    );
+
+    // Capture maintenance mode
+    capture_maintenance_mode(&mut motion, &mut led, maintenance_button, ccw_button, cw_button)?;
 
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
@@ -338,22 +376,7 @@ fn main() -> anyhow::Result<()> {
     // Hardware initialization
     let mut calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
 
-    // LED status
-    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
-
-    // Motion (motor, encoder, relay, limit switch)
-    let mut motion = Motion::new(
-        peripherals.pins.gpio15,
-        peripherals.pins.gpio16,
-        peripherals.pins.gpio17,
-        peripherals.pins.gpio14,
-        encoder_a,
-        encoder_b,
-    );
-
-    motion.init();
     led.display_healthy()?;
-    let _ = motion.run();
 
     // Runtime guardrails from switchboard
     motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
@@ -427,11 +450,6 @@ fn main() -> anyhow::Result<()> {
     let encoder_daily_mode =
         infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
     encoder_fault.set_mode_switched_daily(encoder_daily_mode);
-
-    // Button inputs (reserved for manual control)
-    let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
-    let _eb = PinDriver::input(peripherals.pins.gpio4).unwrap(); // East Button
-    let _wb = PinDriver::input(peripherals.pins.gpio6).unwrap(); // West Button
 
     // Homing policy:
     // - StepperOnly: always home
@@ -828,4 +846,78 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
             false
         }
     }
+}
+
+/// Enters maintenance mode if the maintenance button is held down on startup.
+fn capture_maintenance_mode(
+    motion: &mut Motion,
+    led: &mut Led,
+    maintenance_button: PinDriver<Gpio5, Input>,
+    ccw_button: PinDriver<Gpio4, Input>,
+    cw_button: PinDriver<Gpio6, Input>
+) -> anyhow::Result<()> {
+    if maintenance_button.is_low() {
+        return Ok(());
+    }
+    
+    log::info!("[Maintenance Mode] Begin");
+    led.display_maintenance()?;
+
+    let mut move_direction = None;
+    let mut last_maintenance = maintenance_button.is_high();
+    let mut last_click_time: Option<Instant> = None;
+    const DOUBLE_CLICK_MS: Duration = Duration::from_millis(250);
+
+    loop {
+        let ccw = ccw_button.is_high();
+        let cw = cw_button.is_high();
+        let maintenance = maintenance_button.is_high();
+        let maintenance_pressed = maintenance && !last_maintenance;
+        last_maintenance = maintenance;
+
+        let now = Instant::now();
+
+        // Don't move if CCW and CW are both pressed
+        if ccw && cw {
+            move_direction = None
+        } 
+        // Stop moving if maintenance button is single clicked,
+        // or exit mainenance mode if double clicked
+        else if maintenance_pressed {
+            if let Some(last) = last_click_time {
+                if now.duration_since(last) <= DOUBLE_CLICK_MS {
+                    break;
+                }
+            }
+
+            last_click_time = Some(now);
+            move_direction = None;
+            log::info!("[Maintenance Mode] Not moving");
+        }
+        else if ccw && !cw {
+            move_direction = Some(Direction::Ccw);
+            log::info!("[Maintenance Mode] Moving CCW");
+        } 
+        else if cw && !ccw {
+            move_direction = Some(Direction::Cw);
+            log::info!("[Maintenance Mode] Moving CW");
+        }
+
+        if let Some(direction) = move_direction {
+            match direction {
+                Direction::Ccw => {
+                    led.display_maintenance_moving_ccw()?;
+                    motion.move_by(-30_000);
+                },
+                Direction::Cw => {
+                    led.display_maintenance_moving_cw()?;
+                    motion.move_by(30_000);
+                }
+            }
+            led.display_maintenance()?;
+        }
+    }
+
+    log::info!("[Maintenance Mode] Exit, continuing normal boot");
+    led.display_none()
 }

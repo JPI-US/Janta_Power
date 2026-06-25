@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed run profile in `ds323x`.
 
 ## Added
+- Implemented maintenance buttons. 
+  - Holding maintenance button on startup enters maintenance mode, indicated by a solid blue LED. 
+  - Pressing East or West begins movement, indicated by a magenta or teal LED, respectively.
+  - Holding maintenance button while moving stops movement.
+  - Double pressing maintenance button while not moving exits and continues normal boot.
 - Added example precommit hook to ensure code is formatted with `cargo fmt` before committing.
 - Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
 
@@ -25,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Properly return errors instead of ignoring them.
 
 ## Changed
+- Moved motor and button initialization to the beginning of `main`.
+- Changed `east_button` to `ccw_button` and `west_button` to `cw_button`.
 - Suppressed dead code warnings.
 - Small code style changes.
 - Explicitly import `option::None` in `clock` and `main` to fix a strange warning.
