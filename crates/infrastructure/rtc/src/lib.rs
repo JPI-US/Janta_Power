@@ -116,7 +116,9 @@ impl Rtc {
                     "NTP sync failed after {}s — status: {:?}",
                     NTP_TIMEOUT_SECS, status
                 );
-                panic!("Unrecoverable: RTC invalid and NTP sync timed out — cannot determine time.");
+                panic!(
+                    "Unrecoverable: RTC invalid and NTP sync timed out — cannot determine time."
+                );
             }
 
             info!(

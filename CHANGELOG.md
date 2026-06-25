@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `mock_i2c_port.rs` and `i2c` tests that were causing errors.
 - Removed `ds323x` tests that were causing errors.
 
+## Added
+- Added example precommit hook to ensure code is formatted with `cargo fmt` before committing.
+
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.
 - Fixed import in `driver.rs` being wrongly flagged as unused.
@@ -23,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Small code style changes.
 - Explicitly import `option::None` in `clock` to fix a strange warning.
 - Moved `motion` and `rtc` into `crates/`.
+- Ran `cargo fmt`.
 
 ## [1.1.3] - 2026-04-23
 

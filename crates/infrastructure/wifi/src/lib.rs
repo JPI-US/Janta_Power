@@ -1,21 +1,16 @@
 pub mod wifi {
     use anyhow;
-    use log::*;
+    use esp_idf_svc::eventloop::EspSystemEventLoop;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
     use esp_idf_svc::wifi::{
-        AuthMethod,
-        BlockingWifi, 
-        ClientConfiguration,
-        Configuration,
-        EspWifi, 
-        PmfConfiguration,
+        AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, PmfConfiguration,
         ScanMethod,
         /*  WifiWait*/
     };
-    use esp_idf_svc::eventloop::EspSystemEventLoop;
-    use esp_idf_svc::nvs::EspDefaultNvsPartition;
-    use std::time::Duration;
+    use log::*;
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
+    use std::time::Duration;
 
     /// Represents Wi-Fi connection states
     #[derive(Debug, PartialEq)]
@@ -44,14 +39,14 @@ pub mod wifi {
 
         /// Configure and connect to a Wi-Fi network
         pub fn connect(&mut self, ssid: &str, pass: &str) -> anyhow::Result<()> {
-            self.inner.set_configuration(&Configuration::Client(
-                ClientConfiguration {
-                    ssid: { 
+            self.inner
+                .set_configuration(&Configuration::Client(ClientConfiguration {
+                    ssid: {
                         let mut s = heapless::String::<32>::new();
                         s.push_str(ssid).unwrap();
                         s
                     },
-                    password: { 
+                    password: {
                         let mut p = heapless::String::<64>::new();
                         p.push_str(pass).unwrap();
                         p
@@ -60,16 +55,14 @@ pub mod wifi {
                     scan_method: ScanMethod::FastScan,
                     pmf_cfg: PmfConfiguration::NotCapable,
                     ..Default::default()
-                },
-            ))?;
+                }))?;
 
             self.inner.start()?;
             self.inner.connect()?;
             self.inner.wait_netif_up()?;
 
-
             // Wait up to 10s for connection
-            thread::sleep(Duration::from_secs(10)); 
+            thread::sleep(Duration::from_secs(10));
 
             if !self.inner.is_connected()? {
                 return Err(anyhow::anyhow!("WiFi connection timeout"));
@@ -90,7 +83,7 @@ pub mod wifi {
             }
         }
 
-        pub fn reconnect_if_disconnected(&mut self) -> anyhow::Result<()>{
+        pub fn reconnect_if_disconnected(&mut self) -> anyhow::Result<()> {
             // Check if the Wi-Fi is disconnected
             if self.state() == WifiState::Disconnected {
                 // Attempt to reconnect

@@ -20,9 +20,7 @@ pub fn error_loop(
     notes: &str,
 ) -> ! {
     loop {
-        let now = rtc::timezone::local_time()
-            .format(TIME_FORMAT)
-            .to_string();
+        let now = rtc::timezone::local_time().format(TIME_FORMAT).to_string();
         let _ = publish_error(mqtt, device_id, &now, component, message, notes);
         std::thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
     }

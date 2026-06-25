@@ -103,11 +103,7 @@ where
     }
 
     /// Handle any messages with a timeout
-    pub fn handle_all_messages(
-        &mut self,
-        delay: &mut impl DelayNs,
-        timeout_ms: u8,
-    ) -> u32 {
+    pub fn handle_all_messages(&mut self, delay: &mut impl DelayNs, timeout_ms: u8) -> u32 {
         let mut total_handled: u32 = 0;
         loop {
             let handled_count = self.handle_one_message(delay, timeout_ms);
@@ -123,11 +119,7 @@ where
     }
 
     /// return the number of messages handled
-    pub fn handle_one_message(
-        &mut self,
-        delay: &mut impl DelayNs,
-        max_ms: u8,
-    ) -> u32 {
+    pub fn handle_one_message(&mut self, delay: &mut impl DelayNs, max_ms: u8) -> u32 {
         let mut msg_count = 0;
 
         let res = self.receive_packet_with_timeout(delay, max_ms);
@@ -226,17 +218,12 @@ where
         while outer_cursor < payload_len {
             //let start_cursor = outer_cursor;
             let (inner_cursor, report_id, data1, data2, data3, data4, data5) =
-                Self::handle_one_input_report(
-                    outer_cursor,
-                    &self.packet_recv_buf[..received_len],
-                );
+                Self::handle_one_input_report(outer_cursor, &self.packet_recv_buf[..received_len]);
             outer_cursor = inner_cursor;
             // report_count += 1;
             match report_id {
                 SENSOR_REPORTID_ROTATION_VECTOR => {
-                    self.update_rotation_quaternion(
-                        data1, data2, data3, data4, data5,
-                    );
+                    self.update_rotation_quaternion(data1, data2, data3, data4, data5);
                 }
                 _ => {
                     // debug_println!("uhr: {:X}", report_id);
@@ -250,14 +237,7 @@ where
 
     /// Given a set of quaternion values in the Q-fixed-point format,
     /// calculate and update the corresponding float values
-    fn update_rotation_quaternion(
-        &mut self,
-        q_i: i16,
-        q_j: i16,
-        q_k: i16,
-        q_r: i16,
-        q_a: i16,
-    ) {
+    fn update_rotation_quaternion(&mut self, q_i: i16, q_j: i16, q_k: i16, q_r: i16, q_a: i16) {
         //println!("rquat {} {} {} {} {}", q_i, q_j, q_k, q_r, q_a);
         self.rotation_quaternion = [
             q14_to_f32(q_i),
@@ -339,10 +319,7 @@ where
 
     /// The BNO080 starts up with all sensors disabled,
     /// waiting for the application to configure it.
-    pub fn init(
-        &mut self,
-        delay_source: &mut impl DelayNs,
-    ) -> Result<(), WrapperError<SE>> {
+    pub fn init(&mut self, delay_source: &mut impl DelayNs) -> Result<(), WrapperError<SE>> {
         // #[cfg(feature = "rttdebug")]
         // rprintln!("wrapper init");
 
@@ -374,10 +351,7 @@ where
         Ok(())
     }
 
-    pub fn set_zero(
-        &mut self,
-        delay_source: &mut impl DelayNs,
-    ) -> Result<(), WrapperError<SE>> {
+    pub fn set_zero(&mut self, delay_source: &mut impl DelayNs) -> Result<(), WrapperError<SE>> {
         delay_source.delay_ms(1u32);
         delay_source.delay_ms(1u32);
         self.soft_reset()?;
@@ -395,10 +369,7 @@ where
         &mut self,
         millis_between_reports: u16,
     ) -> Result<(), WrapperError<SE>> {
-        self.enable_report(
-            SENSOR_REPORTID_ROTATION_VECTOR,
-            millis_between_reports,
-        )
+        self.enable_report(SENSOR_REPORTID_ROTATION_VECTOR, millis_between_reports)
     }
 
     /// Enable a particular report
@@ -410,8 +381,7 @@ where
         // #[cfg(feature = "rttdebug")]
         // rprintln!("enable_report 0x{:X}", report_id);
 
-        let micros_between_reports: u32 =
-            (millis_between_reports as u32) * 1000;
+        let micros_between_reports: u32 = (millis_between_reports as u32) * 1000;
         let cmd_body: [u8; 17] = [
             SHUB_REPORT_SET_FEATURE_CMD,
             report_id,
@@ -422,7 +392,7 @@ where
             (micros_between_reports.shr(8) & 0xFFu32) as u8,
             (micros_between_reports.shr(16) & 0xFFu32) as u8,
             (micros_between_reports.shr(24) & 0xFFu32) as u8, // MSB report interval
-            0, // LSB Batch Interval
+            0,                                                // LSB Batch Interval
             0,
             0,
             0, // MSB Batch interval
@@ -452,20 +422,14 @@ where
         ];
         self.sequence_numbers[channel as usize] += 1;
 
-        self.packet_send_buf[..PACKET_HEADER_LENGTH]
-            .copy_from_slice(packet_header.as_ref());
-        self.packet_send_buf[PACKET_HEADER_LENGTH..packet_length]
-            .copy_from_slice(body_data);
+        self.packet_send_buf[..PACKET_HEADER_LENGTH].copy_from_slice(packet_header.as_ref());
+        self.packet_send_buf[PACKET_HEADER_LENGTH..packet_length].copy_from_slice(body_data);
 
         packet_length
     }
 
     /// Send packet from our packet send buf
-    fn send_packet(
-        &mut self,
-        channel: u8,
-        body_data: &[u8],
-    ) -> Result<usize, WrapperError<SE>> {
+    fn send_packet(&mut self, channel: u8, body_data: &[u8]) -> Result<usize, WrapperError<SE>> {
         let packet_length = self.prep_send_packet(channel, body_data);
         self.sensor_interface
             .write_packet(&self.packet_send_buf[..packet_length])
@@ -497,10 +461,7 @@ where
     }
 
     /// Verify that the sensor returns an expected chip ID
-    fn verify_product_id(
-        &mut self,
-        delay: &mut impl DelayNs,
-    ) -> Result<(), WrapperError<SE>> {
+    fn verify_product_id(&mut self, delay: &mut impl DelayNs) -> Result<(), WrapperError<SE>> {
         let cmd_body: [u8; 2] = [
             SHUB_PROD_ID_REQ, //request product ID
             0,                //reserved
@@ -510,10 +471,8 @@ where
         if self.sensor_interface.requires_soft_reset() {
             self.send_packet(CHANNEL_HUB_CONTROL, cmd_body.as_ref())?;
         } else {
-            let response_size = self.send_and_receive_packet(
-                CHANNEL_HUB_CONTROL,
-                cmd_body.as_ref(),
-            )?;
+            let response_size =
+                self.send_and_receive_packet(CHANNEL_HUB_CONTROL, cmd_body.as_ref())?;
             if response_size > 0 {
                 self.handle_received_packet(response_size);
             }
@@ -554,8 +513,7 @@ where
         // rprintln!("soft_reset");
         let data: [u8; 1] = [EXECUTABLE_DEVICE_CMD_RESET];
         // send command packet and ignore received packets
-        let received_len =
-            self.send_and_receive_packet(CHANNEL_EXECUTABLE, data.as_ref())?;
+        let received_len = self.send_and_receive_packet(CHANNEL_EXECUTABLE, data.as_ref())?;
         if received_len > 0 {
             self.handle_received_packet(received_len);
         }
@@ -667,5 +625,4 @@ const EXECUTABLE_DEVICE_RESP_RESET_COMPLETE: u8 = 1;
 const SH2_INIT_UNSOLICITED: u8 = 0x80;
 const SH2_CMD_INITIALIZE: u8 = 4;
 const SH2_INIT_SYSTEM: u8 = 1;
-const SH2_STARTUP_INIT_UNSOLICITED: u8 =
-    SH2_CMD_INITIALIZE | SH2_INIT_UNSOLICITED;
+const SH2_STARTUP_INIT_UNSOLICITED: u8 = SH2_CMD_INITIALIZE | SH2_INIT_UNSOLICITED;

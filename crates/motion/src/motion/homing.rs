@@ -14,7 +14,7 @@ impl Motion<'_> {
     }
 
     // Ensure adjusted ticks are zeroed when we are physically on the switch.
-// IF YOU SEEING THIS NEEZ OR SALLA THEN PLEASE READ THIS VERY CAREFULLY
+    // IF YOU SEEING THIS NEEZ OR SALLA THEN PLEASE READ THIS VERY CAREFULLY
     // INVARIANT — DO NOT REORDER THE THREE NUMBERED STEPS BELOW.
     // The end-of-day encoder drift metric (published to
     // `tower/{id}/data/encoder_error_ticks`) depends on this exact sequence:
@@ -90,13 +90,15 @@ impl Motion<'_> {
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
         // Firmware is currently CCW-only for homing.
-        log::warn!("Homing requested CW, but firmware is configured for CCW-only homing; using CCW search");
+        log::warn!(
+            "Homing requested CW, but firmware is configured for CCW-only homing; using CCW search"
+        );
         self.find_limit_switch_ccw()
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
         use super::HOME_HEADING_DEG;
-        
+
         // Disable overshoot checks while homing.
         self.is_homing = true;
 
@@ -145,4 +147,3 @@ impl Motion<'_> {
         false
     }
 }
-

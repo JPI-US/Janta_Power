@@ -1,14 +1,19 @@
 use anyhow::Result;
-use log::*;
 use esp_idf_svc::{
-    mqtt::client::{
-    EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
+    mqtt::client::{EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
     tls::X509,
 };
-use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread};
+use log::*;
+use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::time::Duration;
-use std::collections::VecDeque;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+};
 pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,
@@ -42,11 +47,7 @@ const DEVICE_CERT: &CStr = unsafe {
 const PRIVATE_KEY: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
         concat!(
-            include_str!(concat!(
-                "../tower_",
-                env!("DEVICE_ID"),
-                "-private.pem.key"
-            )),
+            include_str!(concat!("../tower_", env!("DEVICE_ID"), "-private.pem.key")),
             "\0"
         )
         .as_bytes(),
@@ -75,10 +76,7 @@ impl Mqtt {
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
 
-        let (client, mut connection) = EspMqttClient::new(
-            broker_url,
-            &mqtt_config,
-        )?;
+        let (client, mut connection) = EspMqttClient::new(broker_url, &mqtt_config)?;
         info!("MQTT client created successfully!");
 
         thread::spawn(move || {
@@ -120,7 +118,10 @@ impl Mqtt {
         let start = std::time::Instant::now();
         while !self.connected.load(Ordering::SeqCst) {
             if start.elapsed().as_millis() > timeout_ms as u128 {
-                return Err(anyhow::anyhow!("MQTT connection timeout after {}ms", timeout_ms));
+                return Err(anyhow::anyhow!(
+                    "MQTT connection timeout after {}ms",
+                    timeout_ms
+                ));
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -132,7 +133,8 @@ impl Mqtt {
             return Err(anyhow::anyhow!("MQTT client not connected"));
         }
         info!("Attempting to publish message to topic...");
-        self.client.publish(topic, QoS::AtLeastOnce, false, payload)?;
+        self.client
+            .publish(topic, QoS::AtLeastOnce, false, payload)?;
         info!("Initial message published successfully!");
         Ok(())
     }

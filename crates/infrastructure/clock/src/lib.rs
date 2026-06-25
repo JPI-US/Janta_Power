@@ -1,7 +1,7 @@
 pub mod clock {
     use core::option::Option::None;
 
-use chrono::prelude::*;
+    use chrono::prelude::*;
     use ds323x::{DateTimeAccess, Ds323x, Rtcc};
 
     pub struct Clock<I2C> {

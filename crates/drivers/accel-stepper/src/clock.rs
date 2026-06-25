@@ -11,7 +11,9 @@ pub trait SystemClock {
 }
 
 impl<'a, C: SystemClock> SystemClock for &'a C {
-    fn elapsed(&self) -> Duration { (*self).elapsed() }
+    fn elapsed(&self) -> Duration {
+        (*self).elapsed()
+    }
 }
 
 /// A monotonically non-decreasing clock backed by the operating system.
@@ -25,12 +27,16 @@ pub struct OperatingSystemClock {
 
 #[cfg(feature = "std")]
 impl OperatingSystemClock {
-    pub fn new() -> OperatingSystemClock { OperatingSystemClock::default() }
+    pub fn new() -> OperatingSystemClock {
+        OperatingSystemClock::default()
+    }
 }
 
 #[cfg(feature = "std")]
 impl SystemClock for OperatingSystemClock {
-    fn elapsed(&self) -> Duration { self.created_at.elapsed() }
+    fn elapsed(&self) -> Duration {
+        self.created_at.elapsed()
+    }
 }
 
 #[cfg(feature = "std")]

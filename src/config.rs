@@ -1,7 +1,7 @@
-use toml;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use toml;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -101,4 +101,4 @@ impl Config {
     pub fn get_timezone_offset(&self) -> i32 {
         self.location.timezone_offset_hours
     }
-} 
+}

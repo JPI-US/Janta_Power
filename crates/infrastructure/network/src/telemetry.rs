@@ -54,10 +54,7 @@ pub mod topic {
     }
 
     pub fn component_status(device_id: &str, component: Component) -> String {
-        format!(
-            "tower/{device_id}/component/{}/status",
-            component.as_str()
-        )
+        format!("tower/{device_id}/component/{}/status", component.as_str())
     }
 }
 

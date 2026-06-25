@@ -1,8 +1,8 @@
 // Encoder helpers for Motion.
 
 use super::{
-    Motion, MoveOutcome, ENC_TICKS_PER_REV, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
-    ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
+    Motion, MoveOutcome, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
+    ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS, ENC_TICKS_PER_REV,
 };
 
 // Output-shaft encoder calibration from build-time constants.
@@ -50,7 +50,7 @@ impl Motion<'_> {
 
         let end_ticks = self.encoder_ticks_adjusted();
         let encoder_ticks_moved = (end_ticks - start_ticks).abs();
-        
+
         // Probe threshold is intentionally looser than runtime stall checks.
         let min_expected_ticks = if probe_steps.abs() == ENCODER_PROBE_STEPS {
             ENCODER_PROBE_MIN_TICKS
@@ -59,7 +59,7 @@ impl Motion<'_> {
                 * ENCODER_STALL_MIN_TICKS as f64)
                 .ceil() as i32
         };
-        
+
         let moved = encoder_ticks_moved >= min_expected_ticks;
         log::info!(
             "Encoder probe complete: start_ticks={} end_ticks={} ticks_moved={} min_expected={} passed={}",
@@ -72,4 +72,3 @@ impl Motion<'_> {
         moved
     }
 }
-

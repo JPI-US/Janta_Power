@@ -43,9 +43,11 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             }
             motion::MoveOutcome::Completed
         }
-        Some(outcome @ (motion::MoveOutcome::AbortedPowerMissing | motion::MoveOutcome::AbortedStall | motion::MoveOutcome::AbortedOvershoot)) => {
-            outcome
-        }
+        Some(
+            outcome @ (motion::MoveOutcome::AbortedPowerMissing
+            | motion::MoveOutcome::AbortedStall
+            | motion::MoveOutcome::AbortedOvershoot),
+        ) => outcome,
         None => {
             // No movement needed; treat as completed without writing NVS.
             if !tracking_done {
@@ -55,4 +57,3 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
         }
     }
 }
-

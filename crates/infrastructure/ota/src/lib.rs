@@ -1,38 +1,29 @@
 //use std::io::{Read, Write};
-use esp_idf_svc::{
-    nvs::EspNvs,
-    ota::EspOta,
-    nvs::*,
-};
-use esp_idf_svc::http::client::{EspHttpConnection, Configuration as HttpConfiguration};
-use semver::Version;
-use serde_json::Value;
+use base64::{engine::general_purpose, Engine as _};
+use embedded_svc::http::client::{Client as HttpClient, Method};
+use esp_idf_svc::http::client::{Configuration as HttpConfiguration, EspHttpConnection};
 use esp_idf_svc::sys::esp_crt_bundle_attach;
-use embedded_svc::{
-    http::client::{
-        Client as HttpClient,
-        Method,
-    }, 
-}; 
-use base64::{engine::general_purpose, Engine as _}; // for Basic Auth header
-// use ota::OtaPartition; // hypothetical struct from ota crate
+use esp_idf_svc::{nvs::EspNvs, nvs::*, ota::EspOta};
+use semver::Version;
+use serde_json::Value; // for Basic Auth header
+                       // use ota::OtaPartition; // hypothetical struct from ota crate
 use anyhow::Result;
+use esp_idf_svc::io::Error;
 use log::*;
 use network::mqtt::Mqtt;
+use sha2::{Digest, Sha256};
+use std::result::Result::Ok;
 use std::thread;
 use std::time::Duration;
-use std::result::Result::Ok;
-use esp_idf_svc::io::Error; 
-use sha2::{Sha256, Digest};
 
 pub struct OtaUpdater<'a> {
-    current_version: Version, 
+    current_version: Version,
     #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     mqtt_client: &'a mut Mqtt,
     device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
-    username: Option<String>, 
-    password: Option<String>, 
+    username: Option<String>,
+    password: Option<String>,
     #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     default_headers: Vec<(&'static str, &'static str)>,
 }
@@ -83,20 +74,20 @@ impl<'a> OtaUpdater<'a> {
             buffer_size: Some(1024),
             timeout: Some(Duration::from_secs(60)),
             crt_bundle_attach: Some(esp_crt_bundle_attach),
-            use_global_ca_store: true, 
+            use_global_ca_store: true,
             ..Default::default()
         })?;
         Ok(HttpClient::wrap(config))
     }  */
 
     // Function for requesting the version text file from the server
-    fn get_remote_version(& mut self, url: &str) -> Result<Value> {
-        const MAX_RETRIES: usize = 3; 
-        const RETRY_DELAY: Duration = Duration::from_secs(2); 
+    fn get_remote_version(&mut self, url: &str) -> Result<Value> {
+        const MAX_RETRIES: usize = 3;
+        const RETRY_DELAY: Duration = Duration::from_secs(2);
 
-        for attempt in 1..=MAX_RETRIES { 
-            info!("Attempt {} to fetch remote version...", attempt);            
-            
+        for attempt in 1..=MAX_RETRIES {
+            info!("Attempt {} to fetch remote version...", attempt);
+
             // Recreate the HTTP client for each attempt
             let mut headers = vec![("accept", "application/json")];
             if let Some((key, value)) = self.build_auth_header() {
@@ -118,7 +109,7 @@ impl<'a> OtaUpdater<'a> {
             };
 
             // Create a new request
-            match request.submit(){
+            match request.submit() {
                 Ok(mut response) => {
                     let status = response.status();
                     info!("HTTP status: {}", status);
@@ -154,11 +145,13 @@ impl<'a> OtaUpdater<'a> {
                 }
             }
         }
-        return Err(anyhow::anyhow!("Failed to fetch remote version after {} attempts", MAX_RETRIES))
+        return Err(anyhow::anyhow!(
+            "Failed to fetch remote version after {} attempts",
+            MAX_RETRIES
+        ));
     }
 
     pub fn run_version_compare<T: NvsPartitionId>(&mut self, nvs: &mut EspNvs<T>) -> Result<()> {
-
         // Retrieve remote version metadata for this tower.
         let metadata_url = format!(
             "https://firmware.jantaus.com/firmware/test2/metadata{}.json",
@@ -188,7 +181,9 @@ impl<'a> OtaUpdater<'a> {
         let remote_url = remote_json
             .get("download_url")
             .and_then(|u| u.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'download_url' field in remote JSON"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Missing or invalid 'download_url' field in remote JSON")
+            })?
             .trim()
             .to_string();
 
@@ -205,7 +200,9 @@ impl<'a> OtaUpdater<'a> {
             .to_string();
 
         if remote_sha256.len() != 64 {
-            return Err(anyhow::anyhow!("'sha256' must be exactly 64 hex characters"));
+            return Err(anyhow::anyhow!(
+                "'sha256' must be exactly 64 hex characters"
+            ));
         }
 
         if hex::decode(&remote_sha256).is_err() {
@@ -215,19 +212,27 @@ impl<'a> OtaUpdater<'a> {
         // TODO: Verify digital signature if present (strongly recommended!)
 
         info!("Here is the current remote version: {remote_version}");
-        info!("Here is the current firmware version: {}", self.current_version);
+        info!(
+            "Here is the current firmware version: {}",
+            self.current_version
+        );
 
         info!("Here is the current download url: {remote_url}");
         info!("Here is the current sha256: {remote_sha256}");
         info!("Here is the current download size: {remote_size}");
 
-        if remote_version > self.current_version { 
+        if remote_version > self.current_version {
             info!("New firmware version detected!");
 
             // Run firmware update
             info!("Waiting 5 seconds before running firmware download...");
-            thread::sleep(Duration::from_secs(5)); 
-            let flash_download = self.run_update(remote_url, remote_version.clone(), remote_sha256, remote_size);
+            thread::sleep(Duration::from_secs(5));
+            let flash_download = self.run_update(
+                remote_url,
+                remote_version.clone(),
+                remote_sha256,
+                remote_size,
+            );
 
             match flash_download {
                 Ok(_) => {
@@ -253,22 +258,33 @@ impl<'a> OtaUpdater<'a> {
                     return Err(anyhow::anyhow!("Firmware download failed: {:?}", e));
                 }
             }
-        }
-        else {
-            info!("Firmware already up to date: {}", self.current_version );
+        } else {
+            info!("Firmware already up to date: {}", self.current_version);
         }
         Ok(())
     }
 
     // Function for downloading the binary file
-    fn run_update(&mut self, remote_url: String, remote_version: Version, remote_sha256: String, remote_size: u64) -> Result<()> {
-        info!("Attempting to download and installing new version {}", remote_version);
+    fn run_update(
+        &mut self,
+        remote_url: String,
+        remote_version: Version,
+        remote_sha256: String,
+        remote_size: u64,
+    ) -> Result<()> {
+        info!(
+            "Attempting to download and installing new version {}",
+            remote_version
+        );
 
         //let mut response = self.get_firmware(&remote_url)?;
         // Stream firmware directly using existing client
         let mut headers = vec![("accept", "application/octet-stream")];
         if let Some((key, value)) = self.build_auth_header() {
-            headers.push((Box::leak(key.into_boxed_str()), Box::leak(value.into_boxed_str())));
+            headers.push((
+                Box::leak(key.into_boxed_str()),
+                Box::leak(value.into_boxed_str()),
+            ));
         }
 
         let request = self.client.request(Method::Get, &remote_url, &headers)?;
@@ -278,7 +294,7 @@ impl<'a> OtaUpdater<'a> {
         if !(200..300).contains(&status) {
             return Err(anyhow::anyhow!("Non-success HTTP status: {}", status));
         }
-        
+
         // Gets an instance of OTA
         let mut ota = EspOta::new().expect("Failed to obtain OTA instance!");
         info!("Obtained OTA instance");
@@ -288,20 +304,26 @@ impl<'a> OtaUpdater<'a> {
         let update_partition = EspOta::get_update_slot(&ota)?;
 
         info!("This is the running boot slot {:?}", find_running_slot);
-        info!("This is the next boot slot where a new update will be saved {:?}", update_partition);
+        info!(
+            "This is the next boot slot where a new update will be saved {:?}",
+            update_partition
+        );
 
         // Initialise ota update
         info!("Waiting for 5 seconds before initiating OTA update");
         thread::sleep(Duration::from_secs(5));
-        let mut update = Some(ota.initiate_update().expect("Failed to initiate OTA update!"));
+        let mut update = Some(
+            ota.initiate_update()
+                .expect("Failed to initiate OTA update!"),
+        );
         info!("OTA update has been initialised");
 
         // Read and write chunks to flash
-        let mut buf = [0u8; 4096]; 
-        
+        let mut buf = [0u8; 4096];
+
         // Setting progress variable
         let mut progress: f64 = 0.0;
-        
+
         loop {
             // Read from the ESP-IDF specific reader
             let bytes_read = match response.read(&mut buf) {
@@ -309,7 +331,7 @@ impl<'a> OtaUpdater<'a> {
                 Ok(n) => n,
                 Err(e) if e.kind() == esp_idf_svc::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()), // Propagate the error
-            }; 
+            };
             info!("Writing {} bytes to flash", bytes_read);
 
             // Write chunk to OTA partition
@@ -323,10 +345,9 @@ impl<'a> OtaUpdater<'a> {
             hasher.update(&buf[..bytes_read]);
 
             // Progress info
-            progress += (bytes_read as f64/remote_size as f64) * 100.0;
+            progress += (bytes_read as f64 / remote_size as f64) * 100.0;
             info!("Progress: {:.2}%", progress);
-
-        };
+        }
         info!("OTA update written, verifying checksum…");
 
         // Finalize hash and compare with expected
@@ -337,7 +358,6 @@ impl<'a> OtaUpdater<'a> {
             .map_err(|_| anyhow::anyhow!("Invalid SHA256 hex string in manifest"))?;
 
         if calculated_sha != expected_sha {
-
             if let Some(u) = update.take() {
                 u.abort()?; // explicitly end OTA
             }
@@ -357,9 +377,8 @@ impl<'a> OtaUpdater<'a> {
 
         //update.complete()?; // Mark firmware as valid         GPT SUGGEST1
         return Ok(());
-
     }
 }
 
 /* info!("Starting http run...");
-    let mut client = Box::new(HttpsClient::new_https(Some("device5"), Some("device5"))?); */
+let mut client = Box::new(HttpsClient::new_https(Some("device5"), Some("device5"))?); */

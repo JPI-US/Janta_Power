@@ -35,10 +35,7 @@ pub struct StepContext {
 ///
 /// See [`fallible_func_device()`] for a version which accepts fallible
 /// callbacks.
-pub fn func_device<F, B, T>(
-    forward: F,
-    backward: B,
-) -> impl Device<Error = Void>
+pub fn func_device<F, B, T>(forward: F, backward: B) -> impl Device<Error = Void>
 where
     F: FnMut() -> T,
     B: FnMut() -> T,
@@ -81,10 +78,7 @@ where
 /// A device which uses callbacks which may fail.
 ///
 /// See [`func_device()`] for a version which uses infallible callbacks.
-pub fn fallible_func_device<F, B, T, E>(
-    forward: F,
-    backward: B,
-) -> impl Device<Error = E>
+pub fn fallible_func_device<F, B, T, E>(forward: F, backward: B) -> impl Device<Error = E>
 where
     F: FnMut() -> Result<T, E>,
     B: FnMut() -> Result<T, E>,

@@ -1,14 +1,16 @@
 // Stepper movement execution and safety checks.
 
-use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
+use super::{
+    Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
+    INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
+};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
     pub fn init(&mut self) {
         self.motor.set_max_speed(self.speed);
         self.motor.set_speed(self.speed);
-        self.motor
-            .set_acceleration(self.acceleration.into());
+        self.motor.set_acceleration(self.acceleration.into());
     }
 
     pub fn take_last_move_outcome(&mut self) -> Option<MoveOutcome> {
@@ -27,7 +29,7 @@ impl Motion<'_> {
         self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
         self.stall_reported = false;
         self.stall_consecutive = 0;
-        
+
         // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
@@ -39,21 +41,26 @@ impl Motion<'_> {
         if self.motion_mode == MotionMode::EncoderGuarded {
             use super::{ENC_TICKS_PER_REV, STEPS_PER_REV};
             self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
-            let expected_ticks = ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
+            let expected_ticks =
+                ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
             self.overshoot_expected_ticks = Some(expected_ticks);
         } else {
             self.overshoot_enc_start = None;
             self.overshoot_expected_ticks = None;
         }
 
-        let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
+        let signed_steps = if INVERT_MOTOR_DIRECTION {
+            -location
+        } else {
+            location
+        };
         self.motor.move_by(signed_steps);
         let outcome = self.run();
-        
+
         // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
-        
+
         self.last_move_outcome = Some(outcome);
         outcome
     }
@@ -69,7 +76,7 @@ impl Motion<'_> {
         self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
         self.stall_reported = false;
         self.stall_consecutive = 0;
-        
+
         // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
@@ -86,14 +93,18 @@ impl Motion<'_> {
             self.overshoot_expected_ticks = None;
         }
 
-        let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
+        let signed_steps = if INVERT_MOTOR_DIRECTION {
+            -location
+        } else {
+            location
+        };
         self.motor.move_by(signed_steps);
         let outcome = self.run();
-        
+
         // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
-        
+
         self.last_move_outcome = Some(outcome);
         outcome
     }
@@ -157,17 +168,17 @@ impl Motion<'_> {
                 }
 
                 // Ratio stall detector: every interval must produce minimum tick movement.
-                if self.motion_mode == MotionMode::EncoderGuarded
-                    && self.stall_detection_enabled
-                {
+                if self.motion_mode == MotionMode::EncoderGuarded && self.stall_detection_enabled {
                     let current_step_pos = self.motor.current_position();
                     let current_encoder_ticks = self.encoder_ticks_adjusted();
-                    
-                    let total_steps_moved = (current_step_pos - self.stall_check_start_step_pos).abs();
-                    
+
+                    let total_steps_moved =
+                        (current_step_pos - self.stall_check_start_step_pos).abs();
+
                     if total_steps_moved >= ENCODER_STALL_CHECK_INTERVAL_STEPS {
-                        let encoder_ticks_moved = (current_encoder_ticks - self.stall_check_start_encoder_ticks).abs();
-                        
+                        let encoder_ticks_moved =
+                            (current_encoder_ticks - self.stall_check_start_encoder_ticks).abs();
+
                         if encoder_ticks_moved < ENCODER_STALL_MIN_TICKS {
                             log::error!(
                                 "MOVE_ABORT ratio_stall_detected: total_steps={} encoder_ticks={} (minimum required={})",
@@ -180,7 +191,7 @@ impl Motion<'_> {
                             self.relay_off(); // Turn relay OFF on stall abort
                             return MoveOutcome::AbortedStall;
                         }
-                        
+
                         self.stall_check_start_encoder_ticks = current_encoder_ticks;
                         self.stall_check_start_step_pos = current_step_pos;
                         self.stall_check_last_interval_step = current_step_pos;
@@ -224,10 +235,12 @@ impl Motion<'_> {
 
                 // Capture home error and zero encoder on switch events.
                 self.poll_limit_switch_zeroing();
-                
+
                 // During homing, stop immediately once switch is pressed.
                 if self.is_homing && self.lmsw.is_low() {
-                    log::info!("Limit switch pressed during homing - found home, stopping immediately");
+                    log::info!(
+                        "Limit switch pressed during homing - found home, stopping immediately"
+                    );
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos);
                     self.relay_off();
@@ -256,4 +269,3 @@ impl Motion<'_> {
         MoveOutcome::Completed
     }
 }
-

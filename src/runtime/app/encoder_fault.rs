@@ -65,12 +65,12 @@ impl EncoderFaultRecovery {
             mode_switched_daily: false,
         }
     }
-    
+
     #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn mode_switched_daily(&self) -> bool {
         self.mode_switched_daily
     }
-    
+
     pub fn set_mode_switched_daily(&mut self, value: bool) {
         self.mode_switched_daily = value;
     }
@@ -91,7 +91,8 @@ impl EncoderFaultRecovery {
         if outcome == MoveOutcome::AbortedStall || outcome == MoveOutcome::AbortedOvershoot {
             log::warn!("Encoder fault detected, starting recovery probes");
             self.active = true;
-            self.next_probe_at = Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
+            self.next_probe_at =
+                Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
         }
         Ok(())
     }
@@ -147,7 +148,11 @@ impl EncoderFaultRecovery {
         let ok = motion.probe_encoder_motion(cfg.probe_steps);
         if !ok {
             self.probe_failure_count += 1;
-            log::warn!("Encoder probe failed (probe_failure_count={}/{})", self.probe_failure_count, MAX_PROBE_FAILURES);
+            log::warn!(
+                "Encoder probe failed (probe_failure_count={}/{})",
+                self.probe_failure_count,
+                MAX_PROBE_FAILURES
+            );
 
             if self.probe_failure_count >= MAX_PROBE_FAILURES {
                 log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
@@ -161,7 +166,9 @@ impl EncoderFaultRecovery {
             return Ok(true);
         }
 
-        log::info!("Encoder probe succeeded; recomputing heading from encoder and resuming tracking.");
+        log::info!(
+            "Encoder probe succeeded; recomputing heading from encoder and resuming tracking."
+        );
         self.active = false;
         self.next_probe_at = None;
         self.probe_failure_count = 0;
@@ -249,9 +256,7 @@ impl EncoderFaultRecovery {
     ) -> anyhow::Result<()> {
         motion.set_motion_mode(MotionMode::StepperOnly);
 
-        let current_date = rtc::timezone::local_time()
-            .format("%Y-%m-%d")
-            .to_string();
+        let current_date = rtc::timezone::local_time().format("%Y-%m-%d").to_string();
 
         if persist_nvs {
             SnapshotStore::new(nvs, persist_nvs).save_tracking_mode(MotionMode::StepperOnly);
@@ -293,4 +298,3 @@ fn angle_diff_deg(a: f32, b: f32) -> f32 {
     }
     d.abs()
 }
-

@@ -59,8 +59,7 @@ where
         total_packet_len: usize,
         packet_recv_buf: &mut [u8],
     ) -> Result<usize, I2C::Error> {
-        let mut remaining_body_len: usize =
-            total_packet_len - PACKET_HEADER_LENGTH;
+        let mut remaining_body_len: usize = total_packet_len - PACKET_HEADER_LENGTH;
         let mut already_read_len: usize = 0;
 
         // zero packet header receive buffer
@@ -75,37 +74,28 @@ where
             //read directly into the provided receive buffer
             if total_packet_len > 0 {
                 self.i2c_port
-                    .read(
-                        self.address,
-                        &mut packet_recv_buf[..total_packet_len],
-                    )
+                    .read(self.address, &mut packet_recv_buf[..total_packet_len])
                     .unwrap();
                 already_read_len = total_packet_len;
             }
         } else {
             while remaining_body_len > 0 {
-                let whole_segment_length =
-                    remaining_body_len + PACKET_HEADER_LENGTH;
-                let segment_read_len =
-                    if whole_segment_length > MAX_SEGMENT_READ {
-                        MAX_SEGMENT_READ
-                    } else {
-                        whole_segment_length
-                    };
+                let whole_segment_length = remaining_body_len + PACKET_HEADER_LENGTH;
+                let segment_read_len = if whole_segment_length > MAX_SEGMENT_READ {
+                    MAX_SEGMENT_READ
+                } else {
+                    whole_segment_length
+                };
                 // #[cfg(feature = "rttdebug")]
                 // rprintln!("r.s {:x} {}", self.address, segment_read_len);
 
                 self.zero_recv_packet_header();
                 self.i2c_port
-                    .read(
-                        self.address,
-                        &mut self.seg_recv_buf[..segment_read_len],
-                    )
+                    .read(self.address, &mut self.seg_recv_buf[..segment_read_len])
                     .unwrap();
 
-                let promised_packet_len = SensorCommon::parse_packet_header(
-                    &self.seg_recv_buf[..PACKET_HEADER_LENGTH],
-                );
+                let promised_packet_len =
+                    SensorCommon::parse_packet_header(&self.seg_recv_buf[..PACKET_HEADER_LENGTH]);
                 if promised_packet_len <= PACKET_HEADER_LENGTH {
                     return Ok(0);
                 }
@@ -122,11 +112,10 @@ where
                 } else {
                     segment_read_len
                 };
-                packet_recv_buf
-                    [already_read_len..already_read_len + transcribe_len]
+                packet_recv_buf[already_read_len..already_read_len + transcribe_len]
                     .copy_from_slice(
-                        &self.seg_recv_buf[transcribe_start_idx
-                            ..transcribe_start_idx + transcribe_len],
+                        &self.seg_recv_buf
+                            [transcribe_start_idx..transcribe_start_idx + transcribe_len],
                     );
                 already_read_len += transcribe_len;
 
@@ -159,10 +148,7 @@ where
         false
     }
 
-    fn setup(
-        &mut self,
-        delay_source: &mut impl DelayNs,
-    ) -> Result<(), Self::SensorError> {
+    fn setup(&mut self, delay_source: &mut impl DelayNs) -> Result<(), Self::SensorError> {
         // #[cfg(feature = "rttdebug")]
         // rprintln!("i2c setup");
         delay_source.delay_ms(5);
@@ -200,17 +186,13 @@ where
     }
 
     /// Read one packet into the receive buffer
-    fn read_packet(
-        &mut self,
-        recv_buf: &mut [u8],
-    ) -> Result<usize, Self::SensorError> {
+    fn read_packet(&mut self, recv_buf: &mut [u8]) -> Result<usize, Self::SensorError> {
         // #[cfg(feature = "rttdebug")]
         // rprintln!("rpkt");
 
         self.read_packet_header()?;
-        let packet_len = SensorCommon::parse_packet_header(
-            &self.seg_recv_buf[..PACKET_HEADER_LENGTH],
-        );
+        let packet_len =
+            SensorCommon::parse_packet_header(&self.seg_recv_buf[..PACKET_HEADER_LENGTH]);
 
         // if packet_len == 0 {
         //     #[cfg(feature = "rttdebug")]
@@ -245,14 +227,11 @@ where
         //stall before attempted read?
         Self::zero_buffer(recv_buf);
 
-        self.i2c_port.read(
-            self.address,
-            &mut self.seg_recv_buf[..PACKET_HEADER_LENGTH],
-        )?;
+        self.i2c_port
+            .read(self.address, &mut self.seg_recv_buf[..PACKET_HEADER_LENGTH])?;
 
-        let packet_len = SensorCommon::parse_packet_header(
-            &self.seg_recv_buf[..PACKET_HEADER_LENGTH],
-        );
+        let packet_len =
+            SensorCommon::parse_packet_header(&self.seg_recv_buf[..PACKET_HEADER_LENGTH]);
 
         let received_len = if packet_len > PACKET_HEADER_LENGTH {
             self.read_sized_packet(packet_len, recv_buf)?

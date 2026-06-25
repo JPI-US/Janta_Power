@@ -3,15 +3,17 @@ pub mod motion {
     use astronav::coords::noaa_sun::NOAASun;
     use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
-    use std::time::{Duration, Instant};
-    use esp_idf_svc::hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver};
-    use quadrature_encoder::{IncrementalEncoder, Rotary, QuadStep};
+    use esp_idf_svc::hal::gpio::{
+        Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver,
+    };
     use esp_idf_svc::nvs::*;
     use network::mqtt::Mqtt;
-    use wifi::wifi::{Wifi, WifiState};
     use ota::OtaUpdater;
+    use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
     use std::thread;
+    use std::time::{Duration, Instant};
+    use wifi::wifi::{Wifi, WifiState};
 
     // Focused motion modules.
     mod encoder;
@@ -67,7 +69,12 @@ pub mod motion {
         prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
-        encoder: IncrementalEncoder<Rotary, PinDriver<'a, Gpio10, Input>, PinDriver<'a, Gpio11, Input>, QuadStep>,
+        encoder: IncrementalEncoder<
+            Rotary,
+            PinDriver<'a, Gpio10, Input>,
+            PinDriver<'a, Gpio11, Input>,
+            QuadStep,
+        >,
         // Encoder zero is a software offset: adjusted = raw - offset.
         encoder_zero_offset: i32,
         // Limit-switch debounce state (active-low switch).
@@ -85,7 +92,7 @@ pub mod motion {
         stall_last_enc_ticks_seen: i32,
         stall_reported: bool,
         stall_consecutive: u8,
-        
+
         // Ratio-based stall detection state (EncoderGuarded mode only).
         stall_check_start_encoder_ticks: i32,
         stall_check_start_step_pos: i64,
@@ -158,7 +165,7 @@ pub mod motion {
                 stall_last_enc_ticks_seen: 0,
                 stall_reported: false,
                 stall_consecutive: 0,
-                
+
                 stall_check_start_encoder_ticks: 0,
                 stall_check_start_step_pos: 0,
                 stall_check_last_interval_step: 0,
@@ -293,14 +300,8 @@ pub mod motion {
 
             if persist_nvs {
                 match nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks) {
-                    Ok(()) => log::info!(
-                        "Stored home_error_ticks in NVS: {}",
-                        home_error_ticks
-                    ),
-                    Err(e) => log::warn!(
-                        "Failed to store home_error_ticks in NVS: {:?}",
-                        e
-                    ),
+                    Ok(()) => log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks),
+                    Err(e) => log::warn!("Failed to store home_error_ticks in NVS: {:?}", e),
                 }
             } else {
                 log::warn!("NVS persist disabled: skipping home_error_ticks store");
@@ -405,7 +406,7 @@ pub mod motion {
                 self.relay_on();
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
-                        log::info!("Steps Needed: {}", steps as i64);
+                log::info!("Steps Needed: {}", steps as i64);
                 let move_outcome = self.move_by(steps as i64);
                 if move_outcome != MoveOutcome::Completed {
                     self.relay_off();
@@ -413,7 +414,7 @@ pub mod motion {
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
                     return true;
                 }
-                        self.update_position((location as f64 + angle_offset) as f32);
+                self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
 
                 let tower_angle = location as f64 + angle_offset;
@@ -423,9 +424,9 @@ pub mod motion {
                 };
                 let topic = network::telemetry::topic::data_angle(device_id);
                 let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
-                        return false;
-            } 
-            else {// Sunset Operation 
+                return false;
+            } else {
+                // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
                     // Verify home physically when heading says home.
                     if self.lmsw.is_high() {
@@ -478,7 +479,14 @@ pub mod motion {
                             }
 
                             thread::sleep(Duration::from_secs(3));
-                            let mut updater = OtaUpdater::new_ota(current_version.clone(), mqtt, device_id, Some("device1A"), Some("device1A")).expect("Failed to create OTA adapter instance");
+                            let mut updater = OtaUpdater::new_ota(
+                                current_version.clone(),
+                                mqtt,
+                                device_id,
+                                Some("device1A"),
+                                Some("device1A"),
+                            )
+                            .expect("Failed to create OTA adapter instance");
 
                             thread::sleep(Duration::from_secs(3));
                             let run_compare = updater.run_version_compare(nvs);
@@ -488,7 +496,7 @@ pub mod motion {
                                 Err(e) => {
                                     log::error!("Version compare failed: {:?}", e);
                                 }
-                            } 
+                            }
 
                             last_check = Instant::now();
                         } else if !allow_ota && last_check.elapsed() >= check_interval {
@@ -503,13 +511,15 @@ pub mod motion {
                 } else {
                     log::info!("Moving to sleep position...");
                     let limit_sw_status = self.find_limit_switch_ccw();
-                    match limit_sw_status{
+                    match limit_sw_status {
                         true => {
                             log::info!("Limit switch has returned true");
                             self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
-                        },
+                        }
                         false => {
-                            log::error!("Limit switch has returned false, limit switch could not be found");
+                            log::error!(
+                                "Limit switch has returned false, limit switch could not be found"
+                            );
                             loop {
                                 let now = Local::now()
                                     .format(network::telemetry::TIME_FORMAT)
