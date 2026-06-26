@@ -90,25 +90,39 @@ pub mod wifi {
             }
         }
 
-        pub fn reconnect_if_disconnected(&mut self) -> anyhow::Result<()>{
-            // Check if the Wi-Fi is disconnected
-            if self.state() == WifiState::Disconnected {
-                // Attempt to reconnect
-                self.inner.start()?;
-                self.inner.connect()?;
+        /// Best-effort reconnect: never propagates an error to the caller.
+        /// A flaky AP/router can make `connect`/`wifi_wait_while` fail
+        /// (e.g. ESP_ERR_TIMEOUT) repeatedly; callers run this every tracking
+        /// loop iteration and must keep moving the tower regardless of Wi-Fi
+        /// state, so failures are logged and swallowed here instead.
+        /// `start()` is intentionally omitted — the driver stays started after
+        /// a connection drop, so calling it again returns ESP_ERR_INVALID_STATE
+        /// and short-circuits before connect() can run.
+        pub fn reconnect_if_disconnected(&mut self) -> anyhow::Result<()> {
+            if self.state() != WifiState::Disconnected {
+                return Ok(());
+            }
 
-                // Block for up to 10 seconds while waiting for the connection to establish
-                self.inner.wifi_wait_while(
-                    || Ok(self.state() == WifiState::Disconnected),
-                    Some(Duration::from_secs(10)),
-                )?;
+            // Driver is already started; just re-associate.
+            if let Err(e) = self.inner.connect() {
+                warn!("Wi-Fi reconnect: connect() failed: {:?}", e);
+                return Ok(());
+            }
 
-                // Check if the connection was successful
-                if matches!(self.state(), WifiState::Connected(_)) {
-                    info!("Successfully reconnected to Wi-Fi.");
-                } else {
-                    warn!("Failed to reconnect to Wi-Fi within 30 seconds.");
-                }
+            // 30 s — AWS IoT needs public DNS + full mTLS handshake before
+            // MQTT can reconnect; 10 s is too tight over a real WAN link.
+            if let Err(e) = self.inner.wifi_wait_while(
+                || Ok(self.state() == WifiState::Disconnected),
+                Some(Duration::from_secs(30)),
+            ) {
+                warn!("Wi-Fi reconnect: wait timed out: {:?}", e);
+                return Ok(());
+            }
+
+            if matches!(self.state(), WifiState::Connected(_)) {
+                info!("Successfully reconnected to Wi-Fi.");
+            } else {
+                warn!("Failed to reconnect to Wi-Fi within 30 seconds.");
             }
 
             Ok(())
