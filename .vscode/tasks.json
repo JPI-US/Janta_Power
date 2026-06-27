@@ -10,6 +10,16 @@
 				"$rustc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Run HDC1080 test",
+			"type": "shell",
+			"command": "cargo run -p hdc1080-test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
 		}
 	]
 }

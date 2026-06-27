@@ -78,6 +78,11 @@ fn generate_constants() {
     constants.push_str("// Encoder Overshoot Protection (Safety)\n");
     constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "750", "i64"));
     constants.push_str("\n");
+
+    // Temperature monitoring
+    constants.push_str("// Temperature monitoring (HDC1080)\n");
+    constants.push_str(&get_env("TEMP_FAULT_THRESHOLD_F", "111.0", "f32"));
+    constants.push_str("\n");
     
     // Operational Mode (as string constants for runtime conversion)
     constants.push_str("// Operational Mode\n");

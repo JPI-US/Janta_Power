@@ -25,6 +25,7 @@ pub extern "C" fn __pender() {
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
+        delay::Ets,
         gpio::PinDriver,
         i2c::{I2cConfig, I2cDriver},
         prelude::*,
@@ -33,6 +34,7 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs},
     ota::EspOta,
 };
+use hdc1080::Hdc1080;
 use rtc::Rtc;
 use motion::{MoveOutcome, Motion, MotionMode};
 use rgb_led::Led;
@@ -161,9 +163,9 @@ fn main() -> anyhow::Result<()> {
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.1.3";
+    const DEFAULT_VERSION: &str = "1.1.4";
     if PERSIST_NVS {
-        nvs.set_str("version", "1.1.3")?;
+        nvs.set_str("version", "1.1.4")?;
     }
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
@@ -326,6 +328,23 @@ fn main() -> anyhow::Result<()> {
 
     // Hardware initialization
     let mut calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
+
+    let mut temp_sensor = match Hdc1080::new(bus.acquire_i2c(), Ets) {
+        Ok(mut sensor) => {
+            let _ = sensor.init();
+            if sensor.get_device_id().unwrap_or(0) == 0x1050 {
+                info!("HDC1080 detected");
+                Some(sensor)
+            } else {
+                warn!("HDC1080 not detected on I2C; temp telemetry disabled");
+                None
+            }
+        }
+        Err(e) => {
+            warn!("HDC1080 init failed: {:?}; temp telemetry disabled", e);
+            None
+        }
+    };
 
     // LED status
     let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
@@ -675,7 +694,7 @@ fn main() -> anyhow::Result<()> {
             info!("Tracking disabled");
         }
 
-        info!("Tracking loop duration (v1.1.3): {:?}", now.elapsed());
+        info!("Tracking loop duration (v1.1.4): {:?}", now.elapsed());
         
         // Housekeeping
         if wifi.state() == WifiState::Disconnected {
@@ -690,6 +709,16 @@ fn main() -> anyhow::Result<()> {
             };
             let topic = network::telemetry::topic::status(sw.device_id);
             let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
+        }
+
+        if let Some(ref mut sensor) = temp_sensor {
+            infra::temperature::report_system_temperature(
+                sensor,
+                &mut mqtt,
+                sw.device_id,
+                &current_datetime,
+                crate::constants::TEMP_FAULT_THRESHOLD_F,
+            );
         }
 
         const LOOP_SLEEP_SECS: u64 = 300;
