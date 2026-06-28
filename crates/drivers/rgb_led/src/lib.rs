@@ -54,8 +54,24 @@ impl<'d> Led<'d> {
         self.set_color(RGB8::new(255, 0, 0));
     }
 
+    
+    /// Display pure blue.
+    /// Indicates that we are in maintenance mode and nothing is moving.
     pub fn display_maintenance(&mut self) {
         self.set_color(RGB8::new(0, 0, 255));
+    }
+
+
+    /// Display magenta.
+    /// Indicates that we are in maintenance mode and motors are moving CW.
+    pub fn display_maintenance_moving_cw(&mut self) {
+        self.set_color(RGB8::new(150, 0, 255));
+    }
+
+    /// Display teal.
+    /// Indicates that we are in maintenance mode and motors are moving CCW.
+    pub fn display_maintenance_moving_ccw(&mut self) {
+        self.set_color(RGB8::new(0, 150, 255));
     }
 
     pub fn display_connecting(&mut self) {
@@ -63,6 +79,11 @@ impl<'d> Led<'d> {
         std::thread::sleep(std::time::Duration::from_millis(350));
         self.set_color(RGB8::new(150, 150, 150));
         std::thread::sleep(std::time::Duration::from_millis(350));
+    }
+
+    /// Turn off the LED
+    pub fn display_none(&mut self) {
+        self.set_color(RGB8::new(0, 0, 0));
     }
 }
 
