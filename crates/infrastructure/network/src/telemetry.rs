@@ -59,6 +59,16 @@ pub mod topic {
             component.as_str()
         )
     }
+
+    /// Inbound topic the tower subscribes to for remote commands.
+    pub fn diagnostics_cmd(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics")
+    }
+
+    /// Outbound topic the tower replies on (acks + command results).
+    pub fn diagnostics_ack(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics/ack")
+    }
 }
 
 // ---------- Shared enums ----------

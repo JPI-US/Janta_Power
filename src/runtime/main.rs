@@ -241,6 +241,12 @@ fn main() -> anyhow::Result<()> {
         info!("Normal boot firmware already validated");
     }
 
+    // Subscribe to the remote command channel (tower/{id}/cmd/diagnostics).
+    // Non-fatal: a subscribe hiccup must not block boot.
+    if let Err(e) = diagnostics::transport::subscribe(&mut mqtt, sw.device_id) {
+        warn!("Failed to subscribe to command channel: {:?}", e);
+    }
+
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
     // boot-log publish could include `firmware_version`.)
@@ -718,6 +724,26 @@ fn main() -> anyhow::Result<()> {
                 sw.device_id,
                 &current_datetime,
             );
+        }
+
+        // Remote command channel: answer at most one queued command per loop.
+        {
+            let motion_mode_str = match motion_mode {
+                MotionMode::StepperOnly => "stepper_only",
+                MotionMode::EncoderGuarded => "encoder_guarded",
+            };
+            let firmware_version = current_version.to_string();
+            let ctx = diagnostics::commands::CmdCtx {
+                device_id: sw.device_id,
+                firmware_version: &firmware_version,
+                mqtt_connected: mqtt.is_connected(),
+                wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                motion_mode: motion_mode_str,
+                current_heading: actual_heading,
+            };
+            if let Err(e) = diagnostics::transport::process_one(&mut mqtt, sw.device_id, &ctx) {
+                warn!("Command processing failed: {:?}", e);
+            }
         }
 
         const LOOP_SLEEP_SECS: u64 = 300;
