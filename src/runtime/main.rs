@@ -64,6 +64,227 @@ struct Tower<I2C> {
     motion_mode: MotionMode,
     actual_heading: f32,
     allow_ota: bool,
+    /// Motion mode seen on the previous loop iteration; used to detect the
+    /// transition *into* `StepperOnly`, which forces a re-home.
+    previous_motion_mode: MotionMode,
+    /// Set when a `StepperOnly` switch needs a re-home before tracking resumes.
+    need_rehome: bool,
+}
+
+/// Main-loop steps, factored out of the loop body so the loop reads as a thin
+/// sequence of named operations. Each method owns one concern and mutates the
+/// shared state through `&mut self` (disjoint field borrows let one method touch
+/// `motion`, `nvs`, `mqtt`, ... at once). Bound to `I2C: I2c` because the
+/// tracking and temperature steps drive bus-backed devices.
+impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
+    /// Every loop step persists to NVS (mirrors the boot-phase `PERSIST_NVS`).
+    const PERSIST_NVS: bool = true;
+
+    /// Day-rollover reset of the daily encoder mode (see [`check_daily_encoder_reset`]).
+    fn daily_reset(&mut self, local_time: &DateTime<Local>) {
+        let reset_occurred = check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
+        if reset_occurred {
+            self.motion_mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+                .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+            self.motion.set_motion_mode(self.motion_mode);
+            self.encoder_fault.set_mode_switched_daily(false);
+            let mode_str = match self.motion_mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            info!("Daily reset: Motion mode updated to {}", mode_str);
+        }
+    }
+
+    /// Flag a re-home when the mode has just transitioned into `StepperOnly`.
+    fn detect_stepper_transition(&mut self) {
+        if self.motion_mode == MotionMode::StepperOnly
+            && self.previous_motion_mode != MotionMode::StepperOnly
+        {
+            info!("Motion mode switched to StepperOnly - re-homing required");
+            self.need_rehome = true;
+        }
+        self.previous_motion_mode = self.motion_mode;
+    }
+
+    /// Reload the motion mode from NVS in case another path switched it; if it
+    /// changed to `StepperOnly`, schedule a re-home. `stepper_switch_log` is the
+    /// message logged on that transition.
+    fn sync_motion_mode_from_nvs(&mut self, stepper_switch_log: &str) {
+        let mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+        if mode != self.motion_mode {
+            self.motion_mode = mode;
+            self.motion.set_motion_mode(self.motion_mode);
+            if self.motion_mode == MotionMode::StepperOnly {
+                info!("{}", stepper_switch_log);
+                self.need_rehome = true;
+            }
+        }
+    }
+
+    /// Re-home to the limit switch if a `StepperOnly` re-home is pending.
+    /// Returns `Ok(true)` when a re-home ran (caller should `continue` the loop).
+    /// `intro_log` is logged when the sweep starts.
+    fn rehome_if_pending(&mut self, intro_log: &str) -> anyhow::Result<bool> {
+        if !(self.need_rehome && self.motion_mode == MotionMode::StepperOnly) {
+            return Ok(false);
+        }
+        info!("{}", intro_log);
+        const HOMING_DIRECTION: Direction = Direction::Ccw;
+        let limit_sw_status = match HOMING_DIRECTION {
+            Direction::Cw => self.motion.find_limit_switch_cw(),
+            Direction::Ccw => self.motion.find_limit_switch_ccw(),
+        };
+        match limit_sw_status {
+            true => {
+                info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
+                self.actual_heading = self.sw.home_heading_deg;
+                self.motion.update_position(self.actual_heading);
+                if Self::PERSIST_NVS {
+                    infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+                        .save_heading(self.actual_heading);
+                }
+                self.need_rehome = false;
+            }
+            false => {
+                error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
+                infra::error_loop(
+                    self.sw.device_id,
+                    &mut self.mqtt,
+                    network::telemetry::Component::LimitSwitch,
+                    "Re-home failed after encoder recovery",
+                    "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
+                );
+            }
+        }
+        thread::sleep(Duration::from_secs(2));
+        Ok(true)
+    }
+
+    /// Build the encoder-recovery config from the switchboard.
+    fn encoder_recovery_cfg(&self) -> EncoderRecoverySwitches {
+        EncoderRecoverySwitches {
+            enabled: self.sw.runtime.encoder_recovery.enabled,
+            probe_interval_secs: self.sw.runtime.encoder_recovery.probe_interval_secs,
+            probe_steps: self.sw.runtime.encoder_recovery.probe_steps,
+            max_drift_deg: self.sw.runtime.encoder_recovery.max_drift_deg,
+            rehome_dir: match self.sw.runtime.encoder_recovery.rehome_dir {
+                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
+                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
+            },
+        }
+    }
+
+    /// Run one encoder-fault probe/recovery tick. Returns `Ok(true)` when a fault
+    /// is active (caller should `continue` and skip tracking this iteration).
+    fn run_encoder_fault(&mut self) -> anyhow::Result<bool> {
+        let cfg = self.encoder_recovery_cfg();
+        let fault_active = self.encoder_fault.tick(
+            &cfg,
+            &mut self.motion,
+            self.motion_mode,
+            &mut self.actual_heading,
+            &mut self.nvs,
+            &mut self.mqtt,
+            &mut self.wifi,
+            &self.current_version,
+            Self::PERSIST_NVS,
+            self.sw.device_id,
+            self.sw.home_heading_deg,
+        )?;
+        Ok(fault_active)
+    }
+
+    /// Run one tracking tick (gated by the switchboard) and feed the move
+    /// outcome back into encoder-fault recovery.
+    fn run_tracking(&mut self, current_datetime: String) {
+        if !self.sw.runtime.tracking.enabled {
+            info!("Tracking disabled");
+            return;
+        }
+        let cfg = self.encoder_recovery_cfg();
+        let outcome = app::tracking_loop::tick(
+            &mut self.motion,
+            &mut self.calculation,
+            &mut self.actual_heading,
+            &mut self.mqtt,
+            &self.current_version,
+            &mut self.nvs,
+            &mut self.wifi,
+            current_datetime,
+            Self::PERSIST_NVS,
+            self.allow_ota,
+            self.sw.device_id,
+        );
+
+        if outcome != MoveOutcome::Completed {
+            warn!("Last move aborted: {:?}", outcome);
+        }
+        if let Err(e) = self.encoder_fault.on_move_outcome(
+            outcome,
+            &cfg,
+            &mut self.motion,
+            &mut self.nvs,
+            Self::PERSIST_NVS,
+        ) {
+            error!("Error in encoder fault recovery: {:?}", e);
+        }
+    }
+
+    /// Reconnect Wi-Fi if it has dropped.
+    fn maintain_wifi(&mut self) -> anyhow::Result<()> {
+        if self.wifi.state() == WifiState::Disconnected {
+            warn!("Wifi disconnected, attempting to reconnect...");
+            self.wifi.reconnect_if_disconnected()?;
+        }
+        Ok(())
+    }
+
+    /// Publish the periodic heartbeat (`tower/{id}/status`).
+    fn publish_heartbeat(&mut self, current_datetime: &str) {
+        let payload = network::telemetry::Heartbeat {
+            current_time: current_datetime,
+            firmware_version: &self.current_version.to_string(),
+        };
+        let topic = network::telemetry::topic::status(self.sw.device_id);
+        let _ = network::telemetry::publish_json(&mut self.mqtt, &topic, &payload);
+    }
+
+    /// Publish system temperature telemetry when the HDC1080 is present.
+    fn report_temperature(&mut self, current_datetime: &str) {
+        if let Some(ref mut sensor) = self.temp_sensor {
+            infra::temperature::report_system_temperature(
+                sensor,
+                &mut self.mqtt,
+                self.sw.device_id,
+                current_datetime,
+            );
+        }
+    }
+
+    /// Answer at most one queued remote command (gated by the switchboard).
+    fn process_commands(&mut self) {
+        if !self.sw.runtime.commands_enabled {
+            return;
+        }
+        let motion_mode_str = match self.motion_mode {
+            MotionMode::StepperOnly => "stepper_only",
+            MotionMode::EncoderGuarded => "encoder_guarded",
+        };
+        let firmware_version = self.current_version.to_string();
+        let ctx = diagnostics::commands::CmdCtx {
+            device_id: self.sw.device_id,
+            firmware_version: &firmware_version,
+            mqtt_connected: self.mqtt.is_connected(),
+            wifi_connected: matches!(self.wifi.state(), WifiState::Connected(_)),
+            motion_mode: motion_mode_str,
+            current_heading: self.actual_heading,
+        };
+        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx) {
+            warn!("Command processing failed: {:?}", e);
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -564,65 +785,22 @@ fn main() -> anyhow::Result<()> {
         motion_mode,
         actual_heading,
         allow_ota,
+        previous_motion_mode: motion_mode,
+        need_rehome: false,
     };
-
-    let mut previous_motion_mode = tower.motion_mode;
-    let mut need_rehome_stepper_only = false;
 
     loop {
         let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
-        // Daily encoder mode reset
-        let reset_occurred = check_daily_encoder_reset(&mut tower.nvs, &local_time, PERSIST_NVS);
-        if reset_occurred {
-            tower.motion_mode = infra::SnapshotStore::new(&mut tower.nvs, PERSIST_NVS)
-                .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-            tower.motion.set_motion_mode(tower.motion_mode);
-            tower.encoder_fault.set_mode_switched_daily(false);
-            let mode_str = match tower.motion_mode {
-                MotionMode::StepperOnly => "StepperOnly",
-                MotionMode::EncoderGuarded => "EncoderGuarded",
-            };
-            info!("Daily reset: Motion mode updated to {}", mode_str);
-        }
+        // Daily encoder-mode reset at day rollover.
+        tower.daily_reset(&local_time);
 
         // Re-home once when transitioning into StepperOnly.
-        if tower.motion_mode == MotionMode::StepperOnly && previous_motion_mode != MotionMode::StepperOnly {
-            info!("Motion mode switched to StepperOnly - re-homing required");
-            need_rehome_stepper_only = true;
-        }
-        previous_motion_mode = tower.motion_mode;
-
-        if need_rehome_stepper_only && tower.motion_mode == MotionMode::StepperOnly {
-            info!("StepperOnly mode detected - re-homing to establish known position");
-            const HOMING_DIRECTION: Direction = Direction::Ccw;
-            let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => tower.motion.find_limit_switch_cw(),
-                Direction::Ccw => tower.motion.find_limit_switch_ccw(),
-            };
-            match limit_sw_status {
-                true => {
-                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
-                    tower.actual_heading = tower.sw.home_heading_deg;
-                    tower.motion.update_position(tower.actual_heading);
-                    if PERSIST_NVS {
-                        infra::SnapshotStore::new(&mut tower.nvs, PERSIST_NVS).save_heading(tower.actual_heading);
-                    }
-                    need_rehome_stepper_only = false;
-                }
-                false => {
-                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::error_loop(
-                        tower.sw.device_id,
-                        &mut tower.mqtt,
-                        network::telemetry::Component::LimitSwitch,
-                        "Re-home failed after encoder recovery",
-                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
-                    );
-                }
-            }
-            thread::sleep(Duration::from_secs(2));
+        tower.detect_stepper_transition();
+        if tower.rehome_if_pending(
+            "StepperOnly mode detected - re-homing to establish known position",
+        )? {
             continue;
         }
 
@@ -632,162 +810,37 @@ fn main() -> anyhow::Result<()> {
         let now = std::time::Instant::now();
 
         // Reload mode in case another path switched to StepperOnly.
-        let current_motion_mode = infra::SnapshotStore::new(&mut tower.nvs, PERSIST_NVS)
-            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-        if current_motion_mode != tower.motion_mode {
-            tower.motion_mode = current_motion_mode;
-            tower.motion.set_motion_mode(tower.motion_mode);
-            if tower.motion_mode == MotionMode::StepperOnly {
-                info!("Motion mode changed to StepperOnly - will re-home on next iteration");
-                need_rehome_stepper_only = true;
-            }
+        tower.sync_motion_mode_from_nvs(
+            "Motion mode changed to StepperOnly - will re-home on next iteration",
+        );
+
+        if tower.run_encoder_fault()? {
+            continue; // Fault active, skip tracking this iteration
         }
 
-        let encoder_recovery_cfg = EncoderRecoverySwitches {
-            enabled: tower.sw.runtime.encoder_recovery.enabled,
-            probe_interval_secs: tower.sw.runtime.encoder_recovery.probe_interval_secs,
-            probe_steps: tower.sw.runtime.encoder_recovery.probe_steps,
-            max_drift_deg: tower.sw.runtime.encoder_recovery.max_drift_deg,
-            rehome_dir: match tower.sw.runtime.encoder_recovery.rehome_dir {
-                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
-                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
-            },
-        };
-        if tower.encoder_fault.tick(
-            &encoder_recovery_cfg,
-            &mut tower.motion,
-            tower.motion_mode,
-            &mut tower.actual_heading,
-            &mut tower.nvs,
-            &mut tower.mqtt,
-            &mut tower.wifi,
-            &tower.current_version,
-            PERSIST_NVS,
-            tower.sw.device_id,
-            tower.sw.home_heading_deg,
-        )? {
-            continue;  // Fault active, skip tracking this iteration
-        }
-
-        // Re-check mode after encoder_fault.tick() in case it changed during recovery.
-        let updated_motion_mode = infra::SnapshotStore::new(&mut tower.nvs, PERSIST_NVS)
-            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-        if updated_motion_mode != tower.motion_mode {
-            tower.motion_mode = updated_motion_mode;
-            tower.motion.set_motion_mode(tower.motion_mode);
-            if tower.motion_mode == MotionMode::StepperOnly {
-                info!("Motion mode switched to StepperOnly during encoder fault recovery - will re-home");
-                need_rehome_stepper_only = true;
-            }
-        }
+        // Re-check mode after recovery in case it changed during the probe.
+        tower.sync_motion_mode_from_nvs(
+            "Motion mode switched to StepperOnly during encoder fault recovery - will re-home",
+        );
 
         // Re-home before tracking if StepperOnly was activated during recovery.
-        if need_rehome_stepper_only && tower.motion_mode == MotionMode::StepperOnly {
-            info!("StepperOnly mode detected - re-homing to establish known position (CCW)");
-            const HOMING_DIRECTION: Direction = Direction::Ccw;
-            let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => tower.motion.find_limit_switch_cw(),
-                Direction::Ccw => tower.motion.find_limit_switch_ccw(),
-            };
-            match limit_sw_status {
-                true => {
-                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
-                    tower.actual_heading = tower.sw.home_heading_deg;
-                    tower.motion.update_position(tower.actual_heading);
-                    if PERSIST_NVS {
-                        infra::SnapshotStore::new(&mut tower.nvs, PERSIST_NVS).save_heading(tower.actual_heading);
-                    }
-                    need_rehome_stepper_only = false;
-                }
-                false => {
-                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::error_loop(
-                        tower.sw.device_id,
-                        &mut tower.mqtt,
-                        network::telemetry::Component::LimitSwitch,
-                        "Re-home failed after encoder recovery",
-                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
-                    );
-                }
-            }
-            thread::sleep(Duration::from_secs(2));
+        if tower.rehome_if_pending(
+            "StepperOnly mode detected - re-homing to establish known position (CCW)",
+        )? {
             continue;
         }
 
-        if tower.sw.runtime.tracking.enabled {
-            let outcome = app::tracking_loop::tick(
-                &mut tower.motion,
-                &mut tower.calculation,
-                &mut tower.actual_heading,
-                &mut tower.mqtt,
-                &tower.current_version,
-                &mut tower.nvs,
-                &mut tower.wifi,
-                current_datetime.clone(),
-                PERSIST_NVS,
-                tower.allow_ota,
-                tower.sw.device_id,
-            );
-
-            if outcome != MoveOutcome::Completed {
-                warn!("Last move aborted: {:?}", outcome);
-            }
-            if let Err(e) = tower.encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg, &mut tower.motion, &mut tower.nvs, PERSIST_NVS) {
-                error!("Error in encoder fault recovery: {:?}", e);
-            }
-        } else {
-            info!("Tracking disabled");
-        }
+        tower.run_tracking(current_datetime.clone());
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
-        // Housekeeping
-        if tower.wifi.state() == WifiState::Disconnected {
-            warn!("Wifi disconnected, attempting to reconnect...");
-            tower.wifi.reconnect_if_disconnected()?;
-        }
-        // Heartbeat ping: see `network::telemetry::topic::status` for the topic string.
-        {
-            let payload = network::telemetry::Heartbeat {
-                current_time: &current_datetime,
-                firmware_version: &tower.current_version.to_string(),
-            };
-            let topic = network::telemetry::topic::status(tower.sw.device_id);
-            let _ = network::telemetry::publish_json(&mut tower.mqtt, &topic, &payload);
-        }
-
-        if let Some(ref mut sensor) = tower.temp_sensor {
-            infra::temperature::report_system_temperature(
-                sensor,
-                &mut tower.mqtt,
-                tower.sw.device_id,
-                &current_datetime,
-            );
-        }
-
-        // Remote command channel: answer at most one queued command per loop.
-        if tower.sw.runtime.commands_enabled {
-            let motion_mode_str = match tower.motion_mode {
-                MotionMode::StepperOnly => "stepper_only",
-                MotionMode::EncoderGuarded => "encoder_guarded",
-            };
-            let firmware_version = tower.current_version.to_string();
-            let ctx = diagnostics::commands::CmdCtx {
-                device_id: tower.sw.device_id,
-                firmware_version: &firmware_version,
-                mqtt_connected: tower.mqtt.is_connected(),
-                wifi_connected: matches!(tower.wifi.state(), WifiState::Connected(_)),
-                motion_mode: motion_mode_str,
-                current_heading: tower.actual_heading,
-            };
-            if let Err(e) = diagnostics::transport::process_one(&mut tower.mqtt, tower.sw.device_id, &ctx) {
-                warn!("Command processing failed: {:?}", e);
-            }
-        }
+        tower.maintain_wifi()?;
+        tower.publish_heartbeat(&current_datetime);
+        tower.report_temperature(&current_datetime);
+        tower.process_commands();
 
         const LOOP_SLEEP_SECS: u64 = 300;
         std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
-
     }
 }
 
