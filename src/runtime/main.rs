@@ -46,7 +46,9 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 fn main() -> anyhow::Result<()> {
-    let sw = switchboard::normal();
+    let sw = switchboard::active(switchboard::Profile::from_env_str(
+        crate::constants::ACTIVE_PROFILE_STR,
+    ));
 
     // PHASE 1: INITIALIZATION --------------------------------------------------
     esp_idf_svc::sys::link_patches();
@@ -242,16 +244,18 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Subscribe to the remote command channel (tower/{id}/cmd/diagnostics).
-    // Non-fatal: a subscribe hiccup must not block boot.
-    if let Err(e) = diagnostics::transport::subscribe(&mut mqtt, sw.device_id) {
-        warn!("Failed to subscribe to command channel: {:?}", e);
+    // Non-fatal: a subscribe hiccup must not block boot. Gated by the profile.
+    if sw.runtime.commands_enabled {
+        if let Err(e) = diagnostics::transport::subscribe(&mut mqtt, sw.device_id) {
+            warn!("Failed to subscribe to command channel: {:?}", e);
+        }
     }
 
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
     // boot-log publish could include `firmware_version`.)
 
-    const ALLOW_OTA: bool = true;
+    let allow_ota = sw.effects.allow_ota;
 
     {
         let payload = network::telemetry::Heartbeat {
@@ -270,7 +274,7 @@ fn main() -> anyhow::Result<()> {
         Some(sw.default_ota_password),
     ).expect("Failed to create OTA updater instance");
 
-    if ALLOW_OTA {
+    if allow_ota {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         if let Err(e) = updater.run_version_compare(&mut nvs) {
@@ -449,7 +453,6 @@ fn main() -> anyhow::Result<()> {
     // - EncoderGuarded: home when snapshot restore is unavailable/untrusted
     // - EncoderGuarded: if NVS claims mechanical home (≈ home_heading_deg), require limit
     //   switch active before skipping homing; otherwise re-home like snapshot miss
-    const HOMING_ENABLED: bool = true;
     const HOMING_DIRECTION: Direction = Direction::Ccw;
     /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
     const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
@@ -473,7 +476,7 @@ fn main() -> anyhow::Result<()> {
         || !restored_from_snapshot
         || !trust_nvs_state
         || home_claim_needs_limit_verify;
-    if should_home_by_mode && HOMING_ENABLED {
+    if should_home_by_mode && sw.boot.homing.enabled {
         let limit_sw_status = match HOMING_DIRECTION {
             Direction::Cw => motion.find_limit_switch_cw(),
             Direction::Ccw => motion.find_limit_switch_ccw(),
@@ -674,8 +677,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
-        const TRACKING_ENABLED: bool = true;
-        if TRACKING_ENABLED {
+        if sw.runtime.tracking.enabled {
             let outcome = app::tracking_loop::tick(
                 &mut motion,
                 &mut calculation,
@@ -686,7 +688,7 @@ fn main() -> anyhow::Result<()> {
                 &mut wifi,
                 current_datetime.clone(),
                 PERSIST_NVS,
-                ALLOW_OTA,
+                allow_ota,
                 sw.device_id,
             );
 
@@ -727,7 +729,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         // Remote command channel: answer at most one queued command per loop.
-        {
+        if sw.runtime.commands_enabled {
             let motion_mode_str = match motion_mode {
                 MotionMode::StepperOnly => "stepper_only",
                 MotionMode::EncoderGuarded => "encoder_guarded",
