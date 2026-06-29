@@ -1,5 +1,8 @@
 use core::option::Option::None;
-use std::{thread, time::{Duration, Instant}};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use chrono::{DateTime, Local};
 use clock::Clock;
@@ -7,7 +10,7 @@ use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
         delay::Ets,
-        gpio::PinDriver,
+        gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
         i2c::{I2cConfig, I2cDriver},
         prelude::*,
     },
@@ -16,18 +19,28 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use hdc1080::Hdc1080;
-use rtc::Rtc;
-use motion::{MoveOutcome, Motion, MotionMode};
-use rgb_led::Led;
+use log::{error, info, warn};
+use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
 use rgb_led::Led;
 use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
-use esp_idf_svc::hal::gpio::{Input, Gpio4, Gpio5, Gpio6};
 
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
+
+mod app;
+#[path = "../config.rs"]
+mod config;
+#[path = "../constants.rs"]
+#[allow(dead_code)]
+mod constants;
+#[path = "../diagnostics/mod.rs"]
+mod diagnostics;
+mod infra;
+#[path = "../switchboard.rs"]
+mod switchboard;
 
 /// Long-lived runtime state for the tower, owned across the main tracking loop.
 ///
@@ -66,7 +79,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 
     /// Day-rollover reset of the daily encoder mode (see [`check_daily_encoder_reset`]).
     fn daily_reset(&mut self, local_time: &DateTime<Local>) {
-        let reset_occurred = check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
+        let reset_occurred =
+            check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
         if reset_occurred {
             self.motion_mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
                 .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
@@ -122,7 +136,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         };
         match limit_sw_status {
             true => {
-                info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
+                info!(
+                    "Re-homing OK (dir={}): limit switch found",
+                    HOMING_DIRECTION.as_str()
+                );
                 self.actual_heading = self.sw.home_heading_deg;
                 self.motion.update_position(self.actual_heading);
                 if Self::PERSIST_NVS {
@@ -132,7 +149,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
                 self.need_rehome = false;
             }
             false => {
-                error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
+                error!(
+                    "Re-homing FAILED (dir={}): limit switch could not be found",
+                    HOMING_DIRECTION.as_str()
+                );
                 infra::error_loop(
                     self.sw.device_id,
                     &mut self.mqtt,
@@ -265,7 +285,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             motion_mode: motion_mode_str,
             current_heading: self.actual_heading,
         };
-        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx) {
+        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx)
+        {
             warn!("Command processing failed: {:?}", e);
         }
     }
@@ -349,7 +370,13 @@ fn main() -> anyhow::Result<()> {
     );
 
     // Capture maintenance mode
-    capture_maintenance_mode(&mut motion, &mut led, maintenance_button, ccw_button, cw_button)?;
+    capture_maintenance_mode(
+        &mut motion,
+        &mut led,
+        maintenance_button,
+        ccw_button,
+        cw_button,
+    )?;
 
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
@@ -962,12 +989,12 @@ fn capture_maintenance_mode(
     led: &mut Led,
     maintenance_button: PinDriver<Gpio5, Input>,
     ccw_button: PinDriver<Gpio4, Input>,
-    cw_button: PinDriver<Gpio6, Input>
+    cw_button: PinDriver<Gpio6, Input>,
 ) -> anyhow::Result<()> {
     if maintenance_button.is_low() {
         return Ok(());
     }
-    
+
     log::info!("[Maintenance Mode] Begin");
     led.display_maintenance()?;
 
@@ -988,7 +1015,7 @@ fn capture_maintenance_mode(
         // Don't move if CCW and CW are both pressed
         if ccw && cw {
             move_direction = None
-        } 
+        }
         // Stop moving if maintenance button is single clicked,
         // or exit mainenance mode if double clicked
         else if maintenance_pressed {
@@ -1001,12 +1028,10 @@ fn capture_maintenance_mode(
             last_click_time = Some(now);
             move_direction = None;
             log::info!("[Maintenance Mode] Not moving");
-        }
-        else if ccw && !cw {
+        } else if ccw && !cw {
             move_direction = Some(Direction::Ccw);
             log::info!("[Maintenance Mode] Moving CCW");
-        } 
-        else if cw && !ccw {
+        } else if cw && !ccw {
             move_direction = Some(Direction::Cw);
             log::info!("[Maintenance Mode] Moving CW");
         }
@@ -1016,7 +1041,7 @@ fn capture_maintenance_mode(
                 Direction::Ccw => {
                     led.display_maintenance_moving_ccw()?;
                     motion.move_by(-30_000);
-                },
+                }
                 Direction::Cw => {
                     led.display_maintenance_moving_cw()?;
                     motion.move_by(30_000);

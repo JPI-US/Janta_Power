@@ -53,7 +53,7 @@ impl<'d> Led<'d> {
     pub fn display_error(&mut self) -> Result<()> {
         self.set_color(RGB8::new(255, 0, 0))
     }
-    
+
     /// Display pure blue.
     /// Indicates that we are in maintenance mode and nothing is moving.
     pub fn display_maintenance(&mut self) -> Result<()> {

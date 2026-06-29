@@ -5,11 +5,12 @@
 //! Wiring (ESP32-S3): GPIO8 = SDA, GPIO9 = SCL (same as production tower).
 //! Expected IDs: device `0x1050`, manufacturer `0x5449`.
 
-use esp_idf_svc::hal::delay::{Ets, FreeRtos};
-use esp_idf_svc::hal::i2c::{I2cConfig, I2cDriver};
-use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::prelude::*;
-
+use esp_idf_svc::hal::{
+    delay::{Ets, FreeRtos},
+    i2c::{I2cConfig, I2cDriver},
+    peripherals::Peripherals,
+    prelude::*,
+};
 use hdc1080::Hdc1080;
 
 // Required by embassy_executor when esp-idf-svc embassy features are enabled.
@@ -28,8 +29,8 @@ fn main() -> anyhow::Result<()> {
     let config = I2cConfig::new().baudrate(100.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
 
-    let mut sensor = Hdc1080::new(i2c, Ets)
-        .map_err(|e| anyhow::anyhow!("bus init error: {e:?}"))?;
+    let mut sensor =
+        Hdc1080::new(i2c, Ets).map_err(|e| anyhow::anyhow!("bus init error: {e:?}"))?;
     sensor
         .init()
         .map_err(|e| anyhow::anyhow!("config error: {e:?}"))?;
