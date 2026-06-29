@@ -14,6 +14,18 @@ pub enum Profile {
     Custom,
 }
 
+impl Profile {
+    /// Map the `ACTIVE_PROFILE` string from `.env`/constants to a profile.
+    /// Unknown values fall back to `Normal` (production-safe default).
+    pub fn from_env_str(s: &str) -> Self {
+        match s {
+            "Admin" => Profile::Admin,
+            "Custom" => Profile::Custom,
+            _ => Profile::Normal,
+        }
+    }
+}
+
 // =========================
 // Types for future phases
 // =========================
@@ -146,6 +158,8 @@ pub struct RuntimeSwitches {
     pub motion_mode: MotionModePolicy,
     pub encoder_recovery: EncoderRecoverySwitches,
     pub guardrails: GuardrailsSwitches,
+    /// Remote MQTT command channel (subscribe at boot + handle one command per loop).
+    pub commands_enabled: bool,
 }
 
 // Default "unstuck" sequence (kept identical across profiles unless overridden).
@@ -267,6 +281,7 @@ pub const fn normal() -> Switchboard {
                 soft_limit_min_deg: crate::constants::SOFT_LIMIT_MIN_DEG,
                 soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
             },
+            commands_enabled: true,
         },
         effects: EffectsSwitches {
             persist_nvs: true,
@@ -288,17 +303,25 @@ pub const fn normal() -> Switchboard {
     }
 }
 
-pub const fn admin() -> Switchboard {
-    // Phase 0: placeholder that keeps behavior identical if selected.
-    normal()
+/// Diagnostics sandbox. Same hardware/network defaults as [`normal`], but
+/// tracking, boot homing, and OTA are turned **off** so the tower stays put and
+/// nothing competes with the feature under test. The command channel stays **on**.
+pub fn admin() -> Switchboard {
+    let mut sw = normal();
+    sw.admin.enabled = true;
+    sw.runtime.tracking.enabled = false;
+    sw.boot.homing.enabled = false;
+    sw.effects.allow_ota = false;
+    sw.runtime.commands_enabled = true;
+    sw
 }
 
+/// Hook for site-specific images; identical to [`normal`] until customized here.
 pub const fn custom() -> Switchboard {
-    // Phase 0: placeholder that keeps behavior identical if selected.
     normal()
 }
 
-pub const fn active(profile: Profile) -> Switchboard {
+pub fn active(profile: Profile) -> Switchboard {
     match profile {
         Profile::Normal => normal(),
         Profile::Admin => admin(),

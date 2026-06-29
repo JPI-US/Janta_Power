@@ -56,6 +56,16 @@ pub mod topic {
     pub fn component_status(device_id: &str, component: Component) -> String {
         format!("tower/{device_id}/component/{}/status", component.as_str())
     }
+
+    /// Inbound topic the tower subscribes to for remote commands.
+    pub fn diagnostics_cmd(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics")
+    }
+
+    /// Outbound topic the tower replies on (acks + command results).
+    pub fn diagnostics_ack(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics/ack")
+    }
 }
 
 // ---------- Shared enums ----------
@@ -130,8 +140,11 @@ pub struct FirmwareUpdateLog<'a> {
 #[derive(Serialize)]
 pub struct ErrorLog<'a> {
     pub current_time: &'a str,
+    #[serde(rename = "type")]
+    pub log_type: &'a str,
     pub message: &'a str,
     pub component: Component,
+    pub severity: Severity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,6 +171,8 @@ pub struct WarningLog<'a> {
 #[derive(Serialize)]
 pub struct InfoLog<'a> {
     pub current_time: &'a str,
+    #[serde(rename = "type")]
+    pub log_type: &'a str,
     pub message: &'a str,
     pub component: Component,
     pub notes: &'a str,
@@ -245,10 +260,50 @@ pub fn publish_error(
     let topic = topic::logs_error(device_id);
     let payload = ErrorLog {
         current_time,
+        log_type: "error",
         message,
         component,
+        severity: Severity::Fault,
         value: None,
         unit: None,
+        notes,
+    };
+    publish_json(mqtt, &topic, &payload)
+}
+
+/// Build an `InfoLog` and publish it to `tower/{device_id}/logs/info`.
+pub fn publish_info(
+    mqtt: &mut Mqtt,
+    device_id: &str,
+    current_time: &str,
+    component: Component,
+    message: &str,
+    notes: &str,
+) -> Result<()> {
+    let topic = topic::logs_info(device_id);
+    let payload = InfoLog {
+        current_time,
+        log_type: "info",
+        message,
+        component,
+        notes,
+    };
+    publish_json(mqtt, &topic, &payload)
+}
+
+/// Build a `ComponentStatus` and publish it to `tower/{device_id}/component/{component}/status`.
+pub fn publish_component_status(
+    mqtt: &mut Mqtt,
+    device_id: &str,
+    current_time: &str,
+    component: Component,
+    status: Severity,
+    notes: &str,
+) -> Result<()> {
+    let topic = topic::component_status(device_id, component);
+    let payload = ComponentStatus {
+        current_time,
+        status,
         notes,
     };
     publish_json(mqtt, &topic, &payload)

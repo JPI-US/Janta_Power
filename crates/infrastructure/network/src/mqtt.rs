@@ -76,6 +76,7 @@ impl Mqtt {
         let connected = Arc::new(AtomicBool::new(false));
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let message_queue_clone = message_queue.clone();
 
         let (client, mut connection) = EspMqttClient::new(broker_url, &mqtt_config)?;
         info!("MQTT client created successfully!");
@@ -96,6 +97,19 @@ impl Mqtt {
                         // trigger reconnect
                     }
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
+                    EventPayload::Received { topic, data, .. } => {
+                        // Enqueue inbound messages so the main loop can drain them
+                        // via `try_receive()` (e.g. the remote command channel).
+                        if let Some(topic) = topic {
+                            if let Ok(mut queue) = message_queue_clone.lock() {
+                                queue.push_back((topic.to_string(), data.to_vec()));
+                            } else {
+                                warn!("Failed to lock MQTT queue for received message");
+                            }
+                        } else {
+                            warn!("MQTT received message without a topic");
+                        }
+                    }
                     EventPayload::Error(e) => error!("MQTT error: {:?}", e),
                     _ => {}
                 }

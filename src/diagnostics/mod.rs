@@ -1,3 +1,9 @@
-// Diagnostics module stub
-// All diagnostic features (admin mode, command handler, boot recovery) have been removed
-// for production deployment. This module is kept as a stub to maintain module structure.
+//! Remote diagnostics: a small request/response command channel over MQTT.
+//!
+//! - [`transport`]: the MQTT plumbing — subscribe to the command topic, pull one
+//!   queued command per loop, and publish a correlated reply on the ack topic.
+//! - [`commands`]: the catalog of commands the tower answers. New `get_*`
+//!   commands are added there; `transport` and `main.rs` stay untouched.
+
+pub mod commands;
+pub mod transport;

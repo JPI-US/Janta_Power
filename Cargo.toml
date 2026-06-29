@@ -13,6 +13,7 @@ members = [
     "crates/sensors/hdc1080",
     "crates/sensors/sensors",
     "crates/ui/buttons",
+    "bringup/hdc1080-test",
 ]
 
 [package]
