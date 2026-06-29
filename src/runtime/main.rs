@@ -921,6 +921,7 @@ fn boot_diagnostic(
             return false;
         }
         thread::sleep(Duration::from_millis(1000));
+
         continue;
     }
     false
