@@ -47,7 +47,6 @@ The repo is a Cargo **workspace**: a set of small library crates plus the
 ├── crates/             # reusable libraries (no app knowledge)
 ├── motion/             # motor + encoder + limit-switch + homing
 ├── rtc/                # real time (DS3231 + SNTP)
-├── bringup/            # bench test binaries (not shipped firmware)
 └── src/                # the tower application itself
 ```
 
@@ -73,7 +72,6 @@ reusable and testable on its own.
 | `crates/infrastructure/ota` | Over-the-air firmware updates | Infra service |
 | `rtc/` | Real time: DS3231 + SNTP fallback, sets the system clock | "What time is it" shouldn't live in `main` |
 | `motion/` | Motor + encoder + limit-switch control, homing primitives | The mechanical heart; big enough to own |
-| `bringup/hdc1080-test` | Standalone "is the sensor wired right?" test | Bench tool, not part of firmware |
 
 > **The one rule to remember:** anything that goes over MQTT — a topic name or a
 > JSON payload shape — is defined in
