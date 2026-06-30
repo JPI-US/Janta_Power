@@ -42,6 +42,10 @@ mod infra;
 #[path = "../switchboard.rs"]
 mod switchboard;
 
+// Required by embassy_executor when esp-idf-svc embassy features are enabled.
+#[no_mangle]
+pub extern "C" fn __pender() {}
+
 /// Long-lived runtime state for the tower, owned across the main tracking loop.
 ///
 /// Built once at the end of boot (in `main`) by gathering the initialized

@@ -12,7 +12,6 @@ members = [
     "crates/sensors/ds323x",
     "crates/sensors/hdc1080",
     "crates/sensors/sensors",
-    "crates/ui/buttons",
 ]
 
 [package]
@@ -62,7 +61,6 @@ rtc = { path = "crates/infrastructure/rtc" }
 clock = { path = "crates/infrastructure/clock" }
 hdc1080 = { path = "crates/sensors/hdc1080" }
 sensors = { path = "crates/sensors/sensors" }
-buttons = { path = "crates/ui/buttons" }
 wifi = { path = "crates/infrastructure/wifi" }
 network = { path = "crates/infrastructure/network" }
 ota = { path = "crates/infrastructure/ota" }
