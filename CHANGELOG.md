@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unused `firmware104.bin` file.
 - Removed unused `config.rs` and related files.
 - Removed unused `publisher.py` and related files.
+- Removed `.vscode/tasks.json`.
 
 ## Added
 - Implemented maintenance buttons. 
