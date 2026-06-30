@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicitly import `option::None` in `clock` and `main` to fix a strange warning.
 - Moved `motion` and `rtc` into `crates/`.
 - Ran `cargo fmt`.
+- Moved tower certificates out of `infrastructure/network/` into `certs/`.
+  - Added `certs/README.md` to explain what certificates are expected.
+  - Added redundant `certs/.gitignore` for peace of mind.
 
 ## [1.1.3] - 2026-04-23
 

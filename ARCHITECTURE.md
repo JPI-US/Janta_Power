@@ -241,7 +241,7 @@ Teach these four and most "where does X go?" questions answer themselves:
 - **`build.rs`** reads `.env` at build time and generates `src/constants.rs`.
   Do not hand-edit `constants.rs`; change `.env` and rebuild.
 - Each device flashes with its own `DEVICE_ID` and its own TLS client certs
-  (`tower_{DEVICE_ID}-*.pem.*`), which gives the device its fleet identity.
+  (`tower_{DEVICE_ID}-*.pem.*`, found in `certs/`), which gives the device its fleet identity.
 
 ---
 

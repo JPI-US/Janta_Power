@@ -23,7 +23,7 @@ pub struct Mqtt {
 
 const ROOT_CA: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
-        concat!(include_str!("../AmazonRootCA1.pem"), "\0").as_bytes(),
+        concat!(include_str!("../../../../certs/AmazonRootCA1.pem"), "\0").as_bytes(),
     )
 };
 
@@ -35,7 +35,7 @@ const DEVICE_CERT: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
         concat!(
             include_str!(concat!(
-                "../tower_",
+                "../../../../certs/tower_",
                 env!("DEVICE_ID"),
                 "-certificate.pem.crt"
             )),
@@ -48,7 +48,11 @@ const DEVICE_CERT: &CStr = unsafe {
 const PRIVATE_KEY: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
         concat!(
-            include_str!(concat!("../tower_", env!("DEVICE_ID"), "-private.pem.key")),
+            include_str!(concat!(
+                "../../../../certs/tower_",
+                env!("DEVICE_ID"),
+                "-private.pem.key"
+            )),
             "\0"
         )
         .as_bytes(),
