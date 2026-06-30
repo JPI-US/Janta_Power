@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed run profile in `ds323x`.
 - Removed unused `firmware104.bin` file.
 - Removed unused `config.rs` and related files.
+- Removed unused `publisher.py` and related files.
 
 ## Added
 - Implemented maintenance buttons. 
