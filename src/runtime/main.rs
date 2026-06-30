@@ -31,8 +31,6 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 
 mod app;
-#[path = "../config.rs"]
-mod config;
 #[path = "../constants.rs"]
 #[allow(dead_code)]
 mod constants;

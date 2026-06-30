@@ -96,7 +96,6 @@ src/
 ├── diagnostics/            # the remote command channel (talk to a live tower)
 │   ├── transport.rs         #   MQTT plumbing: subscribe, receive, reply
 │   └── commands.rs          #   the command CATALOG (get_status, future get_*)
-├── config.rs
 ├── constants.rs            # GENERATED from .env by build.rs — do not hand-edit
 └── switchboard.rs          # feature flags + Normal/Admin/Custom profiles
 ```
