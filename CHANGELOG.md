@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `ds323x` tests that were causing errors.
 - Removed random `#NEW` comments on dependencies in `Cargo.toml` files.
 - Removed run profile in `ds323x`.
+- Removed unused `firmware104.bin` file.
 
 ## Added
 - Implemented maintenance buttons. 
