@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pressing East or West begins movement, indicated by a magenta or teal LED, respectively.
   - Holding maintenance button while moving stops movement.
   - Double pressing maintenance button while not moving exits and continues normal boot.
-- Added example precommit hook to ensure code is formatted with `cargo fmt` before committing.
+- Added example precommit hook to ensure code is formatted with `cargo fmt` and able to build before commiting.
 - Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
 
 ## Fixed
