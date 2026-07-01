@@ -1,3 +1,17 @@
+
+[package]
+name = "tower"
+version = "1.0.0"
+authors = [
+    "MuditUpadhyay04 <mupadhyay@jantaus.com> ms356 <msalla@jantaus.com>, abenezertsige <atsige@jantaus.com>",
+]
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+
+[package.metadata.esp-idf]
+partition_table = "partitions.csv"
+
 [workspace]
 members = [
     "crates/drivers/accel-stepper",
@@ -14,21 +28,53 @@ members = [
     "crates/sensors/sensors",
 ]
 
-[package]
-name = "tower"
-version = "1.0.0"
-authors = ["MuditUpadhyay04 <mupadhyay@jantaus.com> ms356 <msalla@jantaus.com>, abenezertsige <atsige@jantaus.com>"]
-edition = "2021"
-resolver = "2"
-rust-version = "1.77"
-
-[package.metadata.esp-idf]
-partition_table = "partitions.csv"
-
 [[bin]]
 name = "tower"
 path = "src/runtime/main.rs"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
+[features]
+default = []
+experimental = ["esp-idf-svc/experimental"]
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4.40", features = ["clock"] }
+clock = { path = "crates/infrastructure/clock" }
+embedded-hal = "1.0.0"
+embedded-svc = "0.28.0"
+esp-idf-hal = { version = "0.45", default-features = false, features = [
+    "rmt-legacy",
+] }
+esp-idf-svc = { version = "0.51", features = [
+    "critical-section",
+    "embassy-time-driver",
+    "embassy-sync",
+] }
+hdc1080 = { path = "crates/sensors/hdc1080" }
+heapless = "0.8.0"
+log = "0.4"
+motion = { path = "crates/motion" }
+network = { path = "crates/infrastructure/network" }
+ota = { path = "crates/infrastructure/ota" }
+pid = "4.0.0"
+rgb = "0.8.50"
+rgb_led = { path = "crates/drivers/rgb_led" }
+rtc = { path = "crates/infrastructure/rtc" }
+semver = "1.0.26"
+sensors = { path = "crates/sensors/sensors" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
+    "std",
+] }
+toml = "0.8"
+wifi = { path = "crates/infrastructure/wifi" }
+
+[build-dependencies]
+dotenv = "0.15"
+embuild = "0.33.0"
 
 [profile.release]
 opt-level = "s"
@@ -37,49 +83,3 @@ opt-level = "s"
 debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 debug-assertions = false
-
-[features]
-default = []
-
-experimental = ["esp-idf-svc/experimental"]
-
-[dependencies]
-log = "0.4"
-esp-idf-svc = { version = "0.51", features = [
-    "critical-section",
-    "embassy-time-driver",
-    "embassy-sync",
-] }
-esp-idf-hal = { version = "0.45", default-features = false, features = [
-    "rmt-legacy",
-] }
-
-anyhow = "1.0"
-embedded-svc = "0.28.0"
-motion = { path = "crates/motion" }
-rtc = { path = "crates/infrastructure/rtc" }
-clock = { path = "crates/infrastructure/clock" }
-hdc1080 = { path = "crates/sensors/hdc1080" }
-sensors = { path = "crates/sensors/sensors" }
-wifi = { path = "crates/infrastructure/wifi" }
-network = { path = "crates/infrastructure/network" }
-ota = { path = "crates/infrastructure/ota" }
-shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
-    "std",
-] }
-embedded-hal = "1.0.0"
-rgb_led = { path = "crates/drivers/rgb_led" }
-rgb = "0.8.50"
-#esp32-nimble = "0.11"
-heapless = "0.8.0"
-chrono = { version = "0.4.40", features = ["clock"] }
-semver = "1.0.26"
-
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.8"
-pid = "4.0.0"
-
-[build-dependencies]
-embuild = "0.33.0"
-dotenv = "0.15"

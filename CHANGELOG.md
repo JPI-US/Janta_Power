@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved tower certificates out of `infrastructure/network/` into `certs/`.
   - Added `certs/README.md` to explain what certificates are expected.
   - Added redundant `certs/.gitignore` for peace of mind.
+- Reorganized `Cargo.toml`.
 
 ## [1.1.3] - 2026-04-23
 
