@@ -7,32 +7,80 @@ on:
 
 jobs:
   build:
+    needs: fmt
     runs-on: ubuntu-latest
+
+    env:
+      IDF_PATH: $HOME/esp-idf
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: esp-rs/xtensa-toolchain@v1.6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache ESP-IDF + Espressif tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            $HOME/esp-idf
+            $HOME/.espressif
+          key: esp-idf-v5.2.2-${{ runner.os }}-v1
+          restore-keys: |
+            esp-idf-v5.2.2-${{ runner.os }}-
+
+      - name: Setup ESP-IDF
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "$HOME/esp-idf/export.sh" ]; then
+            echo "Installing ESP-IDF v5.2.2..."
+
+            git clone \
+              --branch v5.2.2 \
+              --depth 1 \
+              --recursive \
+              https://github.com/espressif/esp-idf.git \
+              "$HOME/esp-idf"
+
+            "$HOME/esp-idf/install.sh" esp32s3
+          else
+            echo "Using cached ESP-IDF"
+          fi
 
       - name: Create dummy certs
         shell: bash
         run: |
+          set -e
           mkdir -p certs
 
-          echo "-----BEGIN CERTIFICATE-----" > certs/AmazonRootCA1.pem
-          echo "DUMMY_CERT" >> certs/AmazonRootCA1.pem
-          echo "-----END CERTIFICATE-----" >> certs/AmazonRootCA1.pem
+          cat > certs/AmazonRootCA1.pem <<EOF
+-----BEGIN CERTIFICATE-----
+DUMMY_CERT
+-----END CERTIFICATE-----
+EOF
 
-          echo "-----BEGIN CERTIFICATE-----" > certs/tower_1A-certificate.pem.crt
-          echo "DUMMY_CERT" >> certs/tower_1A-certificate.pem.crt
-          echo "-----END CERTIFICATE-----" >> certs/tower_1A-certificate.pem.crt
+          cat > certs/tower_1A-certificate.pem.crt <<EOF
+-----BEGIN CERTIFICATE-----
+DUMMY_CERT
+-----END CERTIFICATE-----
+EOF
 
-          echo "-----BEGIN PRIVATE KEY-----" > certs/tower_1A-private.pem.key
-          echo "DUMMY_KEY" >> certs/tower_1A-private.pem.key
-          echo "-----END PRIVATE KEY-----" >> certs/tower_1A-private.pem.key
+          cat > certs/tower_1A-private.pem.key <<EOF
+-----BEGIN PRIVATE KEY-----
+DUMMY_KEY
+-----END PRIVATE KEY-----
+EOF
 
       - name: Build
         shell: bash
         run: |
-          . "$HOME/esp-idf/export.sh"
+          set -e
+          source "$HOME/esp-idf/export.sh"
           cargo build --workspace
