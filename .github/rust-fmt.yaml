@@ -1,9 +1,9 @@
 name: Rust Format Check
 
 on:
+  pull_request:
   push:
     branches: [master]
-  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
