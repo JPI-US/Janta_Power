@@ -170,7 +170,7 @@ impl Rtc {
         let epoch = dt.and_utc().timestamp();
         unsafe {
             let tv = esp_idf_svc::sys::timeval {
-                tv_sec: epoch as i64,
+                tv_sec: epoch,
                 tv_usec: 0,
             };
             esp_idf_svc::sys::settimeofday(&tv, std::ptr::null());

@@ -47,36 +47,36 @@ fn generate_constants() {
     constants.push_str(&get_env("DEFAULT_MAX_SPEED_STEPS_PER_S", "5000.0", "f32"));
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Encoder Constants
     constants.push_str("// Encoder Constants\n");
     constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
     constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
     constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Stall Detection
     constants.push_str("// Stall Detection\n");
     constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "u64"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Tracking Constants
     constants.push_str("// Tracking Constants\n");
     constants.push_str(&get_env("TRACKING_DEADBAND_DEG", "5.0", "f32"));
     constants.push_str(&get_env("HOME_HEADING_DEG", "90.0", "f32"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Soft Limits
     constants.push_str("// Soft Limits (Safety Guardrails)\n");
     constants.push_str(&get_env("SOFT_LIMIT_MIN_DEG", "0.0", "f32"));
     constants.push_str(&get_env("SOFT_LIMIT_MAX_DEG", "285.0", "f32"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Encoder Overshoot Protection
     constants.push_str("// Encoder Overshoot Protection (Safety)\n");
     constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "750", "i64"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Operational Mode (as string constants for runtime conversion)
     constants.push_str("// Operational Mode\n");
@@ -90,20 +90,20 @@ fn generate_constants() {
         "pub const ACTIVE_MODE_STR: &str = \"{}\";\n",
         mode
     ));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // WiFi Configuration
     constants.push_str("// WiFi Configuration\n");
     constants.push_str(&get_env("WIFI_SSID", "Power2", "str"));
     constants.push_str(&get_env("WIFI_PASSWORD", "@Powerfuture22", "str"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Device identity (used as MQTT topic prefix: `tower/{device_id}/...`).
     // AWS IoT Core handles broker auth via TLS client certs, so no username /
     // password is plumbed here.
     constants.push_str("// Device Identity\n");
     constants.push_str(&get_env("DEVICE_ID", "10", "str"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Timezone — DST-aware via libc setenv("TZ") + tzset. Fixed-offset constants
     // were removed in v1.1.0; TZ_POSIX alone drives all local-time conversion.
@@ -111,13 +111,13 @@ fn generate_constants() {
         std::env::var("TZ_POSIX").unwrap_or_else(|_| "CST6CDT,M3.2.0,M11.1.0".to_string());
     constants.push_str("// POSIX TZ string for libc setenv/tzset (DST-aware local time)\n");
     constants.push_str(&format!("pub const TZ_POSIX: &str = {:?};\n", tz_posix));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Tower location (MQTT topic root is DEVICE_ID above).
     constants.push_str("// Tower location defaults\n");
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
 

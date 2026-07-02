@@ -427,7 +427,8 @@ pub mod motion {
                 };
                 let topic = network::telemetry::topic::data_angle(device_id);
                 let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
-                return false;
+
+                false
             } else {
                 // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
@@ -510,7 +511,7 @@ pub mod motion {
                         std::thread::sleep(std::time::Duration::from_secs(600));
                     }
 
-                    return true;
+                    true
                 } else {
                     log::info!("Moving to sleep position...");
                     let limit_sw_status = self.find_limit_switch_ccw();
@@ -540,6 +541,7 @@ pub mod motion {
                         }
                     }
                     log::info!("Tower has reached sleep position");
+
                     return false;
                 }
             }

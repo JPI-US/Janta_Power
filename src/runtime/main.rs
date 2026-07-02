@@ -1,4 +1,4 @@
-use core::option::Option::None;
+use core::{convert::Into, option::Option::None};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -28,7 +28,10 @@ use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
+use crate::app::{
+    encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
+    tracking_loop::TrackingTickContext,
+};
 
 mod app;
 #[path = "../constants.rs"]
@@ -186,18 +189,23 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// is active (caller should `continue` and skip tracking this iteration).
     fn run_encoder_fault(&mut self) -> anyhow::Result<bool> {
         let cfg = self.encoder_recovery_cfg();
+
+        let mut ctx = EncoderTickContext {
+            nvs: &mut self.nvs,
+            mqtt: &mut self.mqtt,
+            wifi: &mut self.wifi,
+            cfg,
+            current_version: self.current_version.clone(),
+            persist_nvs: Self::PERSIST_NVS,
+            device_id: self.sw.device_id.into(),
+            home_heading_deg: self.sw.home_heading_deg,
+        };
+
         let fault_active = self.encoder_fault.tick(
-            &cfg,
+            &mut ctx,
             &mut self.motion,
             self.motion_mode,
             &mut self.actual_heading,
-            &mut self.nvs,
-            &mut self.mqtt,
-            &mut self.wifi,
-            &self.current_version,
-            Self::PERSIST_NVS,
-            self.sw.device_id,
-            self.sw.home_heading_deg,
         )?;
         Ok(fault_active)
     }
@@ -210,19 +218,21 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             return;
         }
         let cfg = self.encoder_recovery_cfg();
-        let outcome = app::tracking_loop::tick(
-            &mut self.motion,
-            &mut self.calculation,
-            &mut self.actual_heading,
-            &mut self.mqtt,
-            &self.current_version,
-            &mut self.nvs,
-            &mut self.wifi,
+
+        let mut ctx = TrackingTickContext {
+            calculation: &mut self.calculation,
+            mqtt: &mut self.mqtt,
+            current_version: self.current_version.clone(),
+            nvs: &mut self.nvs,
+            wifi: &mut self.wifi,
             current_datetime,
-            Self::PERSIST_NVS,
-            self.allow_ota,
-            self.sw.device_id,
-        );
+            persist_nvs: Self::PERSIST_NVS,
+            allow_ota: self.allow_ota,
+            device_id: self.sw.device_id,
+        };
+
+        let outcome =
+            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading);
 
         if outcome != MoveOutcome::Completed {
             warn!("Last move aborted: {:?}", outcome);

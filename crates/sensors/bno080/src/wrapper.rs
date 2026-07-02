@@ -297,9 +297,7 @@ where
                     SHUB_COMMAND_RESP => {
                         // 0xF1 / 241
                         let cmd_resp = msg[6];
-                        if cmd_resp == SH2_STARTUP_INIT_UNSOLICITED {
-                            self.init_received = true;
-                        } else if cmd_resp == SH2_INIT_SYSTEM {
+                        if cmd_resp == SH2_STARTUP_INIT_UNSOLICITED || cmd_resp == SH2_INIT_SYSTEM {
                             self.init_received = true;
                         }
                     }
