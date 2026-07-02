@@ -1,0 +1,16 @@
+name: Clippy
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.6
+      - run: |
+          . "$HOME/esp-idf/export.sh"
+          cargo clippy --workspace --all-targets -D warnings

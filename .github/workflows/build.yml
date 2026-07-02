@@ -1,0 +1,38 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: esp-rs/xtensa-toolchain@v1.6
+
+      - name: Create dummy certs
+        shell: bash
+        run: |
+          mkdir -p certs
+
+          echo "-----BEGIN CERTIFICATE-----" > certs/AmazonRootCA1.pem
+          echo "DUMMY_CERT" >> certs/AmazonRootCA1.pem
+          echo "-----END CERTIFICATE-----" >> certs/AmazonRootCA1.pem
+
+          echo "-----BEGIN CERTIFICATE-----" > certs/tower_1A-certificate.pem.crt
+          echo "DUMMY_CERT" >> certs/tower_1A-certificate.pem.crt
+          echo "-----END CERTIFICATE-----" >> certs/tower_1A-certificate.pem.crt
+
+          echo "-----BEGIN PRIVATE KEY-----" > certs/tower_1A-private.pem.key
+          echo "DUMMY_KEY" >> certs/tower_1A-private.pem.key
+          echo "-----END PRIVATE KEY-----" >> certs/tower_1A-private.pem.key
+
+      - name: Build
+        shell: bash
+        run: |
+          . "$HOME/esp-idf/export.sh"
+          cargo build --workspace
