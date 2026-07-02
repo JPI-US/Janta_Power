@@ -1,0 +1,64 @@
+name: Rust Build Check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: cargo build --workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust
+
+      # esp-idf-sys's native builder clones and builds ESP-IDF itself
+      # during `cargo build` (driven by ESP_IDF_VERSION in
+      # .cargo/config.toml), but it still needs these system tools
+      # present on the runner: python3 (+venv/pip) to run IDF's own
+      # tooling, cmake/ninja/ccache for the IDF build, libclang for
+      # bindgen (used to generate the ESP-IDF C bindings), and
+      # libudev/pkg-config/libssl for a couple of native crates.
+      - name: Install ESP-IDF build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git python3 python3-pip python3-venv \
+            cmake ninja-build ccache \
+            libclang-dev pkg-config libssl-dev libudev-dev
+
+      # ESP-IDF itself (~1-2GB with submodules) and the IDF tools it
+      # installs under ~/.espressif are the slowest part of a cold
+      # run; caching them keyed on the pinned IDF version means only
+      # the first run per version pays that cost.
+      - name: Cache ESP-IDF tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            target
+          key: esp-idf-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            esp-idf-${{ runner.os }}-
+
+      # Cloning ESP-IDF (and its submodules) over the git protocol is
+      # unreliable/blocked in some CI environments; forcing the git
+      # CLI (which respects normal https auth) avoids intermittent
+      # clone failures during the native build.
+      #
+      # RUSTFLAGS="-D warnings" mirrors the clippy job's strictness
+      # for the compiler's own warnings (unused imports, deprecated
+      # APIs, etc.) so the build fails on those too, not just lints.
+      - name: Build workspace
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+          RUSTFLAGS: -D warnings
+        run: cargo build --workspace --all-targets --all-features
