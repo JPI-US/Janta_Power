@@ -1,0 +1,50 @@
+name: ESP-IDF Setup (Rust + ESP32-S3)
+
+description: Sets up ESP-IDF v5.2.2 + Espressif tools + Rust env
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy,rustfmt
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Cache ESP-IDF + tools
+      uses: actions/cache@v4
+      with:
+        path: |
+          $HOME/esp-idf
+          $HOME/.espressif
+        key: esp-idf-v5.2.2-${{ runner.os }}-v1
+        restore-keys: |
+          esp-idf-v5.2.2-${{ runner.os }}-
+
+    - name: Setup ESP-IDF
+      shell: bash
+      run: |
+        set -e
+
+        if [ ! -d "$HOME/esp-idf/.git" ]; then
+          echo "Installing ESP-IDF v5.2.2..."
+
+          git clone \
+            --branch v5.2.2 \
+            --depth 1 \
+            --recursive \
+            https://github.com/espressif/esp-idf.git \
+            "$HOME/esp-idf"
+
+          "$HOME/esp-idf/install.sh" esp32s3
+        else
+          echo "Using cached ESP-IDF"
+        fi
+
+    - name: Export ESP-IDF env
+      shell: bash
+      run: |
+        echo "source $HOME/esp-idf/export.sh" >> $GITHUB_ENV

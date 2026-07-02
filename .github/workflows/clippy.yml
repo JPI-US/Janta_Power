@@ -7,56 +7,13 @@ on:
 
 jobs:
   clippy:
-    needs: build
     runs-on: ubuntu-latest
-
-    env:
-      IDF_PATH: $HOME/esp-idf
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Cache ESP-IDF + Espressif tools
-        uses: actions/cache@v4
-        with:
-          path: |
-            $HOME/esp-idf
-            $HOME/.espressif
-          key: esp-idf-v5.2.2-${{ runner.os }}-v1
-          restore-keys: |
-            esp-idf-v5.2.2-${{ runner.os }}-
-
-      - name: Setup ESP-IDF
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f "$HOME/esp-idf/export.sh" ]; then
-            echo "Installing ESP-IDF v5.2.2..."
-
-            git clone \
-              --branch v5.2.2 \
-              --depth 1 \
-              --recursive \
-              https://github.com/espressif/esp-idf.git \
-              "$HOME/esp-idf"
-
-            "$HOME/esp-idf/install.sh" esp32s3
-          else
-            echo "Using cached ESP-IDF"
-          fi
+      - name: Setup ESP-IDF + Rust
+        uses: ./.github/actions/esp-idf-setup
 
       - name: Run Clippy
-        shell: bash
-        run: |
-          set -e
-          source "$HOME/esp-idf/export.sh"
-          cargo clippy --workspace --all-targets -D warnings
+        run: cargo clippy --workspace --all-targets -D warnings
