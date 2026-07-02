@@ -49,6 +49,25 @@ jobs:
           restore-keys: |
             esp-idf-${{ runner.os }}-
 
+      - name: Create CI dummy certs and env
+        run: |
+          mkdir -p certs
+
+          echo "-----BEGIN CERTIFICATE-----" > certs/AmazonRootCA1.pem
+          echo "CI_DUMMY_CERT" >> certs/AmazonRootCA1.pem
+          echo "-----END CERTIFICATE-----" >> certs/AmazonRootCA1.pem
+
+          echo "-----BEGIN CERTIFICATE-----" > certs/tower_1A-certificate.pem.crt
+          echo "CI_DUMMY_CERT" >> certs/tower_1A-certificate.pem.crt
+          echo "-----END CERTIFICATE-----" >> certs/tower_1A-certificate.pem.crt
+
+          echo "-----BEGIN PRIVATE KEY-----" > certs/tower_1A-private.pem.key
+          echo "CI_DUMMY_KEY" >> certs/tower_1A-private.pem.key
+          echo "-----END PRIVATE KEY-----" >> certs/tower_1A-private.pem.key
+
+          # copy env file for CI
+          cp .env.example .env
+
       # Cloning ESP-IDF (and its submodules) over the git protocol is
       # unreliable/blocked in some CI environments; forcing the git
       # CLI (which respects normal https auth) avoids intermittent
