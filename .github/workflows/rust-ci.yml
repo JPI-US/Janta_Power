@@ -1,0 +1,37 @@
+name: Rust CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ESP-IDF toolchain
+        uses: esp-rs/esp-idf-ci-action@v1
+        with:
+          target: esp32s3
+          esp_idf_version: v5.2.2
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build
+        run: cargo build --locked --workspace
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
