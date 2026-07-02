@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
 - Added `cargo clippy` to pre-commit hook.
 - Added flags in the pre-commit hook to ensure every file gets checked.
+- Added Github Workflows for automated checks.
 
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.
@@ -47,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `certs/README.md` to explain what certificates are expected.
   - Added redundant `certs/.gitignore` for peace of mind.
 - Reorganized `Cargo.toml`.
+- Removed `Cargo.lock` from `.gitignore`. This is required for the CI checks to work and is good practice for binaries.
 
 ## [1.1.3] - 2026-04-23
 
