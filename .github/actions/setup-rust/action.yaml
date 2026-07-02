@@ -18,16 +18,9 @@ inputs:
 runs:
   using: composite
   steps:
-    # rust-toolchain.toml pins `channel = "esp"`, which is the
-    # espup-managed Xtensa/RISC-V fork of Rust, not a vanilla rustup
-    # channel. This action runs espup under the hood and registers
-    # it as the "esp" toolchain + default, so anything respecting
-    # rust-toolchain.toml (cargo fmt, build, clippy, etc.) picks it
-    # up automatically.
     - name: Install esp Rust toolchain
       uses: esp-rs/xtensa-toolchain@v1.5
       with:
         default: true
         buildtargets: ${{ inputs.buildtargets }}
-        version: ${{ inputs.version }}
         ldproxy: ${{ inputs.ldproxy }}
