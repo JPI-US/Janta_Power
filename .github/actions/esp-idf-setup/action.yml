@@ -6,16 +6,20 @@ runs:
   using: "composite"
 
   steps:
-    - name: Install Rust (stable bootstrap)
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install espup
+    - name: Force stable toolchain for bootstrap
       shell: bash
-      run: cargo install espup
+      run: |
+        rustup default stable
+
+    - name: Install espup (using stable override)
+      shell: bash
+      run: |
+        cargo +stable install espup
 
     - name: Install ESP Rust toolchain
       shell: bash
-      run: espup install
+      run: |
+        espup install
 
     - name: Load ESP environment
       shell: bash
@@ -43,8 +47,3 @@ runs:
     - name: Export ESP-IDF env
       shell: bash
       run: echo "source $HOME/esp-idf/export.sh" >> $GITHUB_ENV
-
-    - name: Switch to ESP toolchain
-      shell: bash
-      run: |
-        echo "ESP toolchain installed via espup"
