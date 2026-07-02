@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Double pressing maintenance button while not moving exits and continues normal boot.
 - Added example precommit hook to ensure code is formatted with `cargo fmt` and able to build before commiting.
 - Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
+- Added `cargo clippy` to pre-commit hook.
 
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.

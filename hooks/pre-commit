@@ -26,5 +26,8 @@ cargo fmt --check
 echo "Checking compilation..."
 cargo build
 
+echo "Checking Linting..."
+cargo clippy
+
 echo "All checks passed."
 exit 0
