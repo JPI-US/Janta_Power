@@ -1,9 +1,9 @@
 name: Rust Format Check
 
 on:
-  pull_request:
   push:
     branches: [master]
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,12 +16,8 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install esp Rust toolchain
-        uses: esp-rs/xtensa-toolchain@v1.5
-        with:
-          default: true
-          buildtargets: esp32
-          ldproxy: false
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust
 
       - name: Check formatting
         run: cargo fmt --all -- --check
