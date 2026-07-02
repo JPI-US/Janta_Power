@@ -1,6 +1,6 @@
 name: ESP-IDF Setup (Rust + ESP32-S3)
 
-description: Sets up ESP-IDF v5.2.2 + Espressif tools + Rust ESP toolchain
+description: Sets up ESP-IDF + ESP Rust toolchain
 
 runs:
   using: "composite"
@@ -14,17 +14,9 @@ runs:
       shell: bash
       run: espup install
 
-    - name: Load ESP Rust environment
+    - name: Load ESP environment
       shell: bash
       run: echo "source $HOME/export-esp.sh" >> $GITHUB_ENV
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy,rustfmt
-
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
 
     - name: Cache ESP-IDF + tools
       uses: actions/cache@v4
