@@ -57,13 +57,13 @@ jobs:
           echo "CI_DUMMY_CERT" >> certs/AmazonRootCA1.pem
           echo "-----END CERTIFICATE-----" >> certs/AmazonRootCA1.pem
 
-          echo "-----BEGIN CERTIFICATE-----" > certs/tower_1A-certificate.pem.crt
-          echo "CI_DUMMY_CERT" >> certs/tower_1A-certificate.pem.crt
-          echo "-----END CERTIFICATE-----" >> certs/tower_1A-certificate.pem.crt
+          echo "-----BEGIN CERTIFICATE-----" > certs/tower_1-certificate.pem.crt
+          echo "CI_DUMMY_CERT" >> certs/tower_1-certificate.pem.crt
+          echo "-----END CERTIFICATE-----" >> certs/tower_1-certificate.pem.crt
 
-          echo "-----BEGIN PRIVATE KEY-----" > certs/tower_1A-private.pem.key
-          echo "CI_DUMMY_KEY" >> certs/tower_1A-private.pem.key
-          echo "-----END PRIVATE KEY-----" >> certs/tower_1A-private.pem.key
+          echo "-----BEGIN PRIVATE KEY-----" > certs/tower_1-private.pem.key
+          echo "CI_DUMMY_KEY" >> certs/tower_1-private.pem.key
+          echo "-----END PRIVATE KEY-----" >> certs/tower_1-private.pem.key
 
           # copy env file for CI
           cp .env.example .env
