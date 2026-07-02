@@ -21,13 +21,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Checking formatting..."
-cargo fmt --check
+cargo fmt --all --check
 
 echo "Checking compilation..."
-cargo build
+cargo build --workspace
 
 echo "Checking Linting..."
-cargo clippy
+cargo clippy --workspace
 
 echo "All checks passed."
 exit 0
