@@ -1,7 +1,8 @@
 use core::time::Duration;
 
-use crate::{Device, StepContext};
 use embedded_hal::digital::OutputPin;
+
+use crate::{Device, StepContext};
 
 /// A [`Device`] which has step and direction pins.
 ///
@@ -17,7 +18,9 @@ impl<Step, Direction> StepAndDirection<Step, Direction> {
         StepAndDirection { step, direction }
     }
 
-    pub fn into_inner(self) -> (Step, Direction) { (self.step, self.direction) }
+    pub fn into_inner(self) -> (Step, Direction) {
+        (self.step, self.direction)
+    }
 }
 
 fn set_output<P: OutputPin>(pin: &mut P, mask: u8) -> Result<(), P::Error> {

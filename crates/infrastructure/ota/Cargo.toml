@@ -9,7 +9,7 @@ embedded-svc = "0.28.1"
 hex = "0.4.3"
 network = { path = "../network" }
 log = "0.4"
-anyhow = "1.0" # New Dependency
+anyhow = "1.0"
 heapless = "0.8.0"
 sha2 = "0.10.9"
 semver = "1.0.26"

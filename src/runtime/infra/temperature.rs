@@ -1,9 +1,10 @@
-use embedded_hal::delay::DelayNs;
-use embedded_hal::i2c::I2c;
+use embedded_hal::{delay::DelayNs, i2c::I2c};
 use hdc1080::Hdc1080;
-use network::mqtt::Mqtt;
-use network::telemetry::{
-    publish_component_status, publish_info, publish_json, topic, Component, ErrorLog, Severity,
+use network::{
+    mqtt::Mqtt,
+    telemetry::{
+        publish_component_status, publish_info, publish_json, topic, Component, ErrorLog, Severity,
+    },
 };
 
 /// Temperature tier notes published in `logs/*` and `component/system/status`.

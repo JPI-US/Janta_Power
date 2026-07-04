@@ -17,8 +17,10 @@
 
 use anyhow::Result;
 use log::{error, info, warn};
-use network::mqtt::Mqtt;
-use network::telemetry::{publish_json, topic, TIME_FORMAT};
+use network::{
+    mqtt::Mqtt,
+    telemetry::{publish_json, topic, TIME_FORMAT},
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -53,7 +55,10 @@ pub fn process_one(mqtt: &mut Mqtt, device_id: &str, ctx: &CmdCtx) -> Result<boo
 
     let cmd_topic = topic::diagnostics_cmd(device_id);
     if in_topic != cmd_topic {
-        warn!("Ignoring message on unexpected topic: {} (want {})", in_topic, cmd_topic);
+        warn!(
+            "Ignoring message on unexpected topic: {} (want {})",
+            in_topic, cmd_topic
+        );
         return Ok(false);
     }
 
@@ -70,25 +75,46 @@ pub fn process_one(mqtt: &mut Mqtt, device_id: &str, ctx: &CmdCtx) -> Result<boo
         Ok(c) => c,
         Err(e) => {
             error!("Command JSON is invalid: {:?}", e);
-            reply_error(mqtt, device_id, "", "unknown", "payload must be valid JSON with a `cmd` field")?;
+            reply_error(
+                mqtt,
+                device_id,
+                "",
+                "unknown",
+                "payload must be valid JSON with a `cmd` field",
+            )?;
             return Ok(true);
         }
     };
 
     let request_id = command.request_id.as_deref().unwrap_or("");
-    info!("Command received: cmd={} request_id={}", command.cmd, request_id);
+    info!(
+        "Command received: cmd={} request_id={}",
+        command.cmd, request_id
+    );
 
     match commands::dispatch(&command.cmd, ctx) {
         Some(data) => reply_ok(mqtt, device_id, request_id, &command.cmd, data)?,
         None => {
             warn!("Unsupported command: {}", command.cmd);
-            reply_error(mqtt, device_id, request_id, &command.cmd, "unsupported command")?;
+            reply_error(
+                mqtt,
+                device_id,
+                request_id,
+                &command.cmd,
+                "unsupported command",
+            )?;
         }
     }
     Ok(true)
 }
 
-fn reply_ok(mqtt: &mut Mqtt, device_id: &str, request_id: &str, cmd: &str, data: Value) -> Result<()> {
+fn reply_ok(
+    mqtt: &mut Mqtt,
+    device_id: &str,
+    request_id: &str,
+    cmd: &str,
+    data: Value,
+) -> Result<()> {
     let envelope = json!({
         "current_time": now(),
         "request_id": request_id,
@@ -99,7 +125,13 @@ fn reply_ok(mqtt: &mut Mqtt, device_id: &str, request_id: &str, cmd: &str, data:
     publish_json(mqtt, &topic::diagnostics_ack(device_id), &envelope)
 }
 
-fn reply_error(mqtt: &mut Mqtt, device_id: &str, request_id: &str, cmd: &str, message: &str) -> Result<()> {
+fn reply_error(
+    mqtt: &mut Mqtt,
+    device_id: &str,
+    request_id: &str,
+    cmd: &str,
+    message: &str,
+) -> Result<()> {
     let envelope = json!({
         "current_time": now(),
         "request_id": request_id,

@@ -7,16 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-* Implemented maintenance buttons. 
-  *  Holding maintenance button on startup enters maintenance mode, indicated by a solid blue LED. 
-  * Pressing East or West begins movement, indicated by a magenta or teal LED, respectively.
-  * Holding maintenance button while moving stops movement.
-  * Double pressing maintenance button while not moving exits and continues normal boot.
+## Removed
+- Removed extraneous non-code files from certain crates.
+- Removed `rttdebug` code that was causing errors.
+- Removed `mock_i2c_port.rs` and `i2c` tests that were causing errors.
+- Removed `ds323x` tests that were causing errors.
+- Removed random `#NEW` comments on dependencies in `Cargo.toml` files.
+- Removed run profile in `ds323x`.
+- Removed unused `firmware104.bin` file.
+- Removed unused `config.rs` and related files.
+- Removed unused `publisher.py` and related files.
+- Removed `.vscode/tasks.json`.
 
-### Changed
-* Moved motor and button initialization to the beginning of `main`.
-* Changed `east_button` to `ccw_button` and `west_button` to `cw_button`.
+## Added
+- Implemented maintenance buttons. 
+  - Holding maintenance button on startup enters maintenance mode, indicated by a solid blue LED. 
+  - Pressing East or West begins movement, indicated by a magenta or teal LED, respectively.
+  - Holding maintenance button while moving stops movement.
+  - Double pressing maintenance button while not moving exits and continues normal boot.
+- Added example precommit hook to ensure code is formatted with `cargo fmt` and able to build before commiting.
+- Added `rustfmt.toml` to configure how imports are handled by `cargo fmt`.
+- Added `cargo clippy` to pre-commit hook.
+- Added flags in the pre-commit hook to ensure every file gets checked.
+- Added Github Workflows for automated checks.
+
+## Fixed
+- Fixed broken motor and sensor tests that were causing errors.
+- Fixed import in `driver.rs` being wrongly flagged as unused.
+- Properly return errors instead of ignoring them.
+
+## Changed
+- Moved motor and button initialization to the beginning of `main`.
+- Changed `east_button` to `ccw_button` and `west_button` to `cw_button`.
+- Suppressed dead code warnings.
+- Small code style changes.
+- Explicitly import `option::None` in `clock` and `main` to fix a strange warning.
+- Moved `motion` and `rtc` into `crates/`.
+- Ran `cargo fmt`.
+- Moved tower certificates out of `infrastructure/network/` into `certs/`.
+  - Added `certs/README.md` to explain what certificates are expected.
+  - Added redundant `certs/.gitignore` for peace of mind.
+- Reorganized `Cargo.toml`.
+- Removed `Cargo.lock` from `.gitignore`. This is required for the CI checks to work and is good practice for binaries.
 
 ## [1.1.3] - 2026-04-23
 

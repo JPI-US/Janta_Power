@@ -1,0 +1,7 @@
+# Group imports at the crate level, 
+# reducing clutter when important a lot of things from the same crate
+imports_granularity = "Crate"
+
+# Split imports into three visual groups.
+# First std imports, then external (dependency) imports, then imports from this crate
+group_imports = "StdExternalCrate"

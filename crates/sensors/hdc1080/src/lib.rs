@@ -55,6 +55,7 @@ struct ConfigBitFlags;
 
 impl ConfigBitFlags {
     const RST: u16 = 0b1000_0000_0000_0000;
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     const HEAT: u16 = 0b0010_0000_0000_0000;
     const MODE: u16 = 0b0001_0000_0000_0000;
     const BTST: u16 = 0b0000_1000_0000_0000;
@@ -78,10 +79,9 @@ where
     /// default: temperature 11-bit humidity 11-b
     pub fn new(i2c: I2C, delay: D) -> Result<Self, I2C::Error> {
         let dev = Self {
-            i2c: i2c,
-            delay: delay,
-            config: 0x00
-                | ConfigBitFlags::T_MODE
+            i2c,
+            delay,
+            config: ConfigBitFlags::T_MODE
                 | ConfigBitFlags::MODE
                 | ConfigBitFlags::H_MODE8 & !ConfigBitFlags::H_MODE9,
         };
@@ -140,8 +140,7 @@ where
     /// Read config from register
     pub fn read_config(&mut self) -> Result<u16, I2C::Error> {
         let mut current_config: [u8; 2] = [0, 0];
-        let _result = self
-            .i2c
+        self.i2c
             .write_read(I2C_ADDRESS, &[Register::CONFIGURATION], &mut current_config)
             .unwrap_or_default();
 
@@ -162,9 +161,9 @@ where
     /// Read temperature and humidity
     pub fn read(&mut self) -> Result<(f32, f32), I2C::Error> {
         let mut buf: [u8; 4] = [0, 0, 0, 0];
-        let t_raw_u16: u16;
+
         let h_raw_u16: u16;
-        let temper: f32;
+
         let humm: f32;
 
         self.i2c
@@ -172,8 +171,8 @@ where
             .unwrap_or_default();
         self.delay.delay_ms(20);
         self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
-        t_raw_u16 = u16::from_be_bytes([buf[0], buf[1]]);
-        temper = f32::from(t_raw_u16) / 65536.0 * 165.0 - 40.0;
+        let t_raw_u16: u16 = u16::from_be_bytes([buf[0], buf[1]]);
+        let temper: f32 = f32::from(t_raw_u16) / 65536.0 * 165.0 - 40.0;
 
         if self.config & ConfigBitFlags::MODE != 0 {
             h_raw_u16 = u16::from_be_bytes([buf[2], buf[3]]);
@@ -188,8 +187,6 @@ where
     /// Temperature only
     pub fn temperature(&mut self) -> Result<f32, I2C::Error> {
         let mut buf: [u8; 2] = [0, 0];
-        let result: u16;
-        let temper: f32;
 
         self.i2c
             .write(I2C_ADDRESS, &[Register::TEMPERATURE])
@@ -197,16 +194,14 @@ where
         self.delay.delay_ms(20);
         self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
 
-        result = u16::from_be_bytes(buf);
-        temper = f32::from(result) / 65536.0 * 165.0 - 40.0;
+        let result: u16 = u16::from_be_bytes(buf);
+        let temper: f32 = f32::from(result) / 65536.0 * 165.0 - 40.0;
         Ok(temper)
     }
 
     /// Humidity only
     pub fn humidity(&mut self) -> Result<f32, I2C::Error> {
         let mut buf: [u8; 2] = [0, 0];
-        let result: u16;
-        let humid: f32;
 
         self.i2c
             .write(I2C_ADDRESS, &[Register::HUMIDITY])
@@ -214,30 +209,30 @@ where
         self.delay.delay_ms(20);
         self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
 
-        result = u16::from_be_bytes(buf);
-        humid = f32::from(result) / 65536.0 * 100.0;
+        let result: u16 = u16::from_be_bytes(buf);
+        let humid: f32 = f32::from(result) / 65536.0 * 100.0;
         Ok(humid)
     }
 
     /// Device ID. Expect u16 0x1050
     pub fn get_device_id(&mut self) -> Result<u16, I2C::Error> {
         let mut buf: [u8; 2] = [0, 0];
-        let result: u16;
+
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::DEVICE_ID], &mut buf)
             .unwrap_or_default();
-        result = ((buf[0] as u16) << 8) | (buf[1] as u16);
+        let result: u16 = ((buf[0] as u16) << 8) | (buf[1] as u16);
         Ok(result)
     }
 
     /// Manufacturer ID. Expect u16 0x5449
     pub fn get_man_id(&mut self) -> Result<u16, I2C::Error> {
         let mut buf = [0u8; 2];
-        let result: u16;
+
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::MANUFACTURER], &mut buf)
             .unwrap_or_default();
-        result = ((buf[0] as u16) << 8) | (buf[1] as u16);
+        let result: u16 = ((buf[0] as u16) << 8) | (buf[1] as u16);
         Ok(result)
     }
 
