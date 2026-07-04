@@ -12,7 +12,7 @@ pub trait Device {
     fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error>;
 }
 
-impl<'a, D: Device> Device for &'a mut D {
+impl<D: Device> Device for &mut D {
     type Error = D::Error;
 
     fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error> {

@@ -10,7 +10,7 @@ pub trait SystemClock {
     fn elapsed(&self) -> Duration;
 }
 
-impl<'a, C: SystemClock> SystemClock for &'a C {
+impl<C: SystemClock> SystemClock for &C {
     fn elapsed(&self) -> Duration {
         (*self).elapsed()
     }

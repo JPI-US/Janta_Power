@@ -48,14 +48,14 @@ fn generate_constants() {
     constants.push_str(&get_env("DEFAULT_MAX_SPEED_STEPS_PER_S", "5000.0", "f32"));
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Encoder Constants
     constants.push_str("// Encoder Constants\n");
     constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
     constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
     constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Stall Detection
     constants.push_str("// Stall Detection\n");
@@ -67,7 +67,7 @@ fn generate_constants() {
         "120000",
         "i64",
     ));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Tracking Constants
     constants.push_str("// Tracking Constants\n");
@@ -77,7 +77,7 @@ fn generate_constants() {
     // reported as `acceptable`. Outside the band it is classified as either
     // `undershoot` (positive drift) or `overshoot` (negative drift).
     constants.push_str(&get_env("HOME_ERROR_ACCEPTABLE_DEG", "2.5", "f32"));
-    constants.push_str("\n");
+    constants.push('\n');
 
     // Timezone is DST-aware via runtime libc TZ/tzset (owned by runtime crate).
     // Motion reads local time via `chrono::Local`; no build-time offset needed.

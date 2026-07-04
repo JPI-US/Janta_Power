@@ -1,5 +1,3 @@
-use core::f32::EPSILON;
-
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use libm::F32Ext;
@@ -89,7 +87,7 @@ impl Driver {
 
         let acceleration = acceleration.abs();
 
-        if (self.acceleration - acceleration).abs() > EPSILON {
+        if (self.acceleration - acceleration).abs() > f32::EPSILON {
             // Recompute step_counter per Equation 17
             self.step_counter =
                 (self.step_counter as f32 * self.acceleration / acceleration) as i64;
@@ -115,7 +113,7 @@ impl Driver {
     /// frequently you call the [`Driver::poll_at_constant_speed()`] method. The
     /// speed will be limited by the current value of [`Driver::max_speed()`].
     pub fn set_speed(&mut self, speed: f32) {
-        if (speed - self.speed).abs() < EPSILON {
+        if (speed - self.speed).abs() < f32::EPSILON {
             return;
         }
 

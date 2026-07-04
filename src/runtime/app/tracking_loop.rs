@@ -1,7 +1,7 @@
 use core::option::Option::None;
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use motion::MotionMode;
+use motion::{motion::TowerPositionCtx, MotionMode};
 use semver::Version;
 
 use crate::infra::SnapshotStore;
@@ -32,19 +32,19 @@ where
     I2C: embedded_hal::i2c::I2c,
     T: NvsPartitionId,
 {
-    let tracking_done = motion.set_tower_position(
-        ctx.calculation,
-        *actual_heading,
-        0,
-        ctx.mqtt,
-        ctx.current_version.clone(),
-        ctx.nvs,
-        ctx.wifi,
-        ctx.current_datetime.clone(),
-        ctx.persist_nvs,
-        ctx.allow_ota,
-        ctx.device_id,
-    );
+    let nctx = TowerPositionCtx {
+        allow_ota: ctx.allow_ota,
+        clock: ctx.calculation,
+        current_version: ctx.current_version.clone(),
+        device_id: ctx.device_id,
+        formatted_time: ctx.current_datetime.clone(),
+        mqtt: ctx.mqtt,
+        nvs: ctx.nvs,
+        persist_nvs: ctx.persist_nvs,
+        wifi: ctx.wifi,
+    };
+
+    let tracking_done = motion.set_tower_position(nctx, *actual_heading, 0);
 
     // Persist only after completed moves.
     match motion.take_last_move_outcome() {

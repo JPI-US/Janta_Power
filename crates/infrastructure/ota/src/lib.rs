@@ -147,10 +147,10 @@ impl<'a> OtaUpdater<'a> {
                 }
             }
         }
-        return Err(anyhow::anyhow!(
+        Err(anyhow::anyhow!(
             "Failed to fetch remote version after {} attempts",
             MAX_RETRIES
-        ));
+        ))
     }
 
     pub fn run_version_compare<T: NvsPartitionId>(&mut self, nvs: &mut EspNvs<T>) -> Result<()> {
@@ -378,7 +378,7 @@ impl<'a> OtaUpdater<'a> {
         }
 
         //update.complete()?; // Mark firmware as valid         GPT SUGGEST1
-        return Ok(());
+        Ok(())
     }
 }
 

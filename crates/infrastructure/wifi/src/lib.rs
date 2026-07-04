@@ -76,7 +76,7 @@ pub mod wifi {
         pub fn state(&self) -> WifiState {
             if let Ok(true) = self.inner.is_connected() {
                 if let Ok(ip_info) = self.inner.wifi().sta_netif().get_ip_info() {
-                    let v4: Ipv4Addr = ip_info.ip.into();
+                    let v4: Ipv4Addr = ip_info.ip;
                     return WifiState::Connected(IpAddr::V4(v4));
                 }
                 WifiState::Connecting

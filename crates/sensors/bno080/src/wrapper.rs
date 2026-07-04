@@ -140,11 +140,7 @@ where
     /// if there was no packet to read.
     pub fn eat_one_message(&mut self, delay: &mut impl DelayNs) -> usize {
         let res = self.receive_packet_with_timeout(delay, 150);
-        return if let Ok(received_len) = res {
-            received_len
-        } else {
-            0
-        };
+        res.unwrap_or_default()
     }
 
     fn handle_advertise_response(&mut self, received_len: usize) {
@@ -255,9 +251,8 @@ where
         let payload = &self.packet_recv_buf[PACKET_HEADER_LENGTH..received_len];
 
         self.error_list_received = true;
-        for cursor in 1..payload_len {
-            let err: u8 = payload[cursor];
-            self.last_error_received = err;
+        for item in payload.iter().take(payload_len).skip(1) {
+            self.last_error_received = *item;
         }
     }
 
@@ -533,7 +528,7 @@ where
         let recv_packet_length = self
             .sensor_interface
             .send_and_receive_packet(
-                &self.packet_send_buf[..send_packet_length].as_ref(),
+                self.packet_send_buf[..send_packet_length].as_ref(),
                 &mut self.packet_recv_buf,
             )
             .map_err(WrapperError::CommError)?;
@@ -563,11 +558,11 @@ const CHANNEL_EXECUTABLE: u8 = 1;
 const CHANNEL_HUB_CONTROL: u8 = 2;
 /// sensor hub control channel
 const CHANNEL_SENSOR_REPORTS: u8 = 3;
-/// input sensor reports (non-wake, not gyroRV)
+///// input sensor reports (non-wake, not gyroRV)
 //const  CHANNEL_WAKE_REPORTS: usize = 4; /// wake input sensor reports (for sensors configured as wake up sensors)
 //const  CHANNEL_GYRO_ROTATION: usize = 5; ///  gyro rotation vector (gyroRV)
 
-/// Command Channel requests / responses
+///// Command Channel requests / responses
 
 // Commands
 //const CMD_GET_ADVERTISEMENT: u8 = 0;
@@ -577,7 +572,7 @@ const CHANNEL_SENSOR_REPORTS: u8 = 3;
 const CMD_RESP_ADVERTISEMENT: u8 = 0;
 const CMD_RESP_ERROR_LIST: u8 = 1;
 
-/// SHTP constants
+///// SHTP constants
 
 /// Report ID for Product ID request
 const SHUB_PROD_ID_REQ: u8 = 0xF9;

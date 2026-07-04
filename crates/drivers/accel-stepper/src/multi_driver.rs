@@ -13,6 +13,12 @@ pub struct MultiDriver {
     drivers: ArrayVec<[Driver; MultiDriver::MAX_DRIVERS]>,
 }
 
+impl Default for MultiDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MultiDriver {
     /// The maximum number of [`Driver`]s that a [`MultiDriver`] can manage when
     /// compiled without the `std` feature.

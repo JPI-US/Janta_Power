@@ -311,23 +311,19 @@ pub mod motion {
             }
         }
 
-        pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
+        pub fn set_tower_position<I2C, T>(
             &mut self,
-            clock: &mut Clock<I2C>,
+            ctx: TowerPositionCtx<'_, '_, I2C, T>,
             location: f32,
             _balance: i32,
-            mqtt: &mut Mqtt,
-            current_version: Version,
-            nvs: &mut EspNvs<T>,
-            wifi: &mut Wifi<'_>,
-            formatted_time: String,
-            persist_nvs: bool,
-            allow_ota: bool,
-            device_id: &str,
-        ) -> bool {
+        ) -> bool
+        where
+            I2C: embedded_hal::i2c::I2c,
+            T: NvsPartitionId,
+        {
             self.update_position(location);
-            log::info!("{},", clock.after_sunrise());
-            if clock.after_sunrise() && !clock.after_sunset() {
+            log::info!("{},", ctx.clock.after_sunrise());
+            if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
                 // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
@@ -337,14 +333,14 @@ pub mod motion {
                 let sun = NOAASun {
                     year: now.year() as u16,
                     doy: now.ordinal() as u16,
-                    long: clock.get_longitude() as f32,
-                    lat: clock.get_latitude() as f32,
+                    long: ctx.clock.get_longitude() as f32,
+                    lat: ctx.clock.get_latitude() as f32,
                     timezone: timezone_hours,
                     hour: now.hour() as u8,
                     min: now.minute() as u8,
                     sec: now.second() as u8,
                 };
-                let rtc_naive = clock.get_date_time();
+                let rtc_naive = ctx.clock.get_date_time();
                 log::info!(
                     "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
                     sun.year,
@@ -422,11 +418,11 @@ pub mod motion {
 
                 let tower_angle = location as f64 + angle_offset;
                 let payload = network::telemetry::Angle {
-                    current_time: &formatted_time,
+                    current_time: &ctx.formatted_time,
                     tower_angle,
                 };
-                let topic = network::telemetry::topic::data_angle(device_id);
-                let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
+                let topic = network::telemetry::topic::data_angle(ctx.device_id);
+                let _ = network::telemetry::publish_json(ctx.mqtt, &topic, &payload);
 
                 false
             } else {
@@ -440,7 +436,12 @@ pub mod motion {
                         let ok = self.find_limit_switch_ccw();
                         if ok {
                             log::info!("Home verification homing succeeded");
-                            self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
+                            self.report_home_error_ticks(
+                                ctx.mqtt,
+                                ctx.nvs,
+                                ctx.device_id,
+                                ctx.persist_nvs,
+                            );
                         } else {
                             log::error!(
                                 "Home verification failed: limit switch could not be found"
@@ -450,8 +451,8 @@ pub mod motion {
                                     .format(network::telemetry::TIME_FORMAT)
                                     .to_string();
                                 let _ = network::telemetry::publish_error(
-                                    mqtt,
-                                    device_id,
+                                    ctx.mqtt,
+                                    ctx.device_id,
                                     &now,
                                     network::telemetry::Component::LimitSwitch,
                                     "Limit switch not found during sunset home verification",
@@ -469,31 +470,31 @@ pub mod motion {
                     let mut last_check = Instant::now();
                     let check_interval = Duration::from_secs(2 * 60 * 60);
 
-                    while clock.after_sunset() || !clock.after_sunrise() {
-                        if clock.after_sunrise() && !clock.after_sunset() {
+                    while ctx.clock.after_sunset() || !ctx.clock.after_sunrise() {
+                        if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
                             log::info!("Sunrise detected, exiting sleep loop");
                             break;
                         }
-                        if allow_ota && last_check.elapsed() >= check_interval {
+                        if ctx.allow_ota && last_check.elapsed() >= check_interval {
                             log::info!("2 hours elapsed, checking for OTA");
 
-                            log::info!("Current wifi state: {:?}", wifi.state());
-                            if wifi.state() == WifiState::Disconnected {
-                                let _ = wifi.reconnect_if_disconnected();
+                            log::info!("Current wifi state: {:?}", ctx.wifi.state());
+                            if ctx.wifi.state() == WifiState::Disconnected {
+                                let _ = ctx.wifi.reconnect_if_disconnected();
                             }
 
                             thread::sleep(Duration::from_secs(3));
                             let mut updater = OtaUpdater::new_ota(
-                                current_version.clone(),
-                                mqtt,
-                                device_id,
+                                ctx.current_version.clone(),
+                                ctx.mqtt,
+                                ctx.device_id,
                                 Some("device1A"),
                                 Some("device1A"),
                             )
                             .expect("Failed to create OTA adapter instance");
 
                             thread::sleep(Duration::from_secs(3));
-                            let run_compare = updater.run_version_compare(nvs);
+                            let run_compare = updater.run_version_compare(ctx.nvs);
 
                             match run_compare {
                                 Ok(_) => log::info!("Version compare succeeded"),
@@ -503,7 +504,7 @@ pub mod motion {
                             }
 
                             last_check = Instant::now();
-                        } else if !allow_ota && last_check.elapsed() >= check_interval {
+                        } else if !ctx.allow_ota && last_check.elapsed() >= check_interval {
                             log::info!("OTA disabled: skipping periodic OTA check");
                             last_check = Instant::now();
                         }
@@ -518,7 +519,12 @@ pub mod motion {
                     match limit_sw_status {
                         true => {
                             log::info!("Limit switch has returned true");
-                            self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
+                            self.report_home_error_ticks(
+                                ctx.mqtt,
+                                ctx.nvs,
+                                ctx.device_id,
+                                ctx.persist_nvs,
+                            );
                         }
                         false => {
                             log::error!(
@@ -529,8 +535,8 @@ pub mod motion {
                                     .format(network::telemetry::TIME_FORMAT)
                                     .to_string();
                                 let _ = network::telemetry::publish_error(
-                                    mqtt,
-                                    device_id,
+                                    ctx.mqtt,
+                                    ctx.device_id,
                                     &now,
                                     network::telemetry::Component::LimitSwitch,
                                     "Limit switch not found during move-to-sleep homing",
@@ -542,10 +548,26 @@ pub mod motion {
                     }
                     log::info!("Tower has reached sleep position");
 
-                    return false;
+                    false
                 }
             }
         }
+    }
+
+    pub struct TowerPositionCtx<'ctx, 'wifi, I2C, T>
+    where
+        I2C: embedded_hal::i2c::I2c,
+        T: NvsPartitionId,
+    {
+        pub clock: &'ctx mut Clock<I2C>,
+        pub mqtt: &'ctx mut Mqtt,
+        pub nvs: &'ctx mut EspNvs<T>,
+        pub wifi: &'ctx mut Wifi<'wifi>,
+        pub current_version: Version,
+        pub formatted_time: String,
+        pub persist_nvs: bool,
+        pub allow_ota: bool,
+        pub device_id: &'ctx str,
     }
 }
 

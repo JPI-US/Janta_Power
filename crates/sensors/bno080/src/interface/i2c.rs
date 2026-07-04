@@ -133,7 +133,7 @@ where
     }
 
     fn zero_buffer(buf: &mut [u8]) {
-        for byte in buf.as_mut() {
+        for byte in buf {
             *byte = 0;
         }
     }
@@ -157,7 +157,7 @@ where
     }
 
     fn write_packet(&mut self, packet: &[u8]) -> Result<(), Self::SensorError> {
-        self.i2c_port.write(self.address, &packet)?;
+        self.i2c_port.write(self.address, packet)?;
         Ok(())
     }
 

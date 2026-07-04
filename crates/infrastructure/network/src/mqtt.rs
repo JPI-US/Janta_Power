@@ -15,10 +15,13 @@ use esp_idf_svc::{
     tls::X509,
 };
 use log::*;
+
+pub type MqttMessageQueue = Arc<Mutex<VecDeque<(String, Vec<u8>)>>>;
+
 pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,
-    message_queue: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
+    message_queue: MqttMessageQueue,
 }
 
 const ROOT_CA: &CStr = unsafe {

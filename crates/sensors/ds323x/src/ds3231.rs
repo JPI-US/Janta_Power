@@ -10,7 +10,7 @@ where
     pub fn new_ds3231(i2c: I2C) -> Self {
         const STATUS_POR_VALUE: u8 = BitFlags::OSC_STOP | BitFlags::EN32KHZ;
         Ds323x {
-            i2c: i2c,
+            i2c,
             control: CONTROL_POR_VALUE,
             status: STATUS_POR_VALUE,
         }
