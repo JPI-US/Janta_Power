@@ -80,4 +80,4 @@ jobs:
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: true
           RUSTFLAGS: -D warnings
-        run: cargo build --workspace --bins
+        run: cargo build --workspace --all-targets --all-features
