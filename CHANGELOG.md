@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _No unreleased changes._
 
+## [1.1.4] - 2026-07-04
+
+WiFi reconnect reliability fix and onboard temperature monitoring via HDC1080.
+
+### Added
+
+- **HDC1080 temperature sensor** — I2C bring-up crate (`crates/sensors/hdc1080`),
+  `bringup/hdc1080-test` firmware, and runtime polling in `infra::temperature`
+  with MQTT telemetry on `tower/{device_id}/data/temperature`.
+
+### Fixed
+
+- **WiFi reconnect no longer reboots the device.** Reconnect path no longer
+  calls `start()` on an already-running driver (which returned
+  `ESP_ERR_INVALID_STATE` and short-circuited before `connect()`), errors are
+  swallowed so a flaky AP cannot exit `app_main` via `?`, and the reconnect
+  timeout is raised from 10 s to 30 s for AWS IoT DNS + mTLS latency.
+
 ## [1.1.3] - 2026-04-23
 
 Stable release of Encoder + RTC + AWS with fleet-safe tower identity.
