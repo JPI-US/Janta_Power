@@ -1,3 +1,4 @@
+use core::result::Result::Ok;
 use std::{fs, path::Path};
 
 fn main() {
@@ -16,7 +17,7 @@ fn main() {
 }
 
 fn generate_constants() {
-    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let out_dir = std::env::var("OUT_DIR").expect("Cargo did not provide OUT_DIR");
     let constants_path = Path::new(&out_dir).join("constants.rs");
 
     let mut constants = String::from("// Auto-generated constants from .env file\n");
