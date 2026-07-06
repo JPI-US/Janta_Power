@@ -8,6 +8,7 @@ target/
 brainstorming
 __pycache__
 *.log
+firmware*
 
 # TLS material for AWS IoT Core — per-device, fleet-sensitive, never commit.
 # Glob form covers the canonical `device.pem.crt` / `private.pem.key` names
