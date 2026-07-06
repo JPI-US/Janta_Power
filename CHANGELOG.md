@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-07-04
+
 ## Removed
 - Removed extraneous non-code files from certain crates.
 - Removed `rttdebug` code that was causing errors.
