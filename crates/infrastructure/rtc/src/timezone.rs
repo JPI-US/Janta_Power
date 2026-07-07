@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{CString, NulError};
 
 use log::info;
 
@@ -14,13 +14,15 @@ pub const TZ_UK: &str = "GMT0BST,M3.5.0/1,M10.5.0";
 pub const TZ_CENTRAL_EU: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
 pub const TZ_EASTERN_EU: &str = "EET-2EEST,M3.5.0/3,M10.5.0/4";
 
-pub fn set_timezone(tz: &str) {
-    let tz_cstr = CString::new(tz).unwrap();
+pub fn set_timezone(tz: &str) -> Result<(), NulError> {
+    let tz_cstr = CString::new(tz)?;
     unsafe {
         libc::setenv(c"TZ".as_ptr().cast(), tz_cstr.as_ptr(), 1);
         esp_idf_svc::sys::tzset();
     }
     info!("Timezone set to: {tz}");
+
+    Ok(())
 }
 
 pub fn local_time() -> chrono::DateTime<chrono::Local> {
