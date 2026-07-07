@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use clock::Clock;
 use esp_idf_svc::{
@@ -353,7 +354,7 @@ fn main() -> anyhow::Result<()> {
         last_run_normal, trust_nvs_state
     );
 
-    let peripherals = Peripherals::take().unwrap();
+    let peripherals = Peripherals::take()?;
 
     // Encoder pins
     let encoder_a = peripherals.pins.gpio10;
@@ -363,17 +364,18 @@ fn main() -> anyhow::Result<()> {
     let sda = peripherals.pins.gpio8;
     let scl = peripherals.pins.gpio9;
     let config = I2cConfig::new().baudrate(10_u32.kHz().into());
-    let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
-    let bus: &'static _ = shared_bus::new_std!(I2cDriver = i2c).unwrap();
+    let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
+    let bus: &'static _ =
+        shared_bus::new_std!(I2cDriver = i2c).ok_or(anyhow!("Failed to create shared bus"))?;
 
     // LED status
-    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
+    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0)?;
     led.display_none()?;
 
     // Button inputs (reserved for manual control)
-    let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap();
-    let ccw_button = PinDriver::input(peripherals.pins.gpio4).unwrap();
-    let cw_button = PinDriver::input(peripherals.pins.gpio6).unwrap();
+    let maintenance_button = PinDriver::input(peripherals.pins.gpio5)?;
+    let ccw_button = PinDriver::input(peripherals.pins.gpio4)?;
+    let cw_button = PinDriver::input(peripherals.pins.gpio6)?;
 
     // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
 
@@ -490,11 +492,11 @@ fn main() -> anyhow::Result<()> {
     if PERSIST_NVS {
         nvs.set_str("version", "1.1.5")?;
     }
-    let current_version: Version = nvs
+    let current_version = nvs
         .get_str("version", &mut version_buf)?
         .map(|s| s.trim().parse::<Version>())
         .transpose()?
-        .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+        .unwrap_or(Version::parse(DEFAULT_VERSION)?);
 
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
@@ -511,7 +513,7 @@ fn main() -> anyhow::Result<()> {
         let running_slot = valid_ota.get_running_slot();
         info!("This is the running boot slot {:?}", running_slot);
 
-        if running_slot.unwrap().label == "factory" {
+        if running_slot?.label == "factory" {
             info!("Running from factory partition -> skipping OTA validity marking");
             nvs.set_u8("first_boot", 0)?;
         } else {

@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
@@ -128,7 +129,9 @@ impl EncoderFaultRecovery {
         let should_probe = self.next_probe_at.map(|t| now_i >= t).unwrap_or(true);
 
         if !should_probe {
-            let t = self.next_probe_at.unwrap();
+            let t = self
+                .next_probe_at
+                .ok_or_else(|| anyhow!("next_probe_at unexpectedly None"))?;
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
