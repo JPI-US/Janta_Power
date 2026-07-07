@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ds323x = { path = "../sensors/ds323x" }
 bno080 = { path = "../sensors/bno080" }
 accel-stepper = { path = "../drivers/accel-stepper", features = ["hal", "std"] }
 embedded-hal = "1.0.0"

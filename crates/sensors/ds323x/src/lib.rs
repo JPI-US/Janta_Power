@@ -1,6 +1,8 @@
 #![deny(unsafe_code)]
 #![no_std]
 
+use core::{error, fmt};
+
 pub use rtcc::{
     DateTimeAccess, Datelike, Hours, NaiveDate, NaiveDateTime, NaiveTime, Rtcc, Timelike,
 };
@@ -20,6 +22,19 @@ pub enum Error {
     /// The device is probably missing initialization.
     InvalidDeviceState,
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Comm => write!(f, "I²C/SPI bus error"),
+            Self::Pin => write!(f, "Pin setting error"),
+            Self::InvalidInputData => write!(f, "Invalid input data provided"),
+            Self::InvalidDeviceState => write!(f, "Internal device state invalid (not possible to read valid date and/or time). Is the device initialized?"),
+        }
+    }
+}
+
+impl error::Error for Error {}
 
 /// Square-wave output frequency
 #[derive(Debug, Clone, Copy, PartialEq)]

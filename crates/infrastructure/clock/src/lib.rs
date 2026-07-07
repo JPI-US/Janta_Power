@@ -57,38 +57,37 @@ pub mod clock {
         }
 
         /// Method to get the hours
-        pub fn get_hour(&mut self) -> u8 {
-            let hour = self.rtc.hours().unwrap();
+        pub fn get_hour(&mut self) -> Result<u8, ds323x::Error> {
+            let hour = self.rtc.hours()?;
             match hour {
-                ds323x::Hours::AM(h) => h,
-                ds323x::Hours::PM(h) => h + 11,
-                ds323x::Hours::H24(h) => h,
+                ds323x::Hours::AM(h) | ds323x::Hours::H24(h) => Ok(h),
+                ds323x::Hours::PM(h) => Ok(h + 11),
             }
         }
 
         /// Method to get the minutes
-        pub fn get_minutes(&mut self) -> u8 {
-            self.rtc.minutes().unwrap()
+        pub fn get_minutes(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.minutes()
         }
 
         /// Method to get the seconds
-        pub fn get_seconds(&mut self) -> u8 {
-            self.rtc.seconds().unwrap()
+        pub fn get_seconds(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.seconds()
         }
 
         /// Method to get the day
-        pub fn get_day(&mut self) -> u32 {
-            self.rtc.date().unwrap().ordinal()
+        pub fn get_day(&mut self) -> Result<u32, ds323x::Error> {
+            Ok(self.rtc.date()?.ordinal())
         }
 
         /// Method to get the day
-        pub fn get_month(&mut self) -> u8 {
-            self.rtc.month().unwrap()
+        pub fn get_month(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.month()
         }
 
         /// Method to get the day
-        pub fn get_year(&mut self) -> u16 {
-            self.rtc.year().unwrap()
+        pub fn get_year(&mut self) -> Result<u16, ds323x::Error> {
+            self.rtc.year()
         }
 
         /// Method to get the longitude
@@ -112,35 +111,38 @@ pub mod clock {
         }
 
         /// Method for returning a datetime string
-        pub fn get_date_time(&mut self) -> NaiveDateTime {
-            self.rtc.datetime().unwrap()
+        pub fn get_date_time(&mut self) -> Result<NaiveDateTime, ds323x::Error> {
+            self.rtc.datetime()
         }
 
-        fn rtc_now_utc(&mut self) -> DateTime<Utc> {
-            DateTime::<Utc>::from_naive_utc_and_offset(self.get_date_time(), Utc)
+        fn rtc_now_utc(&mut self) -> Result<DateTime<Utc>, ds323x::Error> {
+            Ok(DateTime::<Utc>::from_naive_utc_and_offset(
+                self.get_date_time()?,
+                Utc,
+            ))
         }
 
         /// Method for returning a boolean for if it is after sunrsie today
-        pub fn after_sunrise(&mut self) -> bool {
+        pub fn after_sunrise(&mut self) -> Result<bool, ds323x::Error> {
             if let Some(sunrise) = self.sunrise_times() {
-                self.rtc_now_utc() >= sunrise.with_timezone(&Utc)
+                Ok(self.rtc_now_utc()? >= sunrise.with_timezone(&Utc))
             } else {
-                false // Return false if sunrise is None
+                Ok(false) // Return false if sunrise is None
             }
         }
 
         /// Method for returning a boolean for if it is after sunset today
-        pub fn after_sunset(&mut self) -> bool {
+        pub fn after_sunset(&mut self) -> Result<bool, ds323x::Error> {
             if let Some(sunset) = self.sunset_times() {
-                self.rtc_now_utc() >= sunset.with_timezone(&Utc)
+                Ok(self.rtc_now_utc()? >= sunset.with_timezone(&Utc))
             } else {
-                false // Return false if sunset is None
+                Ok(false) // Return false if sunset is None
             }
         }
 
         ///Returns a unix timestamp based on the current date time provided
-        pub fn datetime_to_unix_timestamp(&mut self) -> i64 {
-            self.rtc_now_utc().timestamp()
+        pub fn datetime_to_unix_timestamp(&mut self) -> Result<i64, ds323x::Error> {
+            Ok(self.rtc_now_utc()?.timestamp())
         }
     }
 }

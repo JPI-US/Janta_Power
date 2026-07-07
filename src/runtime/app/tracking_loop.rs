@@ -27,7 +27,7 @@ pub fn tick<I2C, T>(
     motion: &mut motion::Motion,
     ctx: &mut TrackingTickContext<I2C, T>,
     actual_heading: &mut f32,
-) -> motion::MoveOutcome
+) -> Result<motion::MoveOutcome, ds323x::Error>
 where
     I2C: embedded_hal::i2c::I2c,
     T: NvsPartitionId,
@@ -55,19 +55,19 @@ where
                 SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
-            motion::MoveOutcome::Completed
+            Ok(motion::MoveOutcome::Completed)
         }
         Some(
             outcome @ (motion::MoveOutcome::AbortedPowerMissing
             | motion::MoveOutcome::AbortedStall
             | motion::MoveOutcome::AbortedOvershoot),
-        ) => outcome,
+        ) => Ok(outcome),
         None => {
             // No movement needed; treat as completed without writing NVS.
-            if !tracking_done {
+            if !tracking_done? {
                 log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
             }
-            motion::MoveOutcome::Completed
+            Ok(motion::MoveOutcome::Completed)
         }
     }
 }

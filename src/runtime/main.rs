@@ -1,4 +1,4 @@
-use core::{convert::Into, option::Option::None};
+use core::{convert::Into, error, fmt, option::Option::None, result::Result::Err};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -212,10 +212,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 
     /// Run one tracking tick (gated by the switchboard) and feed the move
     /// outcome back into encoder-fault recovery.
-    fn run_tracking(&mut self, current_datetime: String) {
+    fn run_tracking(&mut self, current_datetime: String) -> anyhow::Result<()> {
         if !self.sw.runtime.tracking.enabled {
             info!("Tracking disabled");
-            return;
+            return Ok(());
         }
         let cfg = self.encoder_recovery_cfg();
 
@@ -232,7 +232,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         };
 
         let outcome =
-            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading);
+            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading)?;
 
         if outcome != MoveOutcome::Completed {
             warn!("Last move aborted: {:?}", outcome);
@@ -245,7 +245,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             Self::PERSIST_NVS,
         ) {
             error!("Error in encoder fault recovery: {:?}", e);
+            return Err(TrackingError::ErrorInEncoderFaultRecovery.into());
         }
+
+        Ok(())
     }
 
     /// Reconnect Wi-Fi if it has dropped.
@@ -303,6 +306,21 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         }
     }
 }
+
+#[derive(Debug)]
+enum TrackingError {
+    ErrorInEncoderFaultRecovery,
+}
+
+impl fmt::Display for TrackingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ErrorInEncoderFaultRecovery => write!(f, "Error in encoder fault recovery"),
+        }
+    }
+}
+
+impl error::Error for TrackingError {}
 
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::active(switchboard::Profile::from_env_str(
@@ -882,7 +900,7 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
-        tower.run_tracking(current_datetime.clone());
+        tower.run_tracking(current_datetime.clone())?;
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 

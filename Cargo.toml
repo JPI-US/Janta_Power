@@ -53,6 +53,7 @@ esp-idf-svc = { version = "0.51", features = [
 ] }
 hdc1080 = { path = "crates/sensors/hdc1080" }
 heapless = "0.8.0"
+ds323x = { path = "crates/sensors/ds323x" }
 log = "0.4"
 motion = { path = "crates/motion" }
 network = { path = "crates/infrastructure/network" }

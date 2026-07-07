@@ -316,14 +316,14 @@ pub mod motion {
             ctx: TowerPositionCtx<'_, '_, I2C, T>,
             location: f32,
             _balance: i32,
-        ) -> bool
+        ) -> Result<bool, ds323x::Error>
         where
             I2C: embedded_hal::i2c::I2c,
             T: NvsPartitionId,
         {
             self.update_position(location);
-            log::info!("{},", ctx.clock.after_sunrise());
-            if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
+            log::info!("{:?},", ctx.clock.after_sunrise());
+            if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
                 // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
@@ -353,7 +353,7 @@ pub mod motion {
                     sun.sec
                 );
                 log::info!(
-                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={}",
+                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
                     now.format("%Y-%m-%d %H:%M:%S %:z"),
                     rtc_naive
                 );
@@ -399,7 +399,7 @@ pub mod motion {
                 // Daytime tracking: no move in deadband, otherwise step by offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     self.relay_off();
-                    return true;
+                    return Ok(true);
                 }
 
                 self.relay_on();
@@ -411,7 +411,7 @@ pub mod motion {
                     self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                    return true;
+                    return Ok(true);
                 }
                 self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
@@ -424,7 +424,7 @@ pub mod motion {
                 let topic = network::telemetry::topic::data_angle(ctx.device_id);
                 let _ = network::telemetry::publish_json(ctx.mqtt, &topic, &payload);
 
-                false
+                Ok(false)
             } else {
                 // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
@@ -470,8 +470,8 @@ pub mod motion {
                     let mut last_check = Instant::now();
                     let check_interval = Duration::from_secs(2 * 60 * 60);
 
-                    while ctx.clock.after_sunset() || !ctx.clock.after_sunrise() {
-                        if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
+                    while ctx.clock.after_sunset()? || !ctx.clock.after_sunrise()? {
+                        if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
                             log::info!("Sunrise detected, exiting sleep loop");
                             break;
                         }
@@ -512,7 +512,7 @@ pub mod motion {
                         std::thread::sleep(std::time::Duration::from_secs(600));
                     }
 
-                    true
+                    Ok(true)
                 } else {
                     log::info!("Moving to sleep position...");
                     let limit_sw_status = self.find_limit_switch_ccw();
@@ -548,7 +548,7 @@ pub mod motion {
                     }
                     log::info!("Tower has reached sleep position");
 
-                    false
+                    Ok(false)
                 }
             }
         }
