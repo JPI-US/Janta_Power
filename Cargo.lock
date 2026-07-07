@@ -129,13 +129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bno080"
-version = "0.1.3"
-dependencies = [
- "embedded-hal 1.0.0",
-]
-
-[[package]]
 name = "bstr"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1150,7 +1143,6 @@ dependencies = [
  "accel-stepper",
  "anyhow",
  "astronav",
- "bno080",
  "chrono",
  "clock",
  "dotenv",

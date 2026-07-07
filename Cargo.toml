@@ -22,7 +22,6 @@ members = [
     "crates/infrastructure/rtc",
     "crates/infrastructure/wifi",
     "crates/motion",
-    "crates/sensors/bno080",
     "crates/sensors/ds323x",
     "crates/sensors/hdc1080",
     "crates/sensors/sensors",
