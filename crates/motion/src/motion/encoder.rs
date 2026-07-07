@@ -39,13 +39,13 @@ impl Motion<'_> {
     }
 
     /// Diagnostic probe: move and verify encoder ticks changed.
-    pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
+    pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> anyhow::Result<bool> {
         let start_ticks = self.encoder_ticks_adjusted();
-        let outcome = self.move_by(probe_steps);
+        let outcome = self.move_by(probe_steps)?;
 
         if outcome != MoveOutcome::Completed {
             log::warn!("Encoder probe aborted: {:?}", outcome);
-            return false;
+            return Ok(false);
         }
 
         let end_ticks = self.encoder_ticks_adjusted();
@@ -69,6 +69,6 @@ impl Motion<'_> {
             min_expected_ticks,
             moved
         );
-        moved
+        Ok(moved)
     }
 }

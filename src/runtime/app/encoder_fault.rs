@@ -138,7 +138,7 @@ impl EncoderFaultRecovery {
         }
 
         log::info!("Encoder fault: probing for recovery...");
-        let ok = motion.probe_encoder_motion(ctx.cfg.probe_steps);
+        let ok = motion.probe_encoder_motion(ctx.cfg.probe_steps)?;
         if !ok {
             self.probe_failure_count += 1;
             log::warn!(
@@ -198,8 +198,8 @@ impl EncoderFaultRecovery {
             ctx.cfg.max_drift_deg
         );
         let ok = match ctx.cfg.rehome_dir {
-            Direction::Cw => motion.find_limit_switch_cw(),
-            Direction::Ccw => motion.find_limit_switch_ccw(),
+            Direction::Cw => motion.find_limit_switch_cw()?,
+            Direction::Ccw => motion.find_limit_switch_ccw()?,
         };
         if !ok {
             infra::error_loop(

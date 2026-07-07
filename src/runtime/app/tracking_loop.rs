@@ -27,7 +27,7 @@ pub fn tick<I2C, T>(
     motion: &mut motion::Motion,
     ctx: &mut TrackingTickContext<I2C, T>,
     actual_heading: &mut f32,
-) -> Result<motion::MoveOutcome, ds323x::Error>
+) -> anyhow::Result<motion::MoveOutcome>
 where
     I2C: embedded_hal::i2c::I2c,
     T: NvsPartitionId,

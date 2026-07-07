@@ -136,8 +136,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         info!("{}", intro_log);
         const HOMING_DIRECTION: Direction = Direction::Ccw;
         let limit_sw_status = match HOMING_DIRECTION {
-            Direction::Cw => self.motion.find_limit_switch_cw(),
-            Direction::Ccw => self.motion.find_limit_switch_ccw(),
+            Direction::Cw => self.motion.find_limit_switch_cw()?,
+            Direction::Ccw => self.motion.find_limit_switch_ccw()?,
         };
         match limit_sw_status {
             true => {
@@ -386,7 +386,7 @@ fn main() -> anyhow::Result<()> {
         peripherals.pins.gpio14,
         encoder_a,
         encoder_b,
-    );
+    )?;
 
     motion.init();
     let _ = motion.run();
@@ -790,8 +790,8 @@ fn main() -> anyhow::Result<()> {
         || home_claim_needs_limit_verify;
     if should_home_by_mode && sw.boot.homing.enabled {
         let limit_sw_status = match HOMING_DIRECTION {
-            Direction::Cw => motion.find_limit_switch_cw(),
-            Direction::Ccw => motion.find_limit_switch_ccw(),
+            Direction::Cw => motion.find_limit_switch_cw()?,
+            Direction::Ccw => motion.find_limit_switch_ccw()?,
         };
         match limit_sw_status {
             true => log::info!(
@@ -1070,11 +1070,11 @@ fn capture_maintenance_mode(
             match direction {
                 Direction::Ccw => {
                     led.display_maintenance_moving_ccw()?;
-                    motion.move_by(-30_000);
+                    motion.move_by(-30_000)?;
                 }
                 Direction::Cw => {
                     led.display_maintenance_moving_cw()?;
-                    motion.move_by(30_000);
+                    motion.move_by(30_000)?;
                 }
             }
             led.display_maintenance()?;

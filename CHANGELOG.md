@@ -11,12 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unused `fullchain.pem`.
 
 ## Changed
-- Replaced `Replace unwrap in build.rs with expect & explantation`
+- Replaced unwrap in `build.rs` with expect & explantation
 - Removed `unwrap()` usage in `ds323x` and `clock`, instead returning `Results` that get carried up to main.
   - Implemented `std::fmt::Display` and `std::error::Error` for `ds323x`.
 - Replaced `unwrap()` in `rtc`.
 - Replace `unwrap()` in `wifi`.
 - Made `anyhow` a workspace dependency.
+- Replaced `unwrap()` in `motion`.
 
 ## [1.1.5] - 2026-07-04
 

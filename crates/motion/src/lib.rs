@@ -128,22 +128,22 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
-        ) -> Motion<'a> {
-            let step = PinDriver::output(step_pin).unwrap();
-            let direction = PinDriver::output(direction_pin).unwrap();
+        ) -> anyhow::Result<Motion<'a>> {
+            let step = PinDriver::output(step_pin)?;
+            let direction = PinDriver::output(direction_pin)?;
             // Relay is active-low: boot with relay OFF.
-            let mut relay = PinDriver::output(relay_pin).unwrap();
+            let mut relay = PinDriver::output(relay_pin)?;
             relay.set_high().unwrap_or_default();
-            let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
-            let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
-            let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
+            let mut lmsw = PinDriver::input(limit_switch_pin)?;
+            let encoder_a = PinDriver::input(encoder_a_pin)?;
+            let encoder_b = PinDriver::input(encoder_b_pin)?;
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
-            Motion {
+            Ok(Motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
                 speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
@@ -183,7 +183,7 @@ pub mod motion {
                 soft_limit_max_deg: 290.0,
 
                 is_homing: false,
-            }
+            })
         }
 
         pub fn update_position(&mut self, location: f32) {
@@ -316,7 +316,7 @@ pub mod motion {
             ctx: TowerPositionCtx<'_, '_, I2C, T>,
             location: f32,
             _balance: i32,
-        ) -> Result<bool, ds323x::Error>
+        ) -> anyhow::Result<bool>
         where
             I2C: embedded_hal::i2c::I2c,
             T: NvsPartitionId,
@@ -406,7 +406,7 @@ pub mod motion {
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                 log::info!("Steps Needed: {}", steps as i64);
-                let move_outcome = self.move_by(steps as i64);
+                let move_outcome = self.move_by(steps as i64)?;
                 if move_outcome != MoveOutcome::Completed {
                     self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
@@ -433,7 +433,7 @@ pub mod motion {
                         log::warn!(
                             "Heading near home but limit switch not pressed; verifying home by homing CCW"
                         );
-                        let ok = self.find_limit_switch_ccw();
+                        let ok = self.find_limit_switch_ccw()?;
                         if ok {
                             log::info!("Home verification homing succeeded");
                             self.report_home_error_ticks(
@@ -515,7 +515,7 @@ pub mod motion {
                     Ok(true)
                 } else {
                     log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_ccw();
+                    let limit_sw_status = self.find_limit_switch_ccw()?;
                     match limit_sw_status {
                         true => {
                             log::info!("Limit switch has returned true");

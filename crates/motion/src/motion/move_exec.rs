@@ -18,7 +18,7 @@ impl Motion<'_> {
         self.last_move_outcome.take()
     }
 
-    pub fn move_by(&mut self, location: i64) -> MoveOutcome {
+    pub fn move_by(&mut self, location: i64) -> anyhow::Result<MoveOutcome> {
         // Start move.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement");
@@ -56,17 +56,17 @@ impl Motion<'_> {
             location
         };
         self.motor.move_by(signed_steps);
-        let outcome = self.run();
+        let outcome = self.run()?;
 
         // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
 
         self.last_move_outcome = Some(outcome);
-        outcome
+        Ok(outcome)
     }
 
-    pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
+    pub fn move_by_ticks(&mut self, location: i64) -> anyhow::Result<MoveOutcome> {
         // Start move in tick space.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement (ticks)");
@@ -100,17 +100,17 @@ impl Motion<'_> {
             location
         };
         self.motor.move_by(signed_steps);
-        let outcome = self.run();
+        let outcome = self.run()?;
 
         // End move.
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
 
         self.last_move_outcome = Some(outcome);
-        outcome
+        Ok(outcome)
     }
 
-    pub fn run(&mut self) -> MoveOutcome {
+    pub fn run(&mut self) -> anyhow::Result<MoveOutcome> {
         let mut t0 = Instant::now();
         loop {
             if self.motor.is_running() {
@@ -123,7 +123,7 @@ impl Motion<'_> {
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos); // hard stop
                     self.relay_off(); // Turn relay OFF on abort
-                    return MoveOutcome::AbortedPowerMissing;
+                    return Ok(MoveOutcome::AbortedPowerMissing);
                 }
 
                 // Absolute stall detector: encoder must change within a step budget.
@@ -162,7 +162,7 @@ impl Motion<'_> {
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos); // hard stop
                         self.relay_off(); // Turn relay OFF on stall abort
-                        return MoveOutcome::AbortedStall;
+                        return Ok(MoveOutcome::AbortedStall);
                     }
 
                     self.stall_last_check = Instant::now();
@@ -190,7 +190,7 @@ impl Motion<'_> {
                             let pos = self.motor.current_position();
                             self.motor.set_current_position(pos); // hard stop
                             self.relay_off(); // Turn relay OFF on stall abort
-                            return MoveOutcome::AbortedStall;
+                            return Ok(MoveOutcome::AbortedStall);
                         }
 
                         self.stall_check_start_encoder_ticks = current_encoder_ticks;
@@ -211,10 +211,14 @@ impl Motion<'_> {
                     && self.overshoot_expected_ticks.is_some()
                 {
                     use super::ENCODER_OVERSHOOT_TOLERANCE_TICKS;
-                    let enc_start = self.overshoot_enc_start.unwrap();
+                    let enc_start = self
+                        .overshoot_enc_start
+                        .ok_or_else(|| anyhow::anyhow!("overshoot_enc_start not initialized"))?;
                     let enc_current = self.encoder_ticks_adjusted();
                     let enc_delta = (enc_current - enc_start).abs() as i64;
-                    let expected = self.overshoot_expected_ticks.unwrap();
+                    let expected = self.overshoot_expected_ticks.ok_or_else(|| {
+                        anyhow::anyhow!("overshoot_expected_ticks not initialized")
+                    })?;
                     let tolerance = ENCODER_OVERSHOOT_TOLERANCE_TICKS;
 
                     if enc_delta > expected + tolerance {
@@ -230,7 +234,7 @@ impl Motion<'_> {
                         self.relay_off();
                         self.overshoot_enc_start = None;
                         self.overshoot_expected_ticks = None;
-                        return MoveOutcome::AbortedOvershoot;
+                        return Ok(MoveOutcome::AbortedOvershoot);
                     }
                 }
 
@@ -245,7 +249,7 @@ impl Motion<'_> {
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos);
                     self.relay_off();
-                    return MoveOutcome::Completed;
+                    return Ok(MoveOutcome::Completed);
                 }
 
                 if t0.elapsed() >= Duration::from_millis(100) {
@@ -267,6 +271,6 @@ impl Motion<'_> {
         // Clear overshoot state on normal completion.
         self.overshoot_enc_start = None;
         self.overshoot_expected_ticks = None;
-        MoveOutcome::Completed
+        Ok(MoveOutcome::Completed)
     }
 }
