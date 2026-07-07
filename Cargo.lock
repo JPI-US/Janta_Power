@@ -1526,6 +1526,7 @@ dependencies = [
 name = "sensors"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "embedded-hal 1.0.0",
  "esp-idf-svc",
  "hdc1080",
