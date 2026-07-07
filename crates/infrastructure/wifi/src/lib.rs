@@ -5,7 +5,7 @@ pub mod wifi {
         time::Duration,
     };
 
-    use anyhow;
+    use anyhow::anyhow;
     use esp_idf_svc::wifi::{
         AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, PmfConfiguration,
         ScanMethod,
@@ -45,12 +45,14 @@ pub mod wifi {
                 .set_configuration(&Configuration::Client(ClientConfiguration {
                     ssid: {
                         let mut s = heapless::String::<32>::new();
-                        s.push_str(ssid).unwrap();
+                        s.push_str(ssid)
+                            .map_err(|_| anyhow!("Wifi SSID expected 32 bytes"))?;
                         s
                     },
                     password: {
                         let mut p = heapless::String::<64>::new();
-                        p.push_str(pass).unwrap();
+                        p.push_str(pass)
+                            .map_err(|_| anyhow!("Wifi password expected 64 bytes"))?;
                         p
                     },
                     auth_method: AuthMethod::WPA2Personal,
