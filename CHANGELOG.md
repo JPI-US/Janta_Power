@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Implemented `std::fmt::Display` and `std::error::Error` for `ds323x`.
 - Replaced `unwrap()` in `rtc`.
 - Replace `unwrap()` in `wifi`.
+- Made `anyhow` a workspace dependency.
 
 ## [1.1.5] - 2026-07-04
 
