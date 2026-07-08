@@ -54,6 +54,7 @@ impl TaskWatchdog {
 /// Watchdog will trigger a panic or system reset depending on `sdkconfig.defaults` configuration.
 pub struct Watchdog {
     user: sys::esp_task_wdt_user_handle_t,
+    name: CString,
 }
 
 impl Watchdog {
@@ -89,7 +90,7 @@ impl Watchdog {
             )?;
         }
 
-        Ok(Self { user })
+        Ok(Self { user, name: c_name })
     }
 
     /// Resets the watchdog timer for this user.
