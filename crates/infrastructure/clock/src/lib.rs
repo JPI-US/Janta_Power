@@ -1,4 +1,6 @@
 pub mod clock {
+    use core::option::Option::None;
+
     use chrono::prelude::*;
     use ds323x::{DateTimeAccess, Ds323x, Rtcc};
 
@@ -105,8 +107,8 @@ pub mod clock {
         }
 
         /// Method for setting a datetime string
-        pub fn set_date_time(&mut self, dateTime: &NaiveDateTime) {
-            self.rtc.set_datetime(dateTime);
+        pub fn set_date_time(&mut self, date_time: &NaiveDateTime) -> Result<(), ds323x::Error> {
+            self.rtc.set_datetime(date_time)
         }
 
         /// Method for returning a datetime string

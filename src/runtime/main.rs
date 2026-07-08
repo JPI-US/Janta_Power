@@ -1,31 +1,16 @@
+use core::{convert::Into, option::Option::None};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
 use chrono::{DateTime, Local};
 use clock::Clock;
-use log::{error, info, warn};
-use std::{thread, time::{Duration, Instant}};
-
-#[path = "../config.rs"]
-mod config;
-#[path = "../constants.rs"]
-mod constants;
-#[path = "../switchboard.rs"]
-mod switchboard;
-mod infra;
-mod app;
-#[path = "../diagnostics/mod.rs"]
-mod diagnostics;
-
-// Provide __pender function for embassy_executor
-// This function is called by embassy_executor to wake tasks
-#[no_mangle]
-pub extern "C" fn __pender() {
-    // Intentionally empty.
-}
-
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
         delay::Ets,
-        gpio::PinDriver,
+        gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
         i2c::{I2cConfig, I2cDriver},
         prelude::*,
     },
@@ -34,16 +19,39 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use hdc1080::Hdc1080;
-use rtc::Rtc;
-use motion::{MoveOutcome, Motion, MotionMode};
-use rgb_led::Led;
+use log::{error, info, warn};
+use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
+use rgb_led::Led;
+use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
-use esp_idf_svc::hal::gpio::{Input, Gpio4, Gpio5, Gpio6};
 
-use crate::{app::encoder_fault::{Direction, EncoderRecoverySwitches}, infra::watchdog::{self, TaskWatchdog, Watchdog}};
+use crate::{
+    app::{
+        encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
+        tracking_loop::TrackingTickContext,
+    },
+    infra::watchdog::{TaskWatchdog, Watchdog},
+};
+
+mod app;
+#[path = "../constants.rs"]
+#[allow(dead_code)]
+mod constants;
+#[path = "../diagnostics/mod.rs"]
+mod diagnostics;
+mod infra;
+#[path = "../switchboard.rs"]
+mod switchboard;
+
+// Provide __pender function for embassy_executor
+// This function is called by embassy_executor to wake tasks
+#[no_mangle]
+pub extern "C" fn __pender() {
+    // Intentionally empty.
+}
 
 /// Long-lived runtime state for the tower, owned across the main tracking loop.
 ///
@@ -82,7 +90,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 
     /// Day-rollover reset of the daily encoder mode (see [`check_daily_encoder_reset`]).
     fn daily_reset(&mut self, local_time: &DateTime<Local>) {
-        let reset_occurred = check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
+        let reset_occurred =
+            check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
         if reset_occurred {
             self.motion_mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
                 .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
@@ -138,7 +147,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         };
         match limit_sw_status {
             true => {
-                info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
+                info!(
+                    "Re-homing OK (dir={}): limit switch found",
+                    HOMING_DIRECTION.as_str()
+                );
                 self.actual_heading = self.sw.home_heading_deg;
                 self.motion.update_position(self.actual_heading);
                 if Self::PERSIST_NVS {
@@ -148,7 +160,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
                 self.need_rehome = false;
             }
             false => {
-                error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
+                error!(
+                    "Re-homing FAILED (dir={}): limit switch could not be found",
+                    HOMING_DIRECTION.as_str()
+                );
                 infra::error_loop(
                     self.sw.device_id,
                     &mut self.mqtt,
@@ -180,18 +195,23 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// is active (caller should `continue` and skip tracking this iteration).
     fn run_encoder_fault(&mut self) -> anyhow::Result<bool> {
         let cfg = self.encoder_recovery_cfg();
+
+        let mut ctx = EncoderTickContext {
+            nvs: &mut self.nvs,
+            mqtt: &mut self.mqtt,
+            wifi: &mut self.wifi,
+            cfg,
+            current_version: self.current_version.clone(),
+            persist_nvs: Self::PERSIST_NVS,
+            device_id: self.sw.device_id.into(),
+            home_heading_deg: self.sw.home_heading_deg,
+        };
+
         let fault_active = self.encoder_fault.tick(
-            &cfg,
+            &mut ctx,
             &mut self.motion,
             self.motion_mode,
             &mut self.actual_heading,
-            &mut self.nvs,
-            &mut self.mqtt,
-            &mut self.wifi,
-            &self.current_version,
-            Self::PERSIST_NVS,
-            self.sw.device_id,
-            self.sw.home_heading_deg,
         )?;
         Ok(fault_active)
     }
@@ -204,19 +224,21 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             return;
         }
         let cfg = self.encoder_recovery_cfg();
-        let outcome = app::tracking_loop::tick(
-            &mut self.motion,
-            &mut self.calculation,
-            &mut self.actual_heading,
-            &mut self.mqtt,
-            &self.current_version,
-            &mut self.nvs,
-            &mut self.wifi,
+
+        let mut ctx = TrackingTickContext {
+            calculation: &mut self.calculation,
+            mqtt: &mut self.mqtt,
+            current_version: self.current_version.clone(),
+            nvs: &mut self.nvs,
+            wifi: &mut self.wifi,
             current_datetime,
-            Self::PERSIST_NVS,
-            self.allow_ota,
-            self.sw.device_id,
-        );
+            persist_nvs: Self::PERSIST_NVS,
+            allow_ota: self.allow_ota,
+            device_id: self.sw.device_id,
+        };
+
+        let outcome =
+            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading);
 
         if outcome != MoveOutcome::Completed {
             warn!("Last move aborted: {:?}", outcome);
@@ -281,7 +303,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             motion_mode: motion_mode_str,
             current_heading: self.actual_heading,
         };
-        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx) {
+        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx)
+        {
             warn!("Command processing failed: {:?}", e);
         }
     }
@@ -327,8 +350,8 @@ fn main() -> anyhow::Result<()> {
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
 
-    let last_run_normal = infra::SnapshotStore::new(&mut nvs, true)
-        .load_last_run_normal_or_init(true);
+    let last_run_normal =
+        infra::SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
     let trust_nvs_state = last_run_normal;
     info!(
         "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
@@ -350,7 +373,7 @@ fn main() -> anyhow::Result<()> {
 
     // LED status
     let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
-    led.display_none();
+    led.display_none()?;
 
     // Button inputs (reserved for manual control)
     let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap();
@@ -382,7 +405,13 @@ fn main() -> anyhow::Result<()> {
     );
 
     // Capture maintenance mode
-    capture_maintenance_mode(&mut motion, &mut led, maintenance_button, ccw_button, cw_button);
+    capture_maintenance_mode(
+        &mut motion,
+        &mut led,
+        maintenance_button,
+        ccw_button,
+        cw_button,
+    )?;
 
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
@@ -422,7 +451,8 @@ fn main() -> anyhow::Result<()> {
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
     log::info!("Waiting for 20 seconds before connecting to wifi");
     thread::sleep(Duration::from_secs(20));
-    wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
+    wifi.connect(&real_wifi_ssid, &real_wifi_pass)
+        .expect("Wi-Fi connection failed");
     info!("Current wifi state: {:?}", wifi.state());
     if wifi.state() == WifiState::Disconnected {
         wifi.reconnect_if_disconnected()?;
@@ -514,9 +544,11 @@ fn main() -> anyhow::Result<()> {
                                 current_version: &current_version.to_string(),
                                 notes: "No errors during update",
                             };
-                            let topic = network::telemetry::topic::logs_firmware_update(sw.device_id);
+                            let topic =
+                                network::telemetry::topic::logs_firmware_update(sw.device_id);
                             let published =
-                                network::telemetry::publish_json(&mut mqtt, &topic, &payload).is_ok();
+                                network::telemetry::publish_json(&mut mqtt, &topic, &payload)
+                                    .is_ok();
                             if published {
                                 let _ = nvs.remove("prev_version");
                             }
@@ -568,7 +600,8 @@ fn main() -> anyhow::Result<()> {
         sw.device_id,
         Some(sw.default_ota_updater),
         Some(sw.default_ota_password),
-    ).expect("Failed to create OTA updater instance");
+    )
+    .expect("Failed to create OTA updater instance");
 
     if allow_ota {
         info!("Checking for new OTA update in 3 seconds...");
@@ -629,8 +662,14 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(0.0);
     let altitude: f64 = 0.0;
 
-    info!("Retrieved latitude: {}, and longitude: {}", latitude, longitude);
-    info!("Device: {}, Lat: {}, Lon: {}, Alt: {}", sw.device_id, latitude, longitude, altitude);
+    info!(
+        "Retrieved latitude: {}, and longitude: {}",
+        latitude, longitude
+    );
+    info!(
+        "Device: {}, Lat: {}, Lon: {}, Alt: {}",
+        sw.device_id, latitude, longitude, altitude
+    );
 
     // Hardware initialization
     let calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
@@ -652,7 +691,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    led.display_healthy();
+    led.display_healthy()?;
 
     // Runtime guardrails from switchboard
     motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
@@ -695,13 +734,15 @@ fn main() -> anyhow::Result<()> {
     let mut restored_from_snapshot = false;
     if trust_nvs_state && motion_mode == MotionMode::EncoderGuarded {
         if let Some(enc_ticks_adj) =
-            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-                .load_encoder_snapshot()
+            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_snapshot()
         {
             // Restore zero offset so adjusted ticks equal saved snapshot.
             let raw = motion.encoder_ticks_raw();
             motion.set_encoder_zero_offset(raw - enc_ticks_adj);
-            info!("Restored encoder snapshot ticks from NVS: {}", enc_ticks_adj);
+            info!(
+                "Restored encoder snapshot ticks from NVS: {}",
+                enc_ticks_adj
+            );
             restored_from_snapshot = true;
         } else {
             info!("No valid encoder snapshot found in NVS; will home normally.");
@@ -721,7 +762,8 @@ fn main() -> anyhow::Result<()> {
 
     // Encoder fault recovery
     let mut encoder_fault = app::encoder_fault::EncoderFaultRecovery::new();
-    let encoder_daily_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
+    let encoder_daily_mode =
+        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
     encoder_fault.set_mode_switched_daily(encoder_daily_mode);
 
     // Homing policy:
@@ -733,9 +775,8 @@ fn main() -> anyhow::Result<()> {
     /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
     const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
 
-    let would_skip_homing_on_snapshot = motion_mode == MotionMode::EncoderGuarded
-        && restored_from_snapshot
-        && trust_nvs_state;
+    let would_skip_homing_on_snapshot =
+        motion_mode == MotionMode::EncoderGuarded && restored_from_snapshot && trust_nvs_state;
     let restored_claims_mechanical_home =
         (actual_heading - sw.home_heading_deg).abs() < HOME_HEADING_VERIFY_EPS_DEG;
     let home_claim_needs_limit_verify = would_skip_homing_on_snapshot
@@ -983,14 +1024,14 @@ fn capture_maintenance_mode(
     led: &mut Led,
     maintenance_button: PinDriver<Gpio5, Input>,
     ccw_button: PinDriver<Gpio4, Input>,
-    cw_button: PinDriver<Gpio6, Input>
-) {
+    cw_button: PinDriver<Gpio6, Input>,
+) -> anyhow::Result<()> {
     if maintenance_button.is_low() {
-        return;
+        return Ok(());
     }
-    
+
     log::info!("[Maintenance Mode] Begin");
-    led.display_maintenance();
+    led.display_maintenance()?;
 
     let mut move_direction = None;
     let mut last_maintenance = maintenance_button.is_high();
@@ -1009,7 +1050,7 @@ fn capture_maintenance_mode(
         // Don't move if CCW and CW are both pressed
         if ccw && cw {
             move_direction = None
-        } 
+        }
         // Stop moving if maintenance button is single clicked,
         // or exit mainenance mode if double clicked
         else if maintenance_pressed {
@@ -1022,12 +1063,10 @@ fn capture_maintenance_mode(
             last_click_time = Some(now);
             move_direction = None;
             log::info!("[Maintenance Mode] Not moving");
-        }
-        else if ccw && !cw {
+        } else if ccw && !cw {
             move_direction = Some(Direction::Ccw);
             log::info!("[Maintenance Mode] Moving CCW");
-        } 
-        else if cw && !ccw {
+        } else if cw && !ccw {
             move_direction = Some(Direction::Cw);
             log::info!("[Maintenance Mode] Moving CW");
         }
@@ -1035,18 +1074,18 @@ fn capture_maintenance_mode(
         if let Some(direction) = move_direction {
             match direction {
                 Direction::Ccw => {
-                    led.display_maintenance_moving_ccw();
+                    led.display_maintenance_moving_ccw()?;
                     motion.move_by(-30_000);
-                },
+                }
                 Direction::Cw => {
-                    led.display_maintenance_moving_cw();
+                    led.display_maintenance_moving_cw()?;
                     motion.move_by(30_000);
                 }
             }
-            led.display_maintenance();
+            led.display_maintenance()?;
         }
     }
 
     log::info!("[Maintenance Mode] Exit, continuing normal boot");
-    led.display_none();
+    led.display_none()
 }

@@ -1,7 +1,9 @@
-use crate::{utils::DurationHelpers, Device, Driver, SystemClock};
+use core::time::Duration;
+
 #[allow(unused_imports)]
 use arrayvec::ArrayVec;
-use core::time::Duration;
+
+use crate::{utils::DurationHelpers, Device, Driver, SystemClock};
 
 /// Controller for moving multiple axes in a coordinated fashion.
 pub struct MultiDriver {
@@ -9,6 +11,12 @@ pub struct MultiDriver {
     drivers: Vec<Driver>,
     #[cfg(not(feature = "std"))]
     drivers: ArrayVec<[Driver; MultiDriver::MAX_DRIVERS]>,
+}
+
+impl Default for MultiDriver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MultiDriver {
@@ -29,11 +37,17 @@ impl MultiDriver {
     ///
     /// When compiling without the `std` feature flag, the [`MultiDriver`] can
     /// only manage up to [`MultiDriver::MAX_DRIVERS`] drivers.
-    pub fn push_driver(&mut self, driver: Driver) { self.drivers.push(driver); }
+    pub fn push_driver(&mut self, driver: Driver) {
+        self.drivers.push(driver);
+    }
 
-    pub fn drivers(&self) -> &[Driver] { &self.drivers }
+    pub fn drivers(&self) -> &[Driver] {
+        &self.drivers
+    }
 
-    pub fn drivers_mut(&mut self) -> &mut [Driver] { &mut self.drivers }
+    pub fn drivers_mut(&mut self) -> &mut [Driver] {
+        &mut self.drivers
+    }
 
     /// Set the target positions of all managed steppers.
     ///
@@ -81,11 +95,7 @@ impl MultiDriver {
     ///
     /// The number of managed steppers should be the same as the number of
     /// devices.
-    pub fn poll<D, C>(
-        &mut self,
-        devices: &mut [D],
-        clock: &C,
-    ) -> Result<(), D::Error>
+    pub fn poll<D, C>(&mut self, devices: &mut [D], clock: &C) -> Result<(), D::Error>
     where
         D: Device,
         C: SystemClock,

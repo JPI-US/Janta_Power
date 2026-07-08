@@ -1,6 +1,7 @@
+use std::{ffi::CString, ptr};
+
 use anyhow::{anyhow, Result};
 use esp_idf_hal::sys;
-use std::{ffi::CString, ptr};
 
 /// Global Task Watchdog (TWDT) initializer.
 ///

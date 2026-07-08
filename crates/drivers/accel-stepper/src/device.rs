@@ -1,4 +1,5 @@
 use core::time::Duration;
+
 use void::Void;
 
 /// An interface to the stepper motor.
@@ -11,7 +12,7 @@ pub trait Device {
     fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error>;
 }
 
-impl<'a, D: Device> Device for &'a mut D {
+impl<D: Device> Device for &mut D {
     type Error = D::Error;
 
     fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error> {
@@ -35,10 +36,7 @@ pub struct StepContext {
 ///
 /// See [`fallible_func_device()`] for a version which accepts fallible
 /// callbacks.
-pub fn func_device<F, B, T>(
-    forward: F,
-    backward: B,
-) -> impl Device<Error = Void>
+pub fn func_device<F, B, T>(forward: F, backward: B) -> impl Device<Error = Void>
 where
     F: FnMut() -> T,
     B: FnMut() -> T,
@@ -81,10 +79,7 @@ where
 /// A device which uses callbacks which may fail.
 ///
 /// See [`func_device()`] for a version which uses infallible callbacks.
-pub fn fallible_func_device<F, B, T, E>(
-    forward: F,
-    backward: B,
-) -> impl Device<Error = E>
+pub fn fallible_func_device<F, B, T, E>(forward: F, backward: B) -> impl Device<Error = E>
 where
     F: FnMut() -> Result<T, E>,
     B: FnMut() -> Result<T, E>,

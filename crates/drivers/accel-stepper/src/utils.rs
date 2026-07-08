@@ -41,8 +41,7 @@ impl DurationHelpers for Duration {
     }
 
     fn as_secs_f32_2(&self) -> f32 {
-        (self.as_secs() as f32)
-            + (self.subsec_nanos() as f32) / (NANOS_PER_SEC as f32)
+        (self.as_secs() as f32) + (self.subsec_nanos() as f32) / (NANOS_PER_SEC as f32)
     }
 }
 
@@ -65,15 +64,16 @@ impl CummulativeSteps {
     }
 
     /// The current location in "real" units.
-    pub const fn real_location(&self) -> f32 { self.steps }
+    pub const fn real_location(&self) -> f32 {
+        self.steps
+    }
 
     /// Get the number of steps travelled per "real" unit.
-    pub const fn steps_per_unit(&self) -> f32 { self.steps_per_unit }
+    pub const fn steps_per_unit(&self) -> f32 {
+        self.steps_per_unit
+    }
 
-    pub const fn with_steps_per_unit(
-        &self,
-        steps_per_unit: f32,
-    ) -> CummulativeSteps {
+    pub const fn with_steps_per_unit(&self, steps_per_unit: f32) -> CummulativeSteps {
         CummulativeSteps {
             steps_per_unit,
             steps: self.steps,

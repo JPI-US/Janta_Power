@@ -1,0 +1,27 @@
+[package]
+name = "motion"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bno080 = { path = "../sensors/bno080" }
+accel-stepper = { path = "../drivers/accel-stepper", features = ["hal", "std"] }
+embedded-hal = "1.0.0"
+esp-idf-svc = { version = "0.51", features = [
+    "critical-section",
+    "embassy-time-driver",
+    "embassy-sync",
+] }
+log = "0.4"
+chrono = { version = "0.4", features = ["clock"] }
+semver = "1.0.26"
+astronav = { version = "0.2.5", features = ["noaa-sun"] }
+clock = { path = "../infrastructure/clock" }
+network = { path = "../infrastructure/network" }
+ota = { path = "../infrastructure/ota" }
+wifi = { path = "../infrastructure/wifi" }
+quadrature-encoder = { version = "0.2.1", default-features = false }
+serde_json = "1.0"
+
+[build-dependencies]
+dotenv = "0.15"

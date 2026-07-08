@@ -1,11 +1,10 @@
-#[allow(unused_imports)] // used for rustdoc links
-use crate::CummulativeSteps;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use libm::F32Ext;
 
+#[allow(unused_imports)] // used for rustdoc links
+use crate::CummulativeSteps;
 use crate::{utils::Clamp, Device, StepContext, SystemClock};
-use core::{f32::EPSILON, time::Duration};
 
 /// A stepper motor driver.
 ///
@@ -75,7 +74,9 @@ impl Driver {
 
     /// Get the maximum speed.
     #[inline]
-    pub fn max_speed(&self) -> f32 { self.max_speed }
+    pub fn max_speed(&self) -> f32 {
+        self.max_speed
+    }
 
     /// Set the acceleration/deceleration rate (in `steps/sec/sec`).
     #[inline]
@@ -86,14 +87,13 @@ impl Driver {
 
         let acceleration = acceleration.abs();
 
-        if (self.acceleration - acceleration).abs() > EPSILON {
+        if (self.acceleration - acceleration).abs() > f32::EPSILON {
             // Recompute step_counter per Equation 17
-            self.step_counter = (self.step_counter as f32 * self.acceleration
-                / acceleration) as i64;
+            self.step_counter =
+                (self.step_counter as f32 * self.acceleration / acceleration) as i64;
             // New initial_step_size per Equation 7, with correction per
             // Equation 15
-            self.initial_step_size =
-                0.676 * (2.0 / acceleration).sqrt() * 1000000.0;
+            self.initial_step_size = 0.676 * (2.0 / acceleration).sqrt() * 1000000.0;
             self.acceleration = acceleration;
             self.compute_new_speed();
         }
@@ -101,7 +101,9 @@ impl Driver {
 
     /// Get the acceleration/deceleration rate.
     #[inline]
-    pub fn acceleration(&self) -> f32 { self.acceleration }
+    pub fn acceleration(&self) -> f32 {
+        self.acceleration
+    }
 
     /// Set the desired constant speed in `steps/sec`.
     ///
@@ -111,7 +113,7 @@ impl Driver {
     /// frequently you call the [`Driver::poll_at_constant_speed()`] method. The
     /// speed will be limited by the current value of [`Driver::max_speed()`].
     pub fn set_speed(&mut self, speed: f32) {
-        if (speed - self.speed).abs() < EPSILON {
+        if (speed - self.speed).abs() < f32::EPSILON {
             return;
         }
 
@@ -128,7 +130,9 @@ impl Driver {
 
     /// Get the most recently set speed.
     #[inline]
-    pub fn speed(&self) -> f32 { self.speed }
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
 
     /// Get the number of steps to go until reaching the target position.
     #[inline]
@@ -138,7 +142,9 @@ impl Driver {
 
     /// Get the most recently set target position.
     #[inline]
-    pub fn target_position(&self) -> i64 { self.target_position }
+    pub fn target_position(&self) -> i64 {
+        self.target_position
+    }
 
     /// Reset the current motor position so the current location is considered
     /// the new `0` position.
@@ -162,7 +168,9 @@ impl Driver {
     /// Stepper motors are an open-loop system, so there's no guarantee the
     /// motor will *actually* be at that position.
     #[inline]
-    pub fn current_position(&self) -> i64 { self.current_position }
+    pub fn current_position(&self) -> i64 {
+        self.current_position
+    }
 
     /// Sets a new target position that causes the stepper to stop as quickly as
     /// possible, using the current speed and acceleration parameters.
@@ -172,8 +180,7 @@ impl Driver {
             return;
         }
 
-        let stopping_distance =
-            (self.speed * self.speed) / (2.0 * self.acceleration);
+        let stopping_distance = (self.speed * self.speed) / (2.0 * self.acceleration);
         let steps_to_stop = stopping_distance.round() as i64 + 1;
 
         if self.speed > 0.0 {
@@ -191,8 +198,7 @@ impl Driver {
 
     fn compute_new_speed(&mut self) {
         let distance_to = self.distance_to_go();
-        let distance_to_stop =
-            (self.speed() * self.speed()) / (2.0 * self.acceleration());
+        let distance_to_stop = (self.speed() * self.speed()) / (2.0 * self.acceleration());
         let steps_to_stop = distance_to_stop.round() as i64;
 
         if distance_to == 0 && steps_to_stop <= 1 {
@@ -242,9 +248,8 @@ impl Driver {
             // Subsequent step. Works for accel (n is +_ve) and decel (n is
             // -ve).
             let last_step_size = self.last_step_size;
-            self.last_step_size = last_step_size
-                - last_step_size * 2.0
-                    / ((4.0 * self.step_counter as f32) + 1.0);
+            self.last_step_size =
+                last_step_size - last_step_size * 2.0 / ((4.0 * self.step_counter as f32) + 1.0);
             if self.last_step_size < self.min_step_size {
                 self.last_step_size = self.min_step_size;
             }
@@ -336,19 +341,9 @@ impl Driver {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, time::Duration};
+
     use super::*;
-    use std::cell::Cell;
-
-    #[derive(Debug, Copy, Clone, PartialEq, Default)]
-    struct NopDevice;
-
-    impl Device for NopDevice {
-        type Error = ();
-
-        fn step(&mut self, _ctx: &StepContext) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
 
     #[derive(Debug, Default)]
     struct DummyClock {
@@ -372,7 +367,7 @@ mod tests {
         driver.compute_new_speed();
 
         assert_eq!(driver.speed(), 0.0);
-        assert_eq!(driver.step_interval, Duration::new(0, 0));
+        assert_eq!(driver.step_interval, 0);
     }
 
     #[test]
