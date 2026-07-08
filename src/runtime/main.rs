@@ -33,7 +33,7 @@ use crate::{
         encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
         tracking_loop::TrackingTickContext,
     },
-    infra::watchdog::{TaskWatchdog, Watchdog},
+    infra::watchdog::{TaskWatchdog, UserWatchdog},
 };
 
 mod app;
@@ -311,22 +311,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // the task watchdog timer will trip if any watchdog does not feed it within 2 seconds
-    // this specific configuration will cause an infinite restart loop
-    TaskWatchdog::init(2_000)?;
-
     // create a watchdog for this task
-    let watchdog = Watchdog::new("main")?;
-
-    // reset the task watchdog
-    watchdog.feed()?;
-
-    // stop this specific watchdog
-    // keep in mind that if there are no active watchdogs, then the watchdog system will never trip
-    // watchdog.kill()?;
-
-    // watchdogs will also automatically stop when they get dropped,
-    // such as when a function exits.
+    TaskWatchdog::register()?;
 
     let sw = switchboard::active(switchboard::Profile::from_env_str(
         crate::constants::ACTIVE_PROFILE_STR,
