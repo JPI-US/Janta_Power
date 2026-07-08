@@ -8,13 +8,14 @@ use esp_idf_hal::sys;
 /// The ESP-IDF Task Watchdog monitors registered tasks and/or users and
 /// triggers a panic or reset if they fail to "feed" within a configured timeout.
 ///
-/// If no watchdog calls `feed()` before the timeout, this will trip.
+/// To feed this timeout, create and feed [`Watchdog`]s for tasks.
+/// a restart will be triggered if a [`Watchdog`] is not fed in the timeout time.
 ///
 /// This struct provides a thin wrapper around global TWDT initialization.
 pub struct TaskWatchdog;
 
 impl TaskWatchdog {
-    /// Initializes the ESP-IDF Task Watchdog subsystem.
+    /// Attempts to initialize the ESP-IDF Task Watchdog subsystem.
     ///
     /// # Arguments
     ///
@@ -23,10 +24,9 @@ impl TaskWatchdog {
     ///
     /// # Behavior
     ///
-    /// - Safe to call multiple times.
-    /// - If the watchdog is already initialized, this function does nothing
-    ///   (ESP_ERR_INVALID_STATE is treated as success).
     /// - Configures the watchdog to trigger a panic on timeout.
+    /// - Safe to call multiple times.
+    /// - Does nothing if called before, but will produce an error in the log.
     pub fn init(timeout_ms: u32) -> Result<()> {
         unsafe {
             let cfg = sys::esp_task_wdt_config_t {
@@ -39,9 +39,9 @@ impl TaskWatchdog {
             if err != sys::ESP_OK as i32 && err != sys::ESP_ERR_INVALID_STATE as i32 {
                 esp_err_to_anyhow(err, "esp_task_wdt_init")?;
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 }
 
