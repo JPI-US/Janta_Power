@@ -464,7 +464,7 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(sw.default_tz_posix);
     {
         let mut rtc = Rtc::new(bus);
-        rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC);
+        rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC)?;
     }
     let local_time_boot = rtc::timezone::local_time();
     let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));

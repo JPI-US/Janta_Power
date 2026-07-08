@@ -298,7 +298,7 @@ impl<'a> OtaUpdater<'a> {
         }
 
         // Gets an instance of OTA
-        let mut ota = EspOta::new().expect("Failed to obtain OTA instance!");
+        let mut ota = EspOta::new()?;
         info!("Obtained OTA instance");
         let mut hasher = Sha256::new(); // Create SHA256 hasher
 
@@ -314,10 +314,7 @@ impl<'a> OtaUpdater<'a> {
         // Initialise ota update
         info!("Waiting for 5 seconds before initiating OTA update");
         thread::sleep(Duration::from_secs(5));
-        let mut update = Some(
-            ota.initiate_update()
-                .expect("Failed to initiate OTA update!"),
-        );
+        let mut update = Some(ota.initiate_update()?);
         info!("OTA update has been initialised");
 
         // Read and write chunks to flash

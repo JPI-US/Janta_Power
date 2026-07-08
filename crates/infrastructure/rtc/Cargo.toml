@@ -5,6 +5,7 @@ edition = "2021"
 description = "DS3231 RTC + SNTP fallback + libc TZ"
 
 [dependencies]
+anyhow = { workspace = true }
 chrono = "0.4"
 ds323x = { path = "../../sensors/ds323x" }
 embedded-hal = "1.0.0"

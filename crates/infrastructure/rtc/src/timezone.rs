@@ -1,5 +1,6 @@
 use std::ffi::{CString, NulError};
 
+use anyhow::{anyhow, Result};
 use log::info;
 
 // US Timezones
@@ -31,12 +32,13 @@ pub fn local_time() -> chrono::DateTime<chrono::Local> {
     dt_utc.with_timezone(&chrono::Local)
 }
 
-pub fn utc_now() -> chrono::NaiveDateTime {
+pub fn utc_now() -> Result<chrono::NaiveDateTime> {
     unsafe {
         let mut t: libc::time_t = 0;
         libc::time(&mut t);
-        chrono::DateTime::from_timestamp(t as i64, 0)
-            .expect("Invalid timestamp from libc::time")
-            .naive_utc()
+
+        Ok(chrono::DateTime::from_timestamp(t as i64, 0)
+            .ok_or_else(|| anyhow!("invalid timestamp from libc::time"))?
+            .naive_utc())
     }
 }
