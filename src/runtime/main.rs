@@ -1,8 +1,5 @@
-use core::{convert::Into, option::Option::None};
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use core::{convert::Into, option::Option::None, time::Duration};
+use std::{thread, time::Instant};
 
 use chrono::{DateTime, Local};
 use clock::Clock;
@@ -312,7 +309,11 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 
 fn main() -> anyhow::Result<()> {
     // create a watchdog for this task
-    TaskWatchdog::register()?;
+    // let a = TaskWatchdog::register()?;
+    // thread::sleep(Duration::from_secs(4));
+    // a.feed()?;
+    // thread::sleep(Duration::from_secs(4));
+    // a.unregister()?;
 
     let sw = switchboard::active(switchboard::Profile::from_env_str(
         crate::constants::ACTIVE_PROFILE_STR,
