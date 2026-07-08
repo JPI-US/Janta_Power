@@ -28,24 +28,7 @@ use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::app::{
-    encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
-    tracking_loop::TrackingTickContext,
-};
-
-mod app;
-#[path = "../constants.rs"]
-#[allow(dead_code)]
-mod constants;
-#[path = "../diagnostics/mod.rs"]
-mod diagnostics;
-mod infra;
-#[path = "../switchboard.rs"]
-mod switchboard;
-
-// Required by embassy_executor when esp-idf-svc embassy features are enabled.
-#[no_mangle]
-pub extern "C" fn __pender() {}
+use crate::{app::encoder_fault::{Direction, EncoderRecoverySwitches}, infra::watchdog::{self, TaskWatchdog, Watchdog}};
 
 /// Long-lived runtime state for the tower, owned across the main tracking loop.
 ///
@@ -305,6 +288,23 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 }
 
 fn main() -> anyhow::Result<()> {
+    // the task watchdog timer will trip if any watchdog does not feed it within 2 seconds
+    // this specific configuration will cause an infinite restart loop
+    TaskWatchdog::init(2_000)?;
+
+    // create a watchdog for this task
+    let watchdog = Watchdog::new("main")?;
+
+    // reset the task watchdog
+    watchdog.feed()?;
+
+    // stop this specific watchdog
+    // keep in mind that if there are no active watchdogs, then the watchdog system will never trip
+    // watchdog.kill()?;
+
+    // watchdogs will also automatically stop when they get dropped,
+    // such as when a function exits.
+
     let sw = switchboard::active(switchboard::Profile::from_env_str(
         crate::constants::ACTIVE_PROFILE_STR,
     ));

@@ -60,6 +60,8 @@ Stable release of Encoder + RTC + AWS with fleet-safe tower identity.
   changing towers no longer requires source edits for `tower_5` / `tower_6`
   identity.
 
+- Added basic Watchdog setup
+
 ### Fixed
 
 - Sunset homing no longer fires an hour early during DST: the clock crate's
