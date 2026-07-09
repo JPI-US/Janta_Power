@@ -12,20 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `bno080`.
 
 ## Changed
-- Replaced unwrap in `build.rs` with expect & explantation
-- Removed `unwrap()` usage in `ds323x` and `clock`, instead returning `Results` that get carried up to main.
-  - Implemented `std::fmt::Display` and `std::error::Error` for `ds323x`.
-- Replaced `unwrap()` in `rtc`.
-- Replace `unwrap()` in `wifi`.
-- Made `anyhow` a workspace dependency.
-- Replaced `unwrap()` in `motion`.
-- Replaced `unwrap()` in `sensors`.
-- Replaced remaining `unwrap()` (mostly in `main`)
-- Replaced `.expect()` in `multi_driver` with an `unreachable!()`
-- Removed `.expect()` in `multi_driver` and returned the error instead.
-- Removed `.expect()` in `rtc` and returned the error instead.
-- Removed `.expect()` in `ota` and returned error instead.
-- Removed `.expect()` in `main` and returned errors instead.
+- Replaced unsafe `.unwrap()` `.expect()`, and `panic!()` with `?`.
 
 ## [1.1.5] - 2026-07-04
 

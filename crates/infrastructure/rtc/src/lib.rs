@@ -65,16 +65,20 @@ impl Rtc {
                 self.sync_ntp()?;
             }
             WifiState::Disconnected => {
-                panic!("Unrecoverable: RTC invalid and WiFi disconnected — cannot determine time.");
+                return Err(anyhow!(
+                    "Unrecoverable: RTC invalid and WiFi disconnected — cannot determine time."
+                ));
             }
             WifiState::Connecting => {
                 warn!("WiFi still connecting — waiting before NTP attempt...");
                 thread::sleep(Duration::from_secs(5));
                 match wifi.state() {
                     WifiState::Connected(_) => self.sync_ntp()?,
-                    _ => panic!(
+                    _ => {
+                        return Err(anyhow!(
                         "Unrecoverable: RTC invalid and WiFi unavailable — cannot determine time."
-                    ),
+                    ))
+                    }
                 }
             }
         };
@@ -91,7 +95,7 @@ impl Rtc {
                 n
             }
             Err(e) => {
-                panic!("Failed to start SNTP: {:?}", e);
+                return Err(anyhow!("Failed to start SNTP: {:?}", e));
             }
         };
 
@@ -120,9 +124,9 @@ impl Rtc {
                     "NTP sync failed after {}s — status: {:?}",
                     NTP_TIMEOUT_SECS, status
                 );
-                panic!(
+                return Err(anyhow!(
                     "Unrecoverable: RTC invalid and NTP sync timed out — cannot determine time."
-                );
+                ));
             }
 
             info!(

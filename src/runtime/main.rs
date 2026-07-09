@@ -343,7 +343,7 @@ fn main() -> anyhow::Result<()> {
             info!("Got namespace {:?} from default partition", "storage");
             nvs
         }
-        Err(e) => panic!("Could't get namespace {:?}", e),
+        Err(e) => Err(anyhow!("Could't get namespace {:?}", e))?,
     };
 
     let last_run_normal =
