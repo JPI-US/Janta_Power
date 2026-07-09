@@ -5,18 +5,18 @@ edition = "2021"
 description = "DS3231 RTC + SNTP fallback + libc TZ"
 
 [dependencies]
-anyhow = { workspace = true }
-chrono = "0.4"
-ds323x = { path = "../../sensors/ds323x" }
-embedded-hal = "1.0.0"
-esp-idf-svc = { version = "0.51", features = [
+anyhow.workspace = true
+chrono.workspace = true
+ds323x.workspace = true
+embedded-hal.workspace = true
+esp-idf-svc = { workspace = true, features = [
     "critical-section",
     "embassy-time-driver",
     "embassy-sync",
 ] }
-libc = "0.2"
-log = "0.4"
-shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
+libc.workspace = true
+log.workspace = true
+shared-bus = { workspace = true, features = [
     "std",
 ] }
-wifi = { path = "../../infrastructure/wifi" }
+wifi.workspace = true

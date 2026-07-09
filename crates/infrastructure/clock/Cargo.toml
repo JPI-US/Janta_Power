@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-chrono = "0.4.39"
-ds323x = { path = "../../sensors/ds323x" }
-embedded-hal = "1.0.0"
+chrono.workspace = true
+ds323x.workspace = true
+embedded-hal.workspace = true
 sun-times = "0.2.0"
-

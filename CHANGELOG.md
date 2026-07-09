@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Changed
 - Replaced unsafe `.unwrap()` `.expect()`, and `panic!()` with `?`.
 - Used `anyhow::Context` to give `?` errors extra context.
+- Replaced duplicate dependencies in crates with workspace dependencies to unify versions and file paths
 
 ## [1.1.5] - 2026-07-04
 
