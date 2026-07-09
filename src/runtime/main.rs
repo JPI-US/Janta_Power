@@ -438,11 +438,11 @@ fn main() -> anyhow::Result<()> {
     let mut buffer = [0u8; 64];
     let real_wifi_ssid = nvs
         .get_str("wifi_ssid", &mut buffer)?
-        .context("Getting Wifi SSID from NVS")?
+        .context("Failed to get Wifi SSID from NVS")?
         .to_string();
     let real_wifi_pass = nvs
         .get_str("wifi_pass", &mut buffer)?
-        .context("Getting Wifi password from NVS")?
+        .context("Failed to get Wifi password from NVS")?
         .to_string();
 
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
@@ -509,7 +509,7 @@ fn main() -> anyhow::Result<()> {
     // On first OTA boot, mark slot valid only after diagnostics.
     if ALLOW_BOOT_VALIDATION && first_boot == 1 {
         info!("First boot, now performing boot diagnostics");
-        let mut valid_ota = EspOta::new().context("Getting OTA instance")?;
+        let mut valid_ota = EspOta::new().context("Failed to get OTA instance")?;
         let running_slot = valid_ota.get_running_slot();
         info!("This is the running boot slot {:?}", running_slot);
 
@@ -598,7 +598,7 @@ fn main() -> anyhow::Result<()> {
         Some(sw.default_ota_updater),
         Some(sw.default_ota_password),
     )
-    .context("Creating OTA updater instance")?;
+    .context("Failed to ceate OTA updater instance")?;
 
     if allow_ota {
         info!("Checking for new OTA update in 3 seconds...");

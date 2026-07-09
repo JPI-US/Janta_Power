@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::{Context, Result};
+
 use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
     INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
@@ -18,7 +20,7 @@ impl Motion<'_> {
         self.last_move_outcome.take()
     }
 
-    pub fn move_by(&mut self, location: i64) -> anyhow::Result<MoveOutcome> {
+    pub fn move_by(&mut self, location: i64) -> Result<MoveOutcome> {
         // Start move.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement");
@@ -56,7 +58,7 @@ impl Motion<'_> {
             location
         };
         self.motor.move_by(signed_steps);
-        let outcome = self.run()?;
+        let outcome = self.run().context("Failed to run motor")?;
 
         // End move.
         self.relay_off();
@@ -66,7 +68,7 @@ impl Motion<'_> {
         Ok(outcome)
     }
 
-    pub fn move_by_ticks(&mut self, location: i64) -> anyhow::Result<MoveOutcome> {
+    pub fn move_by_ticks(&mut self, location: i64) -> Result<MoveOutcome> {
         // Start move in tick space.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement (ticks)");
@@ -100,7 +102,7 @@ impl Motion<'_> {
             location
         };
         self.motor.move_by(signed_steps);
-        let outcome = self.run()?;
+        let outcome = self.run().context("Failed to run motor")?;
 
         // End move.
         self.relay_off();
@@ -110,7 +112,7 @@ impl Motion<'_> {
         Ok(outcome)
     }
 
-    pub fn run(&mut self) -> anyhow::Result<MoveOutcome> {
+    pub fn run(&mut self) -> Result<MoveOutcome> {
         let mut t0 = Instant::now();
         loop {
             if self.motor.is_running() {

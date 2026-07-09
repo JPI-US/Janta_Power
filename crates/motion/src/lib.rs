@@ -5,6 +5,7 @@ pub mod motion {
     };
 
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
+    use anyhow::Result;
     use astronav::coords::noaa_sun::NOAASun;
     use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
@@ -128,7 +129,7 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
-        ) -> anyhow::Result<Motion<'a>> {
+        ) -> Result<Motion<'a>> {
             let step = PinDriver::output(step_pin)?;
             let direction = PinDriver::output(direction_pin)?;
             // Relay is active-low: boot with relay OFF.
@@ -316,7 +317,7 @@ pub mod motion {
             ctx: TowerPositionCtx<'_, '_, I2C, T>,
             location: f32,
             _balance: i32,
-        ) -> anyhow::Result<bool>
+        ) -> Result<bool>
         where
             I2C: embedded_hal::i2c::I2c,
             T: NvsPartitionId,

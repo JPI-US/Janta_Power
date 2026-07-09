@@ -46,7 +46,7 @@ impl<'a> OtaUpdater<'a> {
             use_global_ca_store: true,
             ..Default::default()
         })
-        .context("Creating OTA Updater")?;
+        .context("Failed to create OTA Updater")?;
 
         let client = HttpClient::wrap(config);
 
