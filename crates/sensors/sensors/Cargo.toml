@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { workspace = true }
-hdc1080 = { path = "../hdc1080" }
-embedded-hal = "1.0.0"
-log = "0.4"
-esp-idf-svc = { version = "0.51", features = [
+anyhow.workspace = true
+hdc1080.workspace = true
+embedded-hal.workspace = true
+log.workspace = true
+esp-idf-svc = { workspace =  true, features = [
     "critical-section",
     "embassy-time-driver",
     "embassy-sync",
