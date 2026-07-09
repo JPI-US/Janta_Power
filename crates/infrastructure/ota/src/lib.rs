@@ -1,6 +1,7 @@
 //use std::io::{Read, Write};
 use std::{result::Result::Ok, thread, time::Duration};
 
+use anyhow::Context;
 // use ota::OtaPartition; // hypothetical struct from ota crate
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
@@ -44,7 +45,8 @@ impl<'a> OtaUpdater<'a> {
             crt_bundle_attach: Some(esp_crt_bundle_attach),
             use_global_ca_store: true,
             ..Default::default()
-        })?;
+        })
+        .context("Creating OTA Updater")?;
 
         let client = HttpClient::wrap(config);
 

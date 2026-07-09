@@ -490,8 +490,9 @@ pub mod motion {
                                 ctx.device_id,
                                 Some("device1A"),
                                 Some("device1A"),
-                            )
-                            .expect("Failed to create OTA adapter instance");
+                            )?;
+
+                            // .expect("Failed to create OTA adapter instance");
 
                             thread::sleep(Duration::from_secs(3));
                             let run_compare = updater.run_version_compare(ctx.nvs);
