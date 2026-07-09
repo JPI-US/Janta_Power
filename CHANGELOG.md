@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `.expect()` in `multi_driver` and returned the error instead.
 - Removed `.expect()` in `rtc` and returned the error instead.
 - Removed `.expect()` in `ota` and returned error instead.
+- Removed `.expect()` in `main` and returned errors instead.
 
 ## [1.1.5] - 2026-07-04
 
