@@ -1,3 +1,4 @@
+pub mod peripheral_map;
 pub mod snapshot_store;
 pub mod telemetry;
 pub mod temperature;

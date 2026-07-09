@@ -1,0 +1,98 @@
+use anyhow::{anyhow, Context, Result};
+use esp_idf_svc::hal::{
+    gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
+    i2c::{I2cConfig, I2cDriver},
+    modem::Modem,
+    prelude::*,
+};
+use motion::Motion;
+use rgb_led::Led;
+use shared_bus::BusManager;
+
+/// Collection of initialized hardware peripherals used by the device.
+pub struct PeripheralMap<'a> {
+    /// Shared I2C bus used by connected peripherals.
+    pub i2c_bus: &'static BusManager<std::sync::Mutex<I2cDriver<'static>>>,
+
+    /// Status LED controller.
+    pub led: Led<'a>,
+
+    /// Motion control peripherals.
+    pub motion: Motion<'a>,
+
+    /// Maintenance mode button input.
+    pub maintenance_button: PinDriver<'a, Gpio5, Input>,
+
+    /// Counter-clockwise movement button input.
+    pub ccw_button: PinDriver<'a, Gpio4, Input>,
+
+    /// Clockwise movement button input.
+    pub cw_button: PinDriver<'a, Gpio6, Input>,
+
+    /// Cellular modem peripheral.
+    pub modem: Modem,
+}
+
+impl PeripheralMap<'_> {
+    /// Initializes all hardware peripherals required by the device.
+    ///
+    /// This method takes ownership of the available hardware peripherals,
+    /// configures communication interfaces, initializes device controllers,
+    /// and returns a fully configured peripheral map.
+    ///
+    /// This should only ever need to be run once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any peripheral fails to initialize or if a required
+    /// hardware resource cannot be acquired.
+    pub fn new() -> Result<Self> {
+        let peripherals = Peripherals::take().context("Failed to take peripherals")?;
+
+        // i2c
+        let i2c_config = I2cConfig::new().baudrate(10_u32.kHz().into());
+        let i2c = I2cDriver::new(
+            peripherals.i2c0,
+            peripherals.pins.gpio8,
+            peripherals.pins.gpio9,
+            &i2c_config,
+        )
+        .context("Failed to create I2cDriver")?;
+        let i2c_bus: &'static _ =
+            shared_bus::new_std!(I2cDriver = i2c).ok_or(anyhow!("Failed to create shared bus"))?;
+
+        // status led
+        let led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0)?;
+
+        // motion (motor, encoder, relay, limit switch)
+        let motion = Motion::new(
+            peripherals.pins.gpio15,
+            peripherals.pins.gpio16,
+            peripherals.pins.gpio17,
+            peripherals.pins.gpio14,
+            peripherals.pins.gpio10,
+            peripherals.pins.gpio11,
+        )?;
+
+        // maintenance buttons
+        let maintenance_button = PinDriver::input(peripherals.pins.gpio5)
+            .context("Failed to create maintenance button input driver")?;
+        let ccw_button = PinDriver::input(peripherals.pins.gpio4)
+            .context("Failed to create CCW button input driver")?;
+        let cw_button = PinDriver::input(peripherals.pins.gpio6)
+            .context("Failed to create CW button input driver")?;
+
+        // modem
+        let modem = peripherals.modem;
+
+        Ok(Self {
+            i2c_bus,
+            led,
+            motion,
+            maintenance_button,
+            ccw_button,
+            cw_button,
+            modem,
+        })
+    }
+}

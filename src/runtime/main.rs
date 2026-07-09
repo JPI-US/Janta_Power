@@ -12,8 +12,6 @@ use esp_idf_svc::{
     hal::{
         delay::Ets,
         gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
-        i2c::{I2cConfig, I2cDriver},
-        prelude::*,
     },
     log::EspLogger,
     nvs::{EspDefaultNvsPartition, EspNvs},
@@ -29,9 +27,12 @@ use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::app::{
-    encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
-    tracking_loop::TrackingTickContext,
+use crate::{
+    app::{
+        encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
+        tracking_loop::TrackingTickContext,
+    },
+    infra::peripheral_map::PeripheralMap,
 };
 
 mod app;
@@ -354,42 +355,22 @@ fn main() -> anyhow::Result<()> {
         last_run_normal, trust_nvs_state
     );
 
-    let peripherals = Peripherals::take()?;
-
-    // Encoder pins
-    let encoder_a = peripherals.pins.gpio10;
-    let encoder_b = peripherals.pins.gpio11;
-
-    // I2C bus for Clock
-    let sda = peripherals.pins.gpio8;
-    let scl = peripherals.pins.gpio9;
-    let config = I2cConfig::new().baudrate(10_u32.kHz().into());
-    let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config)?;
-    let bus: &'static _ =
-        shared_bus::new_std!(I2cDriver = i2c).ok_or(anyhow!("Failed to create shared bus"))?;
+    // Intialize peripherals
+    let PeripheralMap {
+        i2c_bus,
+        mut led,
+        mut motion,
+        maintenance_button,
+        ccw_button,
+        cw_button,
+        modem,
+    } = PeripheralMap::new()?;
 
     // LED status
-    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0)?;
     led.display_none()?;
 
-    // Button inputs (reserved for manual control)
-    let maintenance_button = PinDriver::input(peripherals.pins.gpio5)?;
-    let ccw_button = PinDriver::input(peripherals.pins.gpio4)?;
-    let cw_button = PinDriver::input(peripherals.pins.gpio6)?;
-
     // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
-
-    // Init motion early so that maintenance mode can use it
-    // Motion (motor, encoder, relay, limit switch)
-    let mut motion = Motion::new(
-        peripherals.pins.gpio15,
-        peripherals.pins.gpio16,
-        peripherals.pins.gpio17,
-        peripherals.pins.gpio14,
-        encoder_a,
-        encoder_b,
-    )?;
-
+    // Initialize motion early so that maintenance mode can use it
     motion.init();
     let _ = motion.run();
 
@@ -445,7 +426,7 @@ fn main() -> anyhow::Result<()> {
         .context("Failed to get Wifi password from NVS")?
         .to_string();
 
-    let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
+    let mut wifi = Wifi::new(modem, sysloop.clone(), nvs_default)?;
     log::info!("Waiting for 20 seconds before connecting to wifi");
     thread::sleep(Duration::from_secs(20));
     wifi.connect(&real_wifi_ssid, &real_wifi_pass)
@@ -463,7 +444,7 @@ fn main() -> anyhow::Result<()> {
         .get_str("tz_posix", &mut tz_buf)?
         .unwrap_or(sw.default_tz_posix);
     {
-        let mut rtc = Rtc::new(bus);
+        let mut rtc = Rtc::new(i2c_bus);
         rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC)?;
     }
     let local_time_boot = rtc::timezone::local_time();
@@ -669,9 +650,9 @@ fn main() -> anyhow::Result<()> {
     );
 
     // Hardware initialization
-    let calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
+    let calculation = Clock::new(i2c_bus.acquire_i2c(), latitude, longitude, altitude);
 
-    let temp_sensor = match Hdc1080::new(bus.acquire_i2c(), Ets) {
+    let temp_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {
         Ok(mut sensor) => {
             let _ = sensor.init();
             if sensor.get_device_id().unwrap_or(0) == 0x1050 {
