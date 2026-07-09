@@ -21,13 +21,13 @@ use sha2::{Digest, Sha256};
 
 pub struct OtaUpdater<'a> {
     current_version: Version,
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     mqtt_client: &'a mut Mqtt,
     device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
     username: Option<String>,
     password: Option<String>,
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     default_headers: Vec<(&'static str, &'static str)>,
 }
 
@@ -281,7 +281,6 @@ impl<'a> OtaUpdater<'a> {
             remote_version
         );
 
-        //let mut response = self.get_firmware(&remote_url)?;
         // Stream firmware directly using existing client
         let mut headers = vec![("accept", "application/octet-stream")];
         if let Some((key, value)) = self.build_auth_header() {
@@ -376,7 +375,6 @@ impl<'a> OtaUpdater<'a> {
             u.complete()?; // mark valid
         }
 
-        //update.complete()?; // Mark firmware as valid         GPT SUGGEST1
         Ok(())
     }
 }

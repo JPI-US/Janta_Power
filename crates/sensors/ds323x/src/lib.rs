@@ -7,6 +7,12 @@ pub use rtcc::{
     DateTimeAccess, Datelike, Hours, NaiveDate, NaiveDateTime, NaiveTime, Rtcc, Timelike,
 };
 
+mod ds323x;
+pub use crate::ds323x::{
+    Alarm1Matching, Alarm2Matching, DayAlarm1, DayAlarm2, WeekdayAlarm1, WeekdayAlarm2,
+};
+mod ds3231;
+
 /// All possible errors in this crate
 #[derive(Debug)]
 pub enum Error {
@@ -80,7 +86,7 @@ impl Register {
     const STATUS: u8 = 0x0F;
     const AGING_OFFSET: u8 = 0x10;
     const TEMP_MSB: u8 = 0x11;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     const TEMP_CONV: u8 = 0x13;
 }
 
@@ -99,17 +105,17 @@ impl BitFlags {
     const ALARM2_INT_EN: u8 = 0b0000_0010;
     const ALARM1_INT_EN: u8 = 0b0000_0001;
     const OSC_STOP: u8 = 0b1000_0000;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     const BB32KHZ: u8 = 0b0100_0000;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     const CRATE1: u8 = 0b0010_0000;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     const CRATE0: u8 = 0b0001_0000;
     const EN32KHZ: u8 = 0b0000_1000;
     const BUSY: u8 = 0b0000_0100;
     const ALARM2F: u8 = 0b0000_0010;
     const ALARM1F: u8 = 0b0000_0001;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     const TEMP_CONV_BAT: u8 = 0b0000_0001;
     const ALARM_MATCH: u8 = 0b1000_0000;
     const WEEKDAY: u8 = 0b0100_0000;
@@ -134,20 +140,4 @@ pub struct Ds323x<I2C> {
     i2c: I2C,
     control: u8,
     status: u8,
-}
-
-mod ds323x;
-pub use crate::ds323x::{
-    Alarm1Matching, Alarm2Matching, DayAlarm1, DayAlarm2, WeekdayAlarm1, WeekdayAlarm2,
-};
-mod ds3231;
-
-mod private {
-    use super::ic;
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
-    pub trait Sealed {}
-
-    impl Sealed for ic::DS3231 {}
-    impl Sealed for ic::DS3232 {}
-    impl Sealed for ic::DS3234 {}
 }

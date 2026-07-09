@@ -34,20 +34,6 @@ pub struct EncoderRecoverySwitches {
     pub rehome_dir: Direction,
 }
 
-impl EncoderRecoverySwitches {
-    /// Fallback when not using switchboard (e.g. tests). Prefer building from sw.runtime.encoder_recovery.
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
-    pub const fn default() -> Self {
-        Self {
-            enabled: true,
-            probe_interval_secs: 30,
-            probe_steps: 50_000,
-            max_drift_deg: 5.0,
-            rehome_dir: Direction::Ccw,
-        }
-    }
-}
-
 pub struct EncoderFaultRecovery {
     active: bool,
     next_probe_at: Option<Instant>,
@@ -67,7 +53,7 @@ impl EncoderFaultRecovery {
         }
     }
 
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn mode_switched_daily(&self) -> bool {
         self.mode_switched_daily
     }

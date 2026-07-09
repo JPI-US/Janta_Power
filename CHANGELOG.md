@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Removed
 - Removed unused `fullchain.pem`.
-- Removed `bno080`.
+- Removed `bno080` and various dead code.
 
 ## Changed
 - Replaced unsafe `.unwrap()` `.expect()`, and `panic!()` with `?`.
