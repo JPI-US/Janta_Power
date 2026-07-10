@@ -7,6 +7,7 @@ use std::{
 use anyhow::{anyhow, Context};
 use chrono::{DateTime, Local};
 use clock::Clock;
+use config::{constants, switchboard, switchboard::Switchboard};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
@@ -17,33 +18,30 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs},
     ota::EspOta,
 };
+use hardware::{peripheral_map::PeripheralMap, temperature::report_system_temperature};
 use hdc1080::Hdc1080;
 use log::{error, info, warn};
+use logic::{
+    encoder_fault,
+    encoder_fault::{Direction, EncoderFaultRecovery, EncoderRecoverySwitches, EncoderTickContext},
+    tracking_loop,
+    tracking_loop::TrackingTickContext,
+};
 use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
 use rgb_led::Led;
 use rtc::Rtc;
 use semver::Version;
+use services::{commands, telemetry::error_loop, transport};
+use storage::snapshot_store::SnapshotStore;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::{
-    app::{
-        encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
-        tracking_loop::TrackingTickContext,
-    },
-    infra::peripheral_map::PeripheralMap,
-};
-
-mod app;
-#[path = "../constants.rs"]
-#[allow(dead_code)]
-mod constants;
-#[path = "../diagnostics/mod.rs"]
-mod diagnostics;
-mod infra;
-#[path = "../switchboard.rs"]
-mod switchboard;
+mod config;
+mod hardware;
+mod logic;
+mod services;
+mod storage;
 
 // Required by embassy_executor when esp-idf-svc embassy features are enabled.
 #[no_mangle]
@@ -56,14 +54,14 @@ pub extern "C" fn __pender() {}
 /// proxy type `I2C` so the bus-backed devices (`calculation`, `temp_sensor`)
 /// can be stored without naming the verbose `shared_bus` proxy type.
 struct Tower<I2C> {
-    sw: switchboard::Switchboard,
+    sw: Switchboard,
     nvs: EspNvs<esp_idf_svc::nvs::NvsDefault>,
     motion: Motion<'static>,
     mqtt: Box<Mqtt>,
     wifi: Wifi<'static>,
     calculation: Clock<I2C>,
     temp_sensor: Option<Hdc1080<I2C, Ets>>,
-    encoder_fault: app::encoder_fault::EncoderFaultRecovery,
+    encoder_fault: EncoderFaultRecovery,
     current_version: Version,
     motion_mode: MotionMode,
     actual_heading: f32,
@@ -89,7 +87,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         let reset_occurred =
             check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
         if reset_occurred {
-            self.motion_mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+            self.motion_mode = SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
                 .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
             self.motion.set_motion_mode(self.motion_mode);
             self.encoder_fault.set_mode_switched_daily(false);
@@ -116,7 +114,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// changed to `StepperOnly`, schedule a re-home. `stepper_switch_log` is the
     /// message logged on that transition.
     fn sync_motion_mode_from_nvs(&mut self, stepper_switch_log: &str) {
-        let mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+        let mode = SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
             .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
         if mode != self.motion_mode {
             self.motion_mode = mode;
@@ -150,7 +148,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
                 self.actual_heading = self.sw.home_heading_deg;
                 self.motion.update_position(self.actual_heading);
                 if Self::PERSIST_NVS {
-                    infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+                    SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
                         .save_heading(self.actual_heading);
                 }
                 self.need_rehome = false;
@@ -160,7 +158,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
                     "Re-homing FAILED (dir={}): limit switch could not be found",
                     HOMING_DIRECTION.as_str()
                 );
-                infra::error_loop(
+                error_loop(
                     self.sw.device_id,
                     &mut self.mqtt,
                     network::telemetry::Component::LimitSwitch,
@@ -181,8 +179,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             probe_steps: self.sw.runtime.encoder_recovery.probe_steps,
             max_drift_deg: self.sw.runtime.encoder_recovery.max_drift_deg,
             rehome_dir: match self.sw.runtime.encoder_recovery.rehome_dir {
-                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
-                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
+                switchboard::Direction::Cw => encoder_fault::Direction::Cw,
+                switchboard::Direction::Ccw => encoder_fault::Direction::Ccw,
             },
         }
     }
@@ -233,8 +231,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             device_id: self.sw.device_id,
         };
 
-        let outcome =
-            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading)?;
+        let outcome = tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading)?;
 
         if outcome != MoveOutcome::Completed {
             warn!("Last move aborted: {:?}", outcome);
@@ -275,12 +272,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// Publish system temperature telemetry when the HDC1080 is present.
     fn report_temperature(&mut self, current_datetime: &str) {
         if let Some(ref mut sensor) = self.temp_sensor {
-            infra::temperature::report_system_temperature(
-                sensor,
-                &mut self.mqtt,
-                self.sw.device_id,
-                current_datetime,
-            );
+            report_system_temperature(sensor, &mut self.mqtt, self.sw.device_id, current_datetime);
         }
     }
 
@@ -294,7 +286,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             MotionMode::EncoderGuarded => "encoder_guarded",
         };
         let firmware_version = self.current_version.to_string();
-        let ctx = diagnostics::commands::CmdCtx {
+        let ctx = commands::CmdCtx {
             device_id: self.sw.device_id,
             firmware_version: &firmware_version,
             mqtt_connected: self.mqtt.is_connected(),
@@ -302,8 +294,7 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             motion_mode: motion_mode_str,
             current_heading: self.actual_heading,
         };
-        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx)
-        {
+        if let Err(e) = transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx) {
             warn!("Command processing failed: {:?}", e);
         }
     }
@@ -326,7 +317,7 @@ impl error::Error for TrackingError {}
 
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::active(switchboard::Profile::from_env_str(
-        crate::constants::ACTIVE_PROFILE_STR,
+        constants::ACTIVE_PROFILE_STR,
     ));
 
     // PHASE 1: INITIALIZATION --------------------------------------------------
@@ -347,8 +338,7 @@ fn main() -> anyhow::Result<()> {
         Err(e) => Err(anyhow!("Could't get namespace {:?}", e))?,
     };
 
-    let last_run_normal =
-        infra::SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
+    let last_run_normal = SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
     let trust_nvs_state = last_run_normal;
     info!(
         "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
@@ -552,7 +542,7 @@ fn main() -> anyhow::Result<()> {
     // Subscribe to the remote command channel (tower/{id}/cmd/diagnostics).
     // Non-fatal: a subscribe hiccup must not block boot. Gated by the profile.
     if sw.runtime.commands_enabled {
-        if let Err(e) = diagnostics::transport::subscribe(&mut mqtt, sw.device_id) {
+        if let Err(e) = transport::subscribe(&mut mqtt, sw.device_id) {
             warn!("Failed to subscribe to command channel: {:?}", e);
         }
     }
@@ -685,7 +675,7 @@ fn main() -> anyhow::Result<()> {
     check_daily_encoder_reset(&mut nvs, &rtc::timezone::local_time(), PERSIST_NVS);
 
     // Motion mode from NVS, default EncoderGuarded
-    let motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+    let motion_mode = SnapshotStore::new(&mut nvs, PERSIST_NVS)
         .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
     motion.set_motion_mode(motion_mode);
     motion.set_motor_power_on(POWER_ON);
@@ -699,8 +689,7 @@ fn main() -> anyhow::Result<()> {
 
     // PHASE 6: STATE RESTORATION ----------------------------------------------
     let mut actual_heading: f32 = if trust_nvs_state {
-        let h = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-            .load_heading_or_init(sw.home_heading_deg);
+        let h = SnapshotStore::new(&mut nvs, PERSIST_NVS).load_heading_or_init(sw.home_heading_deg);
         info!("Restored heading from NVS: {}", h);
         h
     } else {
@@ -712,7 +701,7 @@ fn main() -> anyhow::Result<()> {
     let mut restored_from_snapshot = false;
     if trust_nvs_state && motion_mode == MotionMode::EncoderGuarded {
         if let Some(enc_ticks_adj) =
-            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_snapshot()
+            SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_snapshot()
         {
             // Restore zero offset so adjusted ticks equal saved snapshot.
             let raw = motion.encoder_ticks_raw();
@@ -739,9 +728,8 @@ fn main() -> anyhow::Result<()> {
     // PHASE 7: NORMAL MODE BOOT ACTIONS ---------------------------------------
 
     // Encoder fault recovery
-    let mut encoder_fault = app::encoder_fault::EncoderFaultRecovery::new();
-    let encoder_daily_mode =
-        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
+    let mut encoder_fault = EncoderFaultRecovery::new();
+    let encoder_daily_mode = SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
     encoder_fault.set_mode_switched_daily(encoder_daily_mode);
 
     // Homing policy:
@@ -786,7 +774,7 @@ fn main() -> anyhow::Result<()> {
                     "Homing FAILED (dir={}): limit switch could not be found",
                     HOMING_DIRECTION.as_str()
                 );
-                infra::error_loop(
+                error_loop(
                     sw.device_id,
                     &mut mqtt,
                     network::telemetry::Component::LimitSwitch,
@@ -798,9 +786,9 @@ fn main() -> anyhow::Result<()> {
         // Align RAM and NVS with home heading after homing.
         actual_heading = sw.home_heading_deg;
         if PERSIST_NVS {
-            infra::SnapshotStore::new(&mut nvs, true).save_heading(sw.home_heading_deg);
+            SnapshotStore::new(&mut nvs, true).save_heading(sw.home_heading_deg);
             if motion_mode == MotionMode::EncoderGuarded {
-                infra::SnapshotStore::new(&mut nvs, true)
+                SnapshotStore::new(&mut nvs, true)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
         }
@@ -808,7 +796,7 @@ fn main() -> anyhow::Result<()> {
     } else if should_home_by_mode {
         log::warn!("Homing skipped: HOMING_ENABLED=false");
         if !trust_nvs_state {
-            infra::error_loop(
+            error_loop(
                 sw.device_id,
                 &mut mqtt,
                 network::telemetry::Component::System,
@@ -821,7 +809,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Mark this boot as Normal so next boot can trust NVS.
-    infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
+    SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
 
     // PHASE 8: MAIN TRACKING LOOP ---------------------------------------------
     // Gather the long-lived state into the Tower context; the loop drives it.
@@ -968,7 +956,7 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
     local_time: &DateTime<Local>,
     persist_nvs: bool,
 ) -> bool {
-    let mut snapshot_store = infra::SnapshotStore::new(nvs, persist_nvs);
+    let mut snapshot_store = SnapshotStore::new(nvs, persist_nvs);
 
     let encoder_daily_mode = snapshot_store.load_encoder_daily_mode();
     if !encoder_daily_mode {

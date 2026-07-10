@@ -4,7 +4,7 @@ use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::{motion::TowerPositionCtx, MotionMode};
 use semver::Version;
 
-use crate::infra::SnapshotStore;
+use crate::storage::snapshot_store::SnapshotStore;
 
 pub struct TrackingTickContext<'ctx, 'wifi, I2C, T>
 where

@@ -58,7 +58,6 @@ wifi = { path = "crates/infrastructure/wifi" }
 
 [[bin]]
 name = "tower"
-path = "src/runtime/main.rs"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [features]

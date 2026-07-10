@@ -7,7 +7,7 @@ use network::mqtt::Mqtt;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::{infra, infra::SnapshotStore};
+use crate::{services::telemetry::error_loop, storage::snapshot_store::SnapshotStore};
 
 // Local direction enum used by encoder fault recovery.
 #[derive(Clone, Copy, PartialEq)]
@@ -101,7 +101,7 @@ impl EncoderFaultRecovery {
         }
 
         if !ctx.cfg.enabled {
-            infra::error_loop(
+            error_loop(
                 &ctx.device_id,
                 ctx.mqtt,
                 network::telemetry::Component::System,
@@ -191,7 +191,7 @@ impl EncoderFaultRecovery {
             Direction::Ccw => motion.find_limit_switch_ccw()?,
         };
         if !ok {
-            infra::error_loop(
+            error_loop(
                 &ctx.device_id,
                 ctx.mqtt,
                 network::telemetry::Component::LimitSwitch,
