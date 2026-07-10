@@ -271,15 +271,15 @@ pub const fn normal() -> Switchboard {
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
-                probe_steps: crate::constants::ENCODER_PROBE_STEPS,
+                probe_steps: crate::config::constants::ENCODER_PROBE_STEPS,
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Cw,
             },
             guardrails: GuardrailsSwitches {
                 stall_detection_enabled: true,
                 soft_limits_enabled: true,
-                soft_limit_min_deg: crate::constants::SOFT_LIMIT_MIN_DEG,
-                soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
+                soft_limit_min_deg: crate::config::constants::SOFT_LIMIT_MIN_DEG,
+                soft_limit_max_deg: crate::config::constants::SOFT_LIMIT_MAX_DEG,
             },
             commands_enabled: true,
         },
