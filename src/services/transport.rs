@@ -1,6 +1,6 @@
 //! MQTT transport for the remote command channel.
 //!
-//! Kept separate from the command catalog in [`crate::diagnostics::commands`]
+//! Kept separate from the command catalog in [`crate::services::commands`]
 //! so this file does not grow as commands are added.
 //!
 //! - [`subscribe`]: subscribe to `tower/{id}/cmd/diagnostics` once at boot.

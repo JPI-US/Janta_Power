@@ -52,25 +52,6 @@ pub extern "C" fn __pender() {}
 /// hardware/state locals, then driven by the loop. Generic over the shared-I2C
 /// proxy type `I2C` so the bus-backed devices (`calculation`, `temp_sensor`)
 /// can be stored without naming the verbose `shared_bus` proxy type.
-struct Tower<I2C> {
-    sw: Switchboard,
-    nvs: EspNvs<esp_idf_svc::nvs::NvsDefault>,
-    motion: Motion<'static>,
-    mqtt: Box<Mqtt>,
-    wifi: Wifi<'static>,
-    calculation: Clock<I2C>,
-    temp_sensor: Option<Hdc1080<I2C, Ets>>,
-    encoder_fault: EncoderFaultRecovery,
-    current_version: Version,
-    motion_mode: MotionMode,
-    actual_heading: f32,
-    allow_ota: bool,
-    /// Motion mode seen on the previous loop iteration; used to detect the
-    /// transition *into* `StepperOnly`, which forces a re-home.
-    previous_motion_mode: MotionMode,
-    /// Set when a `StepperOnly` switch needs a re-home before tracking resumes.
-    need_rehome: bool,
-}
 
 /// Main-loop steps, factored out of the loop body so the loop reads as a thin
 /// sequence of named operations. Each method owns one concern and mutates the
@@ -315,62 +296,6 @@ impl fmt::Display for TrackingError {
 impl error::Error for TrackingError {}
 
 fn oldmain() -> anyhow::Result<()> {
-    let sw = switchboard::active(switchboard::Profile::from_env_str(
-        constants::ACTIVE_PROFILE_STR,
-    ));
-
-    // PHASE 1: INITIALIZATION --------------------------------------------------
-    esp_idf_svc::sys::link_patches();
-
-    // Logger and event loop
-    EspLogger::initialize_default();
-    let sysloop = EspSystemEventLoop::take()?;
-
-    // Hardware and persistent storage
-    let nvs_default = EspDefaultNvsPartition::take()?;
-
-    let mut nvs = match EspNvs::new(nvs_default.clone(), "storage", true) {
-        Ok(nvs) => {
-            info!("Got namespace {:?} from default partition", "storage");
-            nvs
-        }
-        Err(e) => Err(anyhow!("Could't get namespace {:?}", e))?,
-    };
-
-    let last_run_normal = SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
-    let trust_nvs_state = last_run_normal;
-    info!(
-        "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
-        last_run_normal, trust_nvs_state
-    );
-
-    // Intialize peripherals
-    let PeripheralMap {
-        i2c_bus,
-        mut led,
-        mut motion,
-        maintenance_button,
-        ccw_button,
-        cw_button,
-        modem,
-    } = PeripheralMap::new()?;
-
-    // LED status
-    led.display_none()?;
-
-    // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
-    // Initialize motion early so that maintenance mode can use it
-    motion.init();
-    let _ = motion.run();
-
-    // Runtime guardrails from switchboard
-    motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
-    motion.set_soft_limits(
-        sw.runtime.guardrails.soft_limits_enabled,
-        sw.runtime.guardrails.soft_limit_min_deg,
-        sw.runtime.guardrails.soft_limit_max_deg,
-    );
-
     // Capture maintenance mode
     capture_maintenance_mode(
         &mut motion,
@@ -981,76 +906,4 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
             false
         }
     }
-}
-
-/// Enters maintenance mode if the maintenance button is held down on startup.
-fn capture_maintenance_mode(
-    motion: &mut Motion,
-    led: &mut Led,
-    maintenance_button: PinDriver<Gpio5, Input>,
-    ccw_button: PinDriver<Gpio4, Input>,
-    cw_button: PinDriver<Gpio6, Input>,
-) -> anyhow::Result<()> {
-    if maintenance_button.is_low() {
-        return Ok(());
-    }
-
-    log::info!("[Maintenance Mode] Begin");
-    led.display_maintenance()?;
-
-    let mut move_direction = None;
-    let mut last_maintenance = maintenance_button.is_high();
-    let mut last_click_time: Option<Instant> = None;
-    const DOUBLE_CLICK_MS: Duration = Duration::from_millis(250);
-
-    loop {
-        let ccw = ccw_button.is_high();
-        let cw = cw_button.is_high();
-        let maintenance = maintenance_button.is_high();
-        let maintenance_pressed = maintenance && !last_maintenance;
-        last_maintenance = maintenance;
-
-        let now = Instant::now();
-
-        // Don't move if CCW and CW are both pressed
-        if ccw && cw {
-            move_direction = None
-        }
-        // Stop moving if maintenance button is single clicked,
-        // or exit mainenance mode if double clicked
-        else if maintenance_pressed {
-            if let Some(last) = last_click_time {
-                if now.duration_since(last) <= DOUBLE_CLICK_MS {
-                    break;
-                }
-            }
-
-            last_click_time = Some(now);
-            move_direction = None;
-            log::info!("[Maintenance Mode] Not moving");
-        } else if ccw && !cw {
-            move_direction = Some(Direction::Ccw);
-            log::info!("[Maintenance Mode] Moving CCW");
-        } else if cw && !ccw {
-            move_direction = Some(Direction::Cw);
-            log::info!("[Maintenance Mode] Moving CW");
-        }
-
-        if let Some(direction) = move_direction {
-            match direction {
-                Direction::Ccw => {
-                    led.display_maintenance_moving_ccw()?;
-                    motion.move_by(-30_000)?;
-                }
-                Direction::Cw => {
-                    led.display_maintenance_moving_cw()?;
-                    motion.move_by(30_000)?;
-                }
-            }
-            led.display_maintenance()?;
-        }
-    }
-
-    log::info!("[Maintenance Mode] Exit, continuing normal boot");
-    led.display_none()
 }
