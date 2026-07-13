@@ -111,7 +111,7 @@ impl ResetReason {
             Self::Brownout => {
                 "Supply dipped below the brownout threshold; check the tower's power rail under motor load."
             }
-            Self::Panic => "Firmware hit an unrecoverable error; a coredump may be available.",
+            Self::Panic => "Firmware hit an unrecoverable error and rebooted.",
             Self::TaskWdt | Self::InterruptWdt | Self::OtherWdt => {
                 "Firmware stopped responding and the watchdog reset it."
             }
