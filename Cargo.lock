@@ -840,6 +840,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1827,6 +1835,7 @@ dependencies = [
  "embuild",
  "esp-idf-hal",
  "esp-idf-svc",
+ "fsm",
  "hdc1080",
  "heapless",
  "log",

@@ -7,6 +7,7 @@ use esp_idf_svc::{
     log::EspLogger,
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
 };
+use fsm::{InitialState, State};
 use log::info;
 
 use crate::{
@@ -15,7 +16,6 @@ use crate::{
         switchboard::{self, Switchboard},
     },
     hardware::peripheral_map::PeripheralMap,
-    logic::fsm::{InitialState, State},
     storage::snapshot_store::SnapshotStore,
     FSMCommand,
 };

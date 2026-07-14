@@ -1,11 +1,9 @@
 use std::sync::mpsc::{Receiver, Sender};
 
+use fsm::{InitialState, State};
 use rgb_led::Led;
 
-use crate::{
-    logic::fsm::{InitialState, State},
-    FSMCommand,
-};
+use crate::FSMCommand;
 
 pub struct LEDContext<'led> {
     pub led: Led<'led>,

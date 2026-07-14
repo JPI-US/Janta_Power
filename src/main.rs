@@ -2,14 +2,13 @@ use core::time::Duration;
 use std::sync::mpsc;
 
 use anyhow::Result;
+use fsm::Fsm;
 
-use crate::logic::fsm::{
+use crate::logic::states::{
     led::{LEDContext, LEDHold},
     maintenance::{MaintenanceContext, MaintenanceEnter},
     startup::{Initialization, StartupContext},
-    Fsm,
 };
-
 mod config;
 mod hardware;
 mod logic;

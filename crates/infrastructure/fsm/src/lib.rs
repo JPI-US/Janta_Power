@@ -88,10 +88,6 @@
 //! # }
 //! ```
 
-pub mod led;
-pub mod maintenance;
-pub mod startup;
-
 use core::{option::Option::None, time::Duration};
 use std::{
     sync::mpsc::{Receiver, Sender},

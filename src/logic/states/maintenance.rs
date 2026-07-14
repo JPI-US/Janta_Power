@@ -2,12 +2,9 @@ use core::marker::Send;
 use std::sync::mpsc::{Receiver, Sender};
 
 use esp_idf_hal::gpio::Pin;
+use fsm::{InitialState, State};
 
-use crate::{
-    hardware::buttons::Buttons,
-    logic::fsm::{InitialState, State},
-    FSMCommand,
-};
+use crate::{hardware::buttons::Buttons, FSMCommand};
 
 pub struct MaintenanceContext<'mb, M, Ccw, Cw>
 where

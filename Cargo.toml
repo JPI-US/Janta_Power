@@ -39,6 +39,7 @@ embedded-hal = "1.0.0"
 embedded-svc = "0.28.0"
 esp-idf-svc = "0.51"
 esp-idf-sys = "0.36.1"
+fsm = { path = "crates/infrastructure/fsm" }
 hdc1080 = { path = "crates/sensors/hdc1080" }
 heapless = "0.8.0"
 libc = "0.2"
@@ -84,6 +85,7 @@ heapless.workspace = true
 log.workspace = true
 motion.workspace = true
 network.workspace = true
+fsm.workspace = true
 ota.workspace = true
 pid = "4.0.0"
 rgb.workspace = true
