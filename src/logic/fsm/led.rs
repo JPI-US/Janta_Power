@@ -1,9 +1,9 @@
 use std::sync::mpsc::{Receiver, Sender};
 
-use fsm::{InitialState, State};
+use fsm::{drain_rx, InitialState, State};
 use rgb_led::Led;
 
-use crate::FSMCommand;
+use crate::logic::fsm::FSMCommand;
 
 pub struct LEDContext<'led> {
     pub led: Led<'led>,
@@ -26,8 +26,6 @@ pub struct LEDMaintenanceMovingCW;
 
 impl<'led> InitialState<LEDContext<'led>, FSMCommand> for LEDHold {}
 
-use std::sync::mpsc::TryRecvError;
-
 impl<'led> State<LEDContext<'led>, FSMCommand> for LEDHold {
     fn process(
         &mut self,
@@ -35,17 +33,7 @@ impl<'led> State<LEDContext<'led>, FSMCommand> for LEDHold {
         _tx: &mut Sender<FSMCommand>,
         rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<LEDContext<'led>, FSMCommand> + Send>>> {
-        let mut latest = None;
-
-        loop {
-            match rx.try_recv() {
-                Ok(cmd) => latest = Some(cmd),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-
-        match latest {
+        match drain_rx(rx) {
             Some(FSMCommand::LEDOff) => Ok(Some(Box::new(LEDOff))),
             Some(FSMCommand::LEDMaintenance) => Ok(Some(Box::new(LEDMaintenance))),
             Some(FSMCommand::LEDMaintenanceMovingCCW) => {

@@ -278,3 +278,14 @@ pub trait State<Ctx, Cmd> {
         rx: &mut Receiver<Cmd>,
     ) -> anyhow::Result<Option<Box<dyn State<Ctx, Cmd> + Send>>>;
 }
+
+pub fn drain_rx<Cmd>(rx: &mut Receiver<Cmd>) -> Option<Cmd> {
+    let mut latest = None;
+    loop {
+        match rx.try_recv() {
+            Ok(cmd) => latest = Some(cmd),
+            _ => break,
+        }
+    }
+    latest
+}

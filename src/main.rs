@@ -4,9 +4,10 @@ use std::sync::mpsc;
 use anyhow::Result;
 use fsm::Fsm;
 
-use crate::logic::states::{
+use crate::logic::fsm::{
     led::{LEDContext, LEDHold},
     maintenance::{MaintenanceContext, MaintenanceEnter},
+    motion::{MotionContext, MotionNotMoving},
     startup::{Initialization, StartupContext},
 };
 mod config;
@@ -71,19 +72,24 @@ fn main() -> Result<()> {
     .run("Maintenance buttons", 16_384, Duration::from_millis(100))
     .unwrap();
 
+    // motion fsm
+    let motion_events_tx = conductor_tx.clone();
+    let (motion_commands_tx, motion_commands_rx) = mpsc::channel();
+    Fsm::new(
+        Box::new(MotionNotMoving),
+        MotionContext::new(peripherals.motion),
+        motion_events_tx,
+        motion_commands_rx,
+    )
+    .run("Motion", 16_384, Duration::from_millis(100))
+    .unwrap();
+
     loop {
         let cmd = conductor_rx.recv().unwrap();
         log::info!("{cmd:?}");
 
         led_commands_tx.send(cmd).unwrap();
         maintenance_commands_tx.send(cmd).unwrap();
+        motion_commands_tx.send(cmd).unwrap();
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FSMCommand {
-    LEDOff,
-    LEDMaintenance,
-    LEDMaintenanceMovingCCW,
-    LEDMaintenanceMovingCW,
 }

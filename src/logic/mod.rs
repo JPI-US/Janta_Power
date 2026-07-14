@@ -1,3 +1,3 @@
 pub mod encoder_fault;
-pub mod states;
+pub mod fsm;
 pub mod tracking_loop;

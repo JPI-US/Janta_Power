@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use esp_idf_hal::gpio::Pin;
 use fsm::{InitialState, State};
 
-use crate::{hardware::buttons::Buttons, FSMCommand};
+use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
 
 pub struct MaintenanceContext<'mb, M, Ccw, Cw>
 where
@@ -169,6 +169,7 @@ where
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+        tx.send(FSMCommand::MotionMoveBy(30_000))?;
         Ok(Some(Box::new(MaintenanceMoveCCW)))
     }
 }
@@ -198,6 +199,7 @@ where
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
+        tx.send(FSMCommand::MotionMoveBy(-30_000))?;
         Ok(Some(Box::new(MaintenanceMoveCW)))
     }
 }

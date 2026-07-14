@@ -16,8 +16,8 @@ use crate::{
         switchboard::{self, Switchboard},
     },
     hardware::peripheral_map::PeripheralMap,
+    logic::fsm::FSMCommand,
     storage::snapshot_store::SnapshotStore,
-    FSMCommand,
 };
 
 pub struct StartupContext {
