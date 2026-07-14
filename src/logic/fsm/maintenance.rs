@@ -110,7 +110,7 @@ where
             return Ok(Some(Box::new(MaintenanceNotMoving)));
         }
 
-        Ok(None)
+        Ok(Some(Box::new(MaintenanceEnter)))
     }
 }
 
@@ -142,9 +142,8 @@ where
             return Ok(Some(Box::new(MaintenanceMoveCW)));
         } else {
             tx.send(FSMCommand::LEDMaintenance)?;
+            return Ok(Some(Box::new(MaintenanceNotMoving)));
         }
-
-        Ok(None)
     }
 }
 
@@ -167,15 +166,13 @@ where
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
             return Ok(Some(Box::new(MaintenanceExit)));
-        }
-
-        if ctx.cw_pressed() {
+        } else if ctx.cw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
             return Ok(Some(Box::new(MaintenanceMoveCW)));
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-        Ok(None)
+        Ok(Some(Box::new(MaintenanceMoveCCW)))
     }
 }
 
@@ -198,15 +195,13 @@ where
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
             return Ok(Some(Box::new(MaintenanceExit)));
-        }
-
-        if ctx.ccw_pressed() {
+        } else if ctx.ccw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
             return Ok(Some(Box::new(MaintenanceMoveCCW)));
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
-        Ok(None)
+        Ok(Some(Box::new(MaintenanceMoveCW)))
     }
 }
 

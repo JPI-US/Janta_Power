@@ -54,7 +54,7 @@ impl<'led> State<LEDContext<'led>, FSMCommand> for LEDHold {
                 Ok(Some(Box::new(LEDMaintenanceMovingCCW)))
             }
             Some(FSMCommand::LEDMaintenanceMovingCW) => Ok(Some(Box::new(LEDMaintenanceMovingCW))),
-            _ => Ok(None),
+            _ => Ok(Some(Box::new(LEDHold))),
         }
     }
 }

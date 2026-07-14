@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         startup_events_tx,
         startup_commands_rx,
     );
-    fsm.run_sync()?;
+    fsm.run_sync().unwrap();
 
     // state
     let StartupContext {
@@ -57,7 +57,8 @@ fn main() -> Result<()> {
         led_events_tx,
         led_commands_rx,
     )
-    .run("LED control", 16_384, Duration::from_millis(100))?;
+    .run("LED control", 16_384, Duration::from_millis(100))
+    .unwrap();
 
     // maintenance fsm
     let maintenance_events_tx = conductor_tx.clone();
@@ -68,14 +69,15 @@ fn main() -> Result<()> {
         maintenance_events_tx,
         maintenance_commands_rx,
     )
-    .run("Maintenance buttons", 16_384, Duration::from_millis(100))?;
+    .run("Maintenance buttons", 16_384, Duration::from_millis(100))
+    .unwrap();
 
     loop {
-        let cmd = conductor_rx.recv()?;
+        let cmd = conductor_rx.recv().unwrap();
         log::info!("{cmd:?}");
 
-        led_commands_tx.send(cmd)?;
-        maintenance_commands_tx.send(cmd)?;
+        led_commands_tx.send(cmd).unwrap();
+        maintenance_commands_tx.send(cmd).unwrap();
     }
 }
 

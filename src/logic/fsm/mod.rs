@@ -221,14 +221,27 @@ where
         stack_size: usize,
         period: Duration,
     ) -> std::io::Result<()> {
+        let name = name.into();
         std::thread::Builder::new()
-            .name(name.into())
+            .name(name.clone())
             .stack_size(stack_size)
             .spawn(move || {
-                if let Err(e) = self.step() {
-                    log::error!("FSM thread exited: {e:?}");
+                log::info!("Thread \"{name}\" started");
+                loop {
+                    match self.step() {
+                        Ok(opt) => match opt {
+                            FsmStatus::Running => {}
+                            FsmStatus::Stopped => {
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            log::error!("FSM thread exited: {e:?}");
+                            break;
+                        }
+                    }
+                    sleep(period)
                 }
-                sleep(period)
             })?;
 
         Ok(())
