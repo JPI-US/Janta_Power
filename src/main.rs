@@ -26,21 +26,20 @@ fn main() -> Result<()> {
     // startup
     let startup_events_tx = conductor_tx.clone();
     let (_startup_commands_tx, startup_commands_rx) = mpsc::channel();
-    let mut fsm = Fsm::new(
+    let mut startup_result = Fsm::new_sync(
         Box::new(Initialization),
         StartupContext::new(),
         startup_events_tx,
         startup_commands_rx,
-    );
-    fsm.run_sync().unwrap();
+    )?;
 
-    // state
+    // get state
     let StartupContext {
         switchboard,
         sysloop,
         nvs,
         peripherals,
-    } = fsm.into_context();
+    } = startup_result;
 
     let _switchboard = switchboard.unwrap();
     let _nvs = nvs.unwrap();
@@ -49,40 +48,43 @@ fn main() -> Result<()> {
     // led fsm
     let led_events_tx = conductor_tx.clone();
     let (led_commands_tx, led_commands_rx) = mpsc::channel();
-    Fsm::new(
+    Fsm::new_async(
         Box::new(LEDHold),
         LEDContext {
             led: peripherals.led,
         },
         led_events_tx,
         led_commands_rx,
-    )
-    .run("LED control", 16_384, Duration::from_millis(100))
-    .unwrap();
+        "LED Control",
+        16_384,
+        Duration::from_millis(100),
+    )?;
 
     // maintenance fsm
     let maintenance_events_tx = conductor_tx.clone();
     let (maintenance_commands_tx, maintenance_commands_rx) = mpsc::channel();
-    Fsm::new(
+    Fsm::new_async(
         Box::new(MaintenanceEnter),
         MaintenanceContext::new(peripherals.buttons),
         maintenance_events_tx,
         maintenance_commands_rx,
-    )
-    .run("Maintenance buttons", 16_384, Duration::from_millis(100))
-    .unwrap();
+        "Maintenance Buttons",
+        16_384,
+        Duration::from_millis(100),
+    )?;
 
     // motion fsm
     let motion_events_tx = conductor_tx.clone();
     let (motion_commands_tx, motion_commands_rx) = mpsc::channel();
-    Fsm::new(
+    Fsm::new_async(
         Box::new(MotionNotMoving),
         MotionContext::new(peripherals.motion),
         motion_events_tx,
         motion_commands_rx,
-    )
-    .run("Motion", 16_384, Duration::from_millis(100))
-    .unwrap();
+        "Motion",
+        16_384,
+        Duration::from_millis(100),
+    )?;
 
     loop {
         let cmd = conductor_rx.recv().unwrap();
