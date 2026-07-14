@@ -1,7 +1,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 
 use fsm::{drain_rx, InitialState, State};
-use motion::{Motion, MotionMode, MoveOutcome};
+use motion::Motion;
 
 use crate::logic::fsm::FSMCommand::{self, MotionMoveBy};
 

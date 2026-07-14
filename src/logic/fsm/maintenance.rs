@@ -6,13 +6,13 @@ use fsm::{InitialState, State};
 
 use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
 
-pub struct MaintenanceContext<'mb, M, Ccw, Cw>
+pub struct MaintenanceContext<M, Ccw, Cw>
 where
     M: Pin,
     Ccw: Pin,
     Cw: Pin,
 {
-    pub buttons: Buttons<'mb, M, Ccw, Cw>,
+    pub buttons: Buttons<'static, M, Ccw, Cw>,
     maintenance: bool,
     ccw: bool,
     cw: bool,
@@ -21,13 +21,13 @@ where
     last_cw: bool,
 }
 
-impl<'mb, M, Ccw, Cw> MaintenanceContext<'mb, M, Ccw, Cw>
+impl<M, Ccw, Cw> MaintenanceContext<M, Ccw, Cw>
 where
     M: Pin,
     Ccw: Pin,
     Cw: Pin,
 {
-    pub fn new(buttons: Buttons<'mb, M, Ccw, Cw>) -> Self {
+    pub fn new(buttons: Buttons<'static, M, Ccw, Cw>) -> Self {
         Self {
             buttons,
             maintenance: false,
@@ -77,8 +77,7 @@ pub struct MaintenanceMoveCW;
 #[derive(Default)]
 pub struct MaintenanceExit;
 
-impl<'mb, M, Ccw, Cw> InitialState<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand>
-    for MaintenanceEnter
+impl<'mb, M, Ccw, Cw> InitialState<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -86,7 +85,7 @@ where
 {
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
+impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -94,12 +93,11 @@ where
 {
     fn process(
         &mut self,
-        ctx: &mut MaintenanceContext<'mb, M, Ccw, Cw>,
+        ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<
-        Option<Box<dyn State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> + Send>>,
-    > {
+    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
+    {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
@@ -111,8 +109,7 @@ where
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand>
-    for MaintenanceNotMoving
+impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceNotMoving
 where
     M: Pin,
     Ccw: Pin,
@@ -120,12 +117,11 @@ where
 {
     fn process(
         &mut self,
-        ctx: &mut MaintenanceContext<'mb, M, Ccw, Cw>,
+        ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<
-        Option<Box<dyn State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> + Send>>,
-    > {
+    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
+    {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
@@ -144,7 +140,7 @@ where
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCCW
+impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCCW
 where
     M: Pin,
     Ccw: Pin,
@@ -152,12 +148,11 @@ where
 {
     fn process(
         &mut self,
-        ctx: &mut MaintenanceContext<'mb, M, Ccw, Cw>,
+        ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<
-        Option<Box<dyn State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> + Send>>,
-    > {
+    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
+    {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
@@ -174,7 +169,7 @@ where
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
+impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
 where
     M: Pin,
     Ccw: Pin,
@@ -182,12 +177,11 @@ where
 {
     fn process(
         &mut self,
-        ctx: &mut MaintenanceContext<'mb, M, Ccw, Cw>,
+        ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<
-        Option<Box<dyn State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> + Send>>,
-    > {
+    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
+    {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
@@ -204,7 +198,7 @@ where
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> for MaintenanceExit
+impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceExit
 where
     M: Pin,
     Ccw: Pin,
@@ -212,12 +206,11 @@ where
 {
     fn process(
         &mut self,
-        _ctx: &mut MaintenanceContext<'mb, M, Ccw, Cw>,
+        _ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<
-        Option<Box<dyn State<MaintenanceContext<'mb, M, Ccw, Cw>, FSMCommand> + Send>>,
-    > {
+    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
+    {
         Ok(Some(Box::new(MaintenanceEnter)))
     }
 }
