@@ -126,16 +126,16 @@ where
 
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
-            return Ok(Some(Box::new(MaintenanceExit)));
+            Ok(Some(Box::new(MaintenanceExit)))
         } else if ctx.ccw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-            return Ok(Some(Box::new(MaintenanceMoveCCW)));
+            Ok(Some(Box::new(MaintenanceMoveCCW)))
         } else if ctx.cw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
-            return Ok(Some(Box::new(MaintenanceMoveCW)));
+            Ok(Some(Box::new(MaintenanceMoveCW)))
         } else {
             tx.send(FSMCommand::LEDMaintenance)?;
-            return Ok(Some(Box::new(MaintenanceNotMoving)));
+            Ok(Some(Box::new(MaintenanceNotMoving)))
         }
     }
 }

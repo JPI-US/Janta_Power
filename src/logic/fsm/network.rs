@@ -1,20 +1,14 @@
 use core::{option::Option::None, time::Duration};
 use std::{
     sync::mpsc::{Receiver, Sender},
-    thread::{self, sleep},
+    thread::sleep,
 };
 
 use anyhow::Context;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
-    hal::{
-        delay::Ets,
-        gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
-        modem::Modem,
-    },
-    log::EspLogger,
+    hal::modem::Modem,
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
-    ota::EspOta,
 };
 use fsm::{InitialState, State};
 use log::{error, info};
@@ -61,8 +55,8 @@ impl State<NetworkContext, FSMCommand> for WifiInitialize {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         const PERSIST_NVS: bool = true;
 
@@ -105,8 +99,8 @@ impl State<NetworkContext, FSMCommand> for WifiConnectImmediate {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         let mut ssid_buf = [0u8; 64];
         let mut pass_buf = [0u8; 64];
@@ -144,8 +138,8 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         let wifi = ctx
             .wifi
@@ -168,9 +162,9 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
 impl State<NetworkContext, FSMCommand> for WifiWait {
     fn process(
         &mut self,
-        ctx: &mut NetworkContext,
-        tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        _ctx: &mut NetworkContext,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         sleep(Duration::from_secs(30));
         Ok(Some(Box::new(WifiConnectIfDisconnected)))

@@ -40,7 +40,7 @@ fn main() -> Result<()> {
 
     let StartupContext {
         switchboard,
-        sysloop: sysloop,
+        sysloop,
         nvs_default_partition,
         nvs,
         peripherals,
@@ -126,15 +126,15 @@ fn main() -> Result<()> {
 
         info!("{cmd:?}");
 
-        if let Err(e) = led_commands_tx.send(cmd.clone()) {
+        if let Err(e) = led_commands_tx.send(cmd) {
             error!("Failed to send command to LED FSM: {e}");
         }
 
-        if let Err(e) = maintenance_commands_tx.send(cmd.clone()) {
+        if let Err(e) = maintenance_commands_tx.send(cmd) {
             error!("Failed to send command to Maintenance FSM: {e}");
         }
 
-        if let Err(e) = motion_commands_tx.send(cmd.clone()) {
+        if let Err(e) = motion_commands_tx.send(cmd) {
             error!("Failed to send command to Motion FSM: {e}");
         }
 

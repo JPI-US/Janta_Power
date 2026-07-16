@@ -28,15 +28,13 @@ impl InitialState<MotionContext, FSMCommand> for MotionNotMoving {}
 impl State<MotionContext, FSMCommand> for MotionNotMoving {
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
-        tx: &mut Sender<FSMCommand>,
+        _ctx: &mut MotionContext,
+        _tx: &mut Sender<FSMCommand>,
         rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<MotionContext, FSMCommand> + Send>>> {
         match drain_rx(rx) {
-            Some(MotionMoveBy(by)) => {
-                return Ok(Some(Box::new(MotionMoving { by })));
-            }
-            _ => return Ok(Some(Box::new(MotionNotMoving))),
+            Some(MotionMoveBy(by)) => Ok(Some(Box::new(MotionMoving { by }))),
+            _ => Ok(Some(Box::new(MotionNotMoving))),
         }
     }
 }
@@ -45,8 +43,8 @@ impl State<MotionContext, FSMCommand> for MotionMoving {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<MotionContext, FSMCommand> + Send>>> {
         ctx.motion.move_by(self.by)?;
         Ok(Some(Box::new(MotionNotMoving)))
