@@ -31,6 +31,7 @@ use crate::{
         tracking_loop::TrackingTickContext,
     },
     infra::watchdog::{TaskWatchdog, UserWatchdog},
+    infra::ResetReason,
 };
 
 mod app;
@@ -322,6 +323,19 @@ fn main() -> anyhow::Result<()> {
     EspLogger::initialize_default();
     let sysloop = EspSystemEventLoop::take()?;
 
+    // Read why we restarted before anything else can fail, so the cause reaches
+    // the serial log even on a boot that never gets as far as MQTT.
+    let reset_reason = ResetReason::current();
+    if reset_reason.is_unexpected() {
+        warn!(
+            "Reset reason: {} — {}",
+            reset_reason.as_str(),
+            reset_reason.boot_notes()
+        );
+    } else {
+        info!("Reset reason: {}", reset_reason.as_str());
+    }
+
     // Hardware and persistent storage
     let nvs_default = EspDefaultNvsPartition::take()?;
 
@@ -486,7 +500,13 @@ fn main() -> anyhow::Result<()> {
 
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
-        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, &current_version)
+        boot_diagnostic(
+            sw.device_id,
+            &mut wifi,
+            &mut mqtt,
+            &current_version,
+            reset_reason,
+        )
     } else {
         info!("Boot validation disabled");
         true
@@ -909,6 +929,7 @@ fn boot_diagnostic(
     wifi: &mut Wifi,
     mqtt: &mut Mqtt,
     current_version: &Version,
+    reset_reason: ResetReason,
 ) -> bool {
     info!("Starting boot validation in 5 seconds...");
     thread::sleep(Duration::from_secs(5));
@@ -949,10 +970,11 @@ fn boot_diagnostic(
             .to_string();
         let payload = network::telemetry::BootLog {
             current_time: &current_time,
-            message: "Tower rebooted successfully",
+            message: reset_reason.boot_message(),
             firmware_version: &current_version.to_string(),
             component: network::telemetry::Component::System,
-            notes: "Scheduled reboot completed without errors",
+            reset_reason: reset_reason.as_str(),
+            notes: reset_reason.boot_notes(),
         };
         let topic = network::telemetry::topic::logs_boot(device_id);
         if network::telemetry::publish_json(mqtt, &topic, &payload).is_ok() {
