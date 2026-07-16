@@ -298,32 +298,6 @@ impl error::Error for TrackingError {}
 fn oldmain() -> anyhow::Result<()> {
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
-    // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`).
-    // If true, never trust DS3231 on this boot — always SNTP then write RTC (debug / bad battery).
-    const FORCE_NTP_SKIP_RTC: bool = false;
-    let mut tz_buf = [0u8; 96];
-    let tz_posix_str = nvs
-        .get_str("tz_posix", &mut tz_buf)?
-        .unwrap_or(sw.default_tz_posix);
-    {
-        let mut rtc = Rtc::new(i2c_bus);
-        rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC)?;
-    }
-    let local_time_boot = rtc::timezone::local_time();
-    let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
-    info!("{}", formatted_time);
-
-    // MQTT
-    // AWS IoT Core uses TLS client certificates baked into the firmware for
-    // authentication; no username/password plumbing is required at runtime.
-    // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
-    // fleet identity stays in `.env` with the MQTT topic/cert identity.
-    let mqtt_client_id = format!("tower_{}", sw.device_id);
-    let mut mqtt = Box::new(Mqtt::new_mqtt(
-        "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
-        &mqtt_client_id,
-    )?);
-
     // PHASE 3: BOOT VALIDATION -------------------------------------------------
     let first_boot = nvs.get_u8("first_boot")?.unwrap_or(1);
 

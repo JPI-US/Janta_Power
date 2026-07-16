@@ -13,6 +13,7 @@ use esp_idf_svc::{
 };
 use fsm::{InitialState, State};
 use log::{error, info};
+use network::mqtt::Mqtt;
 use rtc::Rtc;
 use wifi::wifi::{Wifi, WifiState};
 
@@ -28,6 +29,7 @@ pub struct NetworkContext {
     timer: Instant,
     init_network_services: bool,
     rtc: Rtc,
+    mqtt: Option<Mqtt>,
 }
 
 impl NetworkContext {
@@ -49,6 +51,7 @@ impl NetworkContext {
             timer: Instant::now(),
             init_network_services: true,
             rtc,
+            mqtt: None,
         }
     }
 }
@@ -197,6 +200,28 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
         let local_time_boot = rtc::timezone::local_time();
         let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
         info!("{}", formatted_time);
+
+        // MQTT
+        info!("Initializing MQTT");
+        // AWS IoT Core uses TLS client certificates baked into the firmware for
+        // authentication; no username/password plumbing is required at runtime.
+        // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
+        // fleet identity stays in `.env` with the MQTT topic/cert identity.
+
+        let mqtt_client_id = format!("tower_{}", ctx.switchboard.device_id);
+        match Mqtt::new_mqtt(
+            "mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883",
+            &mqtt_client_id,
+        ) {
+            Ok(mqtt) => {
+                info!("MQTT initialized");
+                ctx.mqtt = Some(mqtt);
+            }
+            Err(e) => {
+                error!("Failed to initialize MQTT: {:#}", e);
+                ctx.mqtt = None;
+            }
+        }
 
         ctx.init_network_services = false;
         Ok(Some(Box::new(WifiConnectIfDisconnected)))
