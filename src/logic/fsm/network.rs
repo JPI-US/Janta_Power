@@ -13,6 +13,7 @@ use esp_idf_svc::{
 };
 use fsm::{InitialState, State};
 use log::{error, info};
+use rtc::Rtc;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{config::switchboard::Switchboard, logic::fsm::FSMCommand};
@@ -25,6 +26,8 @@ pub struct NetworkContext {
     switchboard: Switchboard,
     wifi: Option<Wifi<'static>>,
     timer: Instant,
+    init_network_services: bool,
+    rtc: Rtc,
 }
 
 impl NetworkContext {
@@ -34,6 +37,7 @@ impl NetworkContext {
         sysloop: EspSystemEventLoop,
         modem: Modem,
         switchboard: Switchboard,
+        rtc: Rtc,
     ) -> Self {
         Self {
             nvs,
@@ -43,6 +47,8 @@ impl NetworkContext {
             switchboard,
             wifi: None,
             timer: Instant::now(),
+            init_network_services: true,
+            rtc,
         }
     }
 }
@@ -50,6 +56,7 @@ impl NetworkContext {
 pub struct WifiInitialize;
 pub struct WifiConnectIfDisconnected;
 pub struct WifiWait;
+pub struct InitNetworkServices;
 
 impl InitialState<NetworkContext, FSMCommand> for WifiInitialize {}
 
@@ -155,6 +162,43 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
             }
         }
 
-        Ok(Some(Box::new(WifiWait)))
+        if ctx.init_network_services && matches!(wifi.state(), WifiState::Connected(_)) {
+            Ok(Some(Box::new(InitNetworkServices)))
+        } else {
+            Ok(Some(Box::new(WifiWait)))
+        }
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for InitNetworkServices {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
+    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
+        info!("Getting current time");
+
+        const FORCE_NTP_SKIP_RTC: bool = false;
+        let mut tz_buf = [0u8; 96];
+        let tz_posix_str = ctx
+            .nvs
+            .get_str("tz_posix", &mut tz_buf)?
+            .unwrap_or(ctx.switchboard.default_tz_posix);
+        {
+            ctx.rtc.init(
+                &ctx.wifi
+                    .as_ref()
+                    .expect("Wifi should always be initialized by now"),
+                tz_posix_str,
+                FORCE_NTP_SKIP_RTC,
+            )?;
+        }
+        let local_time_boot = rtc::timezone::local_time();
+        let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
+        info!("{}", formatted_time);
+
+        ctx.init_network_services = false;
+        Ok(Some(Box::new(WifiConnectIfDisconnected)))
     }
 }

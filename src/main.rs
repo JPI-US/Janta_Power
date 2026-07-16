@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use anyhow::{Context, Result};
 use fsm::Fsm;
 use log::{error, info};
+use rtc::Rtc;
 
 use crate::logic::fsm::{
     led::{LEDContext, LEDHold},
@@ -112,6 +113,7 @@ fn main() -> Result<()> {
             sysloop,
             peripherals.modem,
             switchboard,
+            Rtc::new(peripherals.i2c_bus),
         ),
         network_events_tx,
         network_commands_rx,
