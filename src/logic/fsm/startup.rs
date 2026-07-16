@@ -23,6 +23,7 @@ use crate::{
 pub struct StartupContext {
     pub switchboard: Option<Switchboard>,
     pub sysloop: Option<EspSystemEventLoop>,
+    pub nvs_default_partition: Option<EspDefaultNvsPartition>,
     pub nvs: Option<EspNvs<NvsDefault>>,
     pub peripherals: Option<PeripheralMap<'static>>,
 }
@@ -32,6 +33,7 @@ impl StartupContext {
         Self {
             switchboard: None,
             sysloop: None,
+            nvs_default_partition: None,
             nvs: None,
             peripherals: None,
         }
@@ -81,6 +83,7 @@ impl State<StartupContext, FSMCommand> for Initialization {
             last_run_normal, trust_nvs_state
         );
 
+        ctx.nvs_default_partition = Some(nvs_default);
         ctx.nvs = Some(nvs);
 
         // peripherals

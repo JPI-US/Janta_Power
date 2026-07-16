@@ -296,59 +296,7 @@ impl fmt::Display for TrackingError {
 impl error::Error for TrackingError {}
 
 fn oldmain() -> anyhow::Result<()> {
-    // Capture maintenance mode
-    capture_maintenance_mode(
-        &mut motion,
-        &mut led,
-        maintenance_button,
-        ccw_button,
-        cw_button,
-    )?;
-
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
-
-    const PERSIST_NVS: bool = true;
-
-    if PERSIST_NVS {
-        match nvs.set_str("wifi_ssid", sw.default_wifi_ssid) {
-            Ok(_) => info!("Wifi ssid updated"),
-            Err(e) => error!("Wifi ssid not updated {:?}", e),
-        };
-    }
-    if PERSIST_NVS {
-        match nvs.set_str("wifi_pass", sw.default_wifi_pass) {
-            Ok(_) => info!("Wifi password updated"),
-            Err(e) => error!("Wifi password not updated {:?}", e),
-        };
-    }
-
-    if PERSIST_NVS {
-        match nvs.set_str("tz_posix", sw.default_tz_posix) {
-            Ok(_) => info!("POSIX TZ string has been updated"),
-            Err(e) => error!("tz_posix was not updated {:?}", e),
-        };
-    }
-
-    // Wi-Fi
-    let mut buffer = [0u8; 64];
-    let real_wifi_ssid = nvs
-        .get_str("wifi_ssid", &mut buffer)?
-        .context("Failed to get Wifi SSID from NVS")?
-        .to_string();
-    let real_wifi_pass = nvs
-        .get_str("wifi_pass", &mut buffer)?
-        .context("Failed to get Wifi password from NVS")?
-        .to_string();
-
-    let mut wifi = Wifi::new(modem, sysloop.clone(), nvs_default)?;
-    log::info!("Waiting for 20 seconds before connecting to wifi");
-    thread::sleep(Duration::from_secs(20));
-    wifi.connect(&real_wifi_ssid, &real_wifi_pass)
-        .context("Connecting to Wi-Fi")?;
-    info!("Current wifi state: {:?}", wifi.state());
-    if wifi.state() == WifiState::Disconnected {
-        wifi.reconnect_if_disconnected()?;
-    }
 
     // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`).
     // If true, never trust DS3231 on this boot — always SNTP then write RTC (debug / bad battery).

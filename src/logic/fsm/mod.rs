@@ -1,6 +1,7 @@
 pub mod led;
 pub mod maintenance;
 pub mod motion;
+pub mod network;
 pub mod startup;
 
 #[derive(Debug, Clone, Copy)]

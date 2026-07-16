@@ -9,6 +9,7 @@ use crate::logic::fsm::{
     led::{LEDContext, LEDHold},
     maintenance::{MaintenanceContext, MaintenanceEnter},
     motion::{MotionContext, MotionNotMoving},
+    network::{NetworkContext, WifiInitialize},
     startup::{Initialization, StartupContext},
 };
 
@@ -39,13 +40,17 @@ fn main() -> Result<()> {
 
     let StartupContext {
         switchboard,
-        sysloop: _,
+        sysloop: sysloop,
+        nvs_default_partition,
         nvs,
         peripherals,
     } = startup_result;
 
-    let _switchboard = switchboard.context("Startup did not provide switchboard")?;
-    let _nvs = nvs.context("Startup did not provide NVS")?;
+    let switchboard = switchboard.context("Startup did not provide switchboard")?;
+    let sysloop = sysloop.context("Startup did not provide sysloop")?;
+    let nvs_default_partition =
+        nvs_default_partition.context("Startup did not provide nvs_default_partition")?;
+    let nvs = nvs.context("Startup did not provide NVS")?;
     let peripherals = peripherals.context("Startup did not provide peripherals")?;
 
     // led fsm
@@ -95,6 +100,27 @@ fn main() -> Result<()> {
     )
     .context("Failed to start Motion FSM")?;
 
+    // network fsm
+    let network_events_tx = conductor_tx.clone();
+    let (network_commands_tx, network_commands_rx) = mpsc::channel();
+
+    Fsm::new_async(
+        Box::new(WifiInitialize),
+        NetworkContext::new(
+            nvs,
+            nvs_default_partition,
+            sysloop,
+            peripherals.modem,
+            switchboard,
+        ),
+        network_events_tx,
+        network_commands_rx,
+        "Network",
+        8 * 1_024,
+        Duration::from_millis(100),
+    )
+    .context("Failed to start Network FSM")?;
+
     loop {
         let cmd = conductor_rx.recv().context("Conductor channel closed")?;
 
@@ -108,8 +134,12 @@ fn main() -> Result<()> {
             error!("Failed to send command to Maintenance FSM: {e}");
         }
 
-        if let Err(e) = motion_commands_tx.send(cmd) {
+        if let Err(e) = motion_commands_tx.send(cmd.clone()) {
             error!("Failed to send command to Motion FSM: {e}");
+        }
+
+        if let Err(e) = network_commands_tx.send(cmd) {
+            error!("Failed to send command to Wifi FSM: {e}");
         }
     }
 }
