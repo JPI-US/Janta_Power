@@ -2,6 +2,7 @@ use core::{option::Option::None, time::Duration};
 use std::{
     sync::mpsc::{Receiver, Sender},
     thread::sleep,
+    time::Instant,
 };
 
 use anyhow::Context;
@@ -23,6 +24,7 @@ pub struct NetworkContext {
     modem: Option<Modem>,
     switchboard: Switchboard,
     wifi: Option<Wifi<'static>>,
+    timer: Instant,
 }
 
 impl NetworkContext {
@@ -40,12 +42,12 @@ impl NetworkContext {
             modem: Some(modem),
             switchboard,
             wifi: None,
+            timer: Instant::now(),
         }
     }
 }
 
 pub struct WifiInitialize;
-pub struct WifiConnectImmediate;
 pub struct WifiConnectIfDisconnected;
 pub struct WifiWait;
 
@@ -84,24 +86,6 @@ impl State<NetworkContext, FSMCommand> for WifiInitialize {
             };
         }
 
-        let modem = ctx.modem.take().unwrap();
-        let sysloop = ctx.sysloop.take().unwrap();
-        let partition = ctx.partition.take().unwrap();
-
-        let wifi = Wifi::new(modem, sysloop, partition).context("Failed to initialize WiFi")?;
-        ctx.wifi = Some(wifi);
-
-        Ok(Some(Box::new(WifiConnectImmediate)))
-    }
-}
-
-impl State<NetworkContext, FSMCommand> for WifiConnectImmediate {
-    fn process(
-        &mut self,
-        ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         let mut ssid_buf = [0u8; 64];
         let mut pass_buf = [0u8; 64];
 
@@ -123,13 +107,30 @@ impl State<NetworkContext, FSMCommand> for WifiConnectImmediate {
             }
         };
 
-        info!("Connecting to wifi");
+        let modem = ctx.modem.take().unwrap();
+        let sysloop = ctx.sysloop.take().unwrap();
+        let partition = ctx.partition.take().unwrap();
 
-        ctx.wifi
-            .as_mut()
-            .context("Wifi should always be initialized by now")?
-            .connect(ssid, pass)?;
+        let wifi = Wifi::new(modem, sysloop, partition, ssid, pass)
+            .context("Failed to initialize WiFi")?;
+        ctx.wifi = Some(wifi);
 
+        Ok(Some(Box::new(WifiWait)))
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for WifiWait {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
+    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
+        if ctx.timer.elapsed() < Duration::from_secs(30) {
+            return Ok(Some(Box::new(WifiWait)));
+        }
+
+        ctx.timer = Instant::now();
         Ok(Some(Box::new(WifiConnectIfDisconnected)))
     }
 }
@@ -146,27 +147,14 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
             .as_mut()
             .context("Wifi should always be initialized by now")?;
 
-        info!(
-            "Wifi attempting to reconnect, if disconnected. Currently {:?}",
-            wifi.state()
-        );
+        if wifi.state() == WifiState::Disconnected {
+            info!("WiFi disconnected; attempting to reconnect.");
 
-        if wifi.state() == WifiState::Disconnected && wifi.reconnect_if_disconnected().is_err() {
-            return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            if wifi.reconnect_if_disconnected().is_err() {
+                return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            }
         }
 
         Ok(Some(Box::new(WifiWait)))
-    }
-}
-
-impl State<NetworkContext, FSMCommand> for WifiWait {
-    fn process(
-        &mut self,
-        _ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
-        sleep(Duration::from_secs(30));
-        Ok(Some(Box::new(WifiConnectIfDisconnected)))
     }
 }

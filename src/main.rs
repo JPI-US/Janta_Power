@@ -117,7 +117,7 @@ fn main() -> Result<()> {
         network_commands_rx,
         "Network",
         8 * 1_024,
-        Duration::from_millis(100),
+        Duration::from_secs(2),
     )
     .context("Failed to start Network FSM")?;
 
