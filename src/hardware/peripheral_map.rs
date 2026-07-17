@@ -1,13 +1,16 @@
 use anyhow::{anyhow, Context, Result};
 use esp_idf_svc::hal::{
+    delay::Ets,
     gpio::{Gpio4, Gpio5, Gpio6, PinDriver},
     i2c::{I2cConfig, I2cDriver},
     modem::Modem,
     prelude::*,
 };
+use hdc1080::Hdc1080;
+use log::{info, warn};
 use motion::Motion;
 use rgb_led::Led;
-use shared_bus::BusManager;
+use shared_bus::{BusManager, I2cProxy};
 
 use crate::hardware::buttons::Buttons;
 
@@ -27,6 +30,10 @@ pub struct PeripheralMap<'a> {
 
     /// Cellular modem peripheral.
     pub modem: Modem,
+
+    /// Temperature sensor.
+    pub temperature_sensor:
+        Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
 }
 
 impl PeripheralMap<'_> {
@@ -84,6 +91,23 @@ impl PeripheralMap<'_> {
             cw,
         };
 
+        let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {
+            Ok(mut sensor) => {
+                let _ = sensor.init();
+                if sensor.get_device_id().unwrap_or(0) == 0x1050 {
+                    info!("HDC1080 detected");
+                    Some(sensor)
+                } else {
+                    warn!("HDC1080 not detected on I2C; temp telemetry disabled");
+                    None
+                }
+            }
+            Err(e) => {
+                warn!("HDC1080 init failed: {:?}; temp telemetry disabled", e);
+                None
+            }
+        };
+
         // modem
         let modem = peripherals.modem;
 
@@ -93,6 +117,7 @@ impl PeripheralMap<'_> {
             motion,
             buttons,
             modem,
+            temperature_sensor,
         })
     }
 }

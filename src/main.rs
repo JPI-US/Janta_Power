@@ -2,6 +2,7 @@ use core::time::Duration;
 use std::sync::mpsc;
 
 use anyhow::{Context, Result};
+use esp_idf_svc::sys::*;
 use fsm::Fsm;
 use log::{error, info};
 use rtc::Rtc;
@@ -126,24 +127,28 @@ fn main() -> Result<()> {
     .context("Failed to start Network FSM")?;
 
     loop {
-        let cmd = conductor_rx.recv().context("Conductor channel closed")?;
-
-        info!("{cmd:?}");
-
-        if let Err(e) = led_commands_tx.send(cmd) {
-            error!("Failed to send command to LED FSM: {e}");
+        unsafe {
+            println!("Free heap: {}", esp_get_free_heap_size());
         }
 
-        if let Err(e) = maintenance_commands_tx.send(cmd) {
-            error!("Failed to send command to Maintenance FSM: {e}");
-        }
+        if let Ok(cmd) = conductor_rx.recv_timeout(Duration::from_secs(1)) {
+            info!("{cmd:?}");
 
-        if let Err(e) = motion_commands_tx.send(cmd) {
-            error!("Failed to send command to Motion FSM: {e}");
-        }
+            if let Err(e) = led_commands_tx.send(cmd) {
+                error!("Failed to send command to LED FSM: {e}");
+            }
 
-        if let Err(e) = network_commands_tx.send(cmd) {
-            error!("Failed to send command to Wifi FSM: {e}");
+            if let Err(e) = maintenance_commands_tx.send(cmd) {
+                error!("Failed to send command to Maintenance FSM: {e}");
+            }
+
+            if let Err(e) = motion_commands_tx.send(cmd) {
+                error!("Failed to send command to Motion FSM: {e}");
+            }
+
+            if let Err(e) = network_commands_tx.send(cmd) {
+                error!("Failed to send command to Wifi FSM: {e}");
+            }
         }
     }
 }

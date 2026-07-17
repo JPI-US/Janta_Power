@@ -1,8 +1,7 @@
-use core::marker::Send;
 use std::sync::mpsc::{Receiver, Sender};
 
 use esp_idf_hal::gpio::Pin;
-use fsm::{InitialState, State};
+use fsm::{InitialState, State, StateResult};
 
 use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
 
@@ -77,7 +76,7 @@ pub struct MaintenanceMoveCW;
 #[derive(Default)]
 pub struct MaintenanceExit;
 
-impl<'mb, M, Ccw, Cw> InitialState<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
+impl<M, Ccw, Cw> InitialState<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -85,7 +84,7 @@ where
 {
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
+impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -96,20 +95,19 @@ where
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
-    {
+    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDMaintenance)?;
-            return Ok(Some(Box::new(MaintenanceNotMoving)));
+            return Ok(StateResult::Running(Box::new(MaintenanceNotMoving)));
         }
 
-        Ok(Some(Box::new(MaintenanceEnter)))
+        Ok(StateResult::Hold)
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceNotMoving
+impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceNotMoving
 where
     M: Pin,
     Ccw: Pin,
@@ -120,27 +118,25 @@ where
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
-    {
+    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
-            Ok(Some(Box::new(MaintenanceExit)))
+            Ok(StateResult::Running(Box::new(MaintenanceExit)))
         } else if ctx.ccw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-            Ok(Some(Box::new(MaintenanceMoveCCW)))
+            Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)))
         } else if ctx.cw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
-            Ok(Some(Box::new(MaintenanceMoveCW)))
+            Ok(StateResult::Running(Box::new(MaintenanceMoveCW)))
         } else {
-            tx.send(FSMCommand::LEDMaintenance)?;
-            Ok(Some(Box::new(MaintenanceNotMoving)))
+            Ok(StateResult::Hold)
         }
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCCW
+impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCCW
 where
     M: Pin,
     Ccw: Pin,
@@ -151,25 +147,27 @@ where
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
-    {
+    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
-            return Ok(Some(Box::new(MaintenanceExit)));
-        } else if ctx.cw_pressed() {
+            return Ok(StateResult::Running(Box::new(MaintenanceExit)));
+        }
+
+        if ctx.cw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
-            return Ok(Some(Box::new(MaintenanceMoveCW)));
+            return Ok(StateResult::Running(Box::new(MaintenanceMoveCW)));
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
         tx.send(FSMCommand::MotionMoveBy(30_000))?;
-        Ok(Some(Box::new(MaintenanceMoveCCW)))
+
+        Ok(StateResult::Hold)
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
+impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
 where
     M: Pin,
     Ccw: Pin,
@@ -180,25 +178,27 @@ where
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
-    {
+    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
             tx.send(FSMCommand::LEDOff)?;
-            return Ok(Some(Box::new(MaintenanceExit)));
-        } else if ctx.ccw_pressed() {
+            return Ok(StateResult::Running(Box::new(MaintenanceExit)));
+        }
+
+        if ctx.ccw_pressed() {
             tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-            return Ok(Some(Box::new(MaintenanceMoveCCW)));
+            return Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)));
         }
 
         tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
         tx.send(FSMCommand::MotionMoveBy(-30_000))?;
-        Ok(Some(Box::new(MaintenanceMoveCW)))
+
+        Ok(StateResult::Hold)
     }
 }
 
-impl<'mb, M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceExit
+impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceExit
 where
     M: Pin,
     Ccw: Pin,
@@ -209,8 +209,7 @@ where
         _ctx: &mut MaintenanceContext<M, Ccw, Cw>,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> + Send>>>
-    {
-        Ok(Some(Box::new(MaintenanceEnter)))
+    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        Ok(StateResult::Running(Box::new(MaintenanceEnter)))
     }
 }

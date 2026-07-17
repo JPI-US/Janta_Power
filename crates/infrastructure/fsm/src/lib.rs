@@ -80,16 +80,35 @@ pub struct Fsm<Ctx, Cmd> {
     pub rx: Receiver<Cmd>,
 }
 
+/// Result of processing an FSM state.
+///
+/// # Variants
+///
+/// - `Running` - The FSM transitioned to another state and should continue
+///   processing using the returned state.
+/// - `Hold` - The FSM did not transition states and should continue
+///   processing the current state.
+/// - `Stopped` - The FSM has completed execution because the current state did
+///   not provide further processing.
+pub enum StateResult<Ctx, Cmd> {
+    Running(Box<dyn State<Ctx, Cmd> + Send>),
+    Hold,
+    Stopped,
+}
+
 /// FSM running status.
 ///
 /// # Variants
 ///
 /// - `Running` - The FSM transitioned to another state and should continue
-///   processing.
+///   processing using the returned state.
+/// - `Hold` - The FSM did not transition states and should continue
+///   processing the current state.
 /// - `Stopped` - The FSM has completed execution because the current state did
-///   not provide a next state.
+///   not provide further processing.
 pub enum FsmStatus {
     Running,
+    Hold,
     Stopped,
 }
 
@@ -101,7 +120,7 @@ where
     /// Creates and runs an FSM synchronously until it stops.
     ///
     /// The initial state is executed repeatedly until a state returns
-    /// `None`, indicating that no next state exists.
+    /// `StateResult::Stopped`, indicating that the FSM should terminate.
     ///
     /// # Arguments
     ///
@@ -130,6 +149,7 @@ where
         loop {
             match fsm.step()? {
                 FsmStatus::Running => {}
+                FsmStatus::Hold => {}
                 FsmStatus::Stopped => return Ok(fsm.ctx),
             }
         }
@@ -182,6 +202,7 @@ where
                 loop {
                     match fsm.step() {
                         Ok(FsmStatus::Running) => {}
+                        Ok(FsmStatus::Hold) => {}
                         Ok(FsmStatus::Stopped) => {
                             break;
                         }
@@ -201,25 +222,26 @@ where
     /// Advances the FSM by one execution step.
     ///
     /// The current state is given mutable access to the context and
-    /// communication channels. It may return a new state to transition to, or
-    /// `None` to stop the FSM.
+    /// communication channels. It may transition to a new state, remain in the
+    /// current state, or stop the FSM.
     ///
     /// # Returns
     ///
     /// - `Ok(FsmStatus::Running)` if the FSM transitioned to another state.
+    /// - `Ok(FsmStatus::Hold)` if the FSM remains in the current state.
     /// - `Ok(FsmStatus::Stopped)` if the FSM has completed execution.
     /// - `Err(_)` if the current state encountered an error.
     pub fn step(&mut self) -> anyhow::Result<FsmStatus> {
-        let opt = self
+        match self
             .state
-            .process(&mut self.ctx, &mut self.tx, &mut self.rx)?;
-
-        match opt {
-            Some(state) => {
+            .process(&mut self.ctx, &mut self.tx, &mut self.rx)?
+        {
+            StateResult::Running(state) => {
                 self.state = state;
                 Ok(FsmStatus::Running)
             }
-            None => Ok(FsmStatus::Stopped),
+            StateResult::Hold => Ok(FsmStatus::Hold),
+            StateResult::Stopped => Ok(FsmStatus::Stopped),
         }
     }
 }
@@ -232,8 +254,8 @@ pub trait InitialState<Ctx, Cmd>: State<Ctx, Cmd> {}
 
 /// An FSM state.
 ///
-/// Each state performs one unit of processing and optionally returns the next
-/// state to transition into.
+/// Each state performs one unit of processing and may transition into another
+/// state, remain active, or stop the FSM.
 pub trait State<Ctx, Cmd> {
     /// Processes the current state.
     ///
@@ -245,15 +267,16 @@ pub trait State<Ctx, Cmd> {
     ///
     /// # Returns
     ///
-    /// - `Ok(Some(state))` - Transition to the returned next state.
-    /// - `Ok(None)` - Stop the FSM.
+    /// - `StateResult::Running(state)` - Transition to the returned next state.
+    /// - `StateResult::Hold` - Remain in the current state.
+    /// - `StateResult::Stopped` - Stop the FSM.
     /// - `Err(_)` - The state encountered an error.
     fn process(
         &mut self,
         ctx: &mut Ctx,
         tx: &mut Sender<Cmd>,
         rx: &mut Receiver<Cmd>,
-    ) -> anyhow::Result<Option<Box<dyn State<Ctx, Cmd> + Send>>>;
+    ) -> anyhow::Result<StateResult<Ctx, Cmd>>;
 }
 
 /// Drains all currently available messages from a receiver and returns the

@@ -1,6 +1,6 @@
 use std::sync::mpsc::{Receiver, Sender};
 
-use fsm::{drain_rx, InitialState, State};
+use fsm::{drain_rx, InitialState, State, StateResult};
 use rgb_led::Led;
 
 use crate::logic::fsm::FSMCommand;
@@ -32,15 +32,17 @@ impl State<LEDContext, FSMCommand> for LEDHold {
         _ctx: &mut LEDContext,
         _tx: &mut Sender<FSMCommand>,
         rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<LEDContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
         match drain_rx(rx) {
-            Some(FSMCommand::LEDOff) => Ok(Some(Box::new(LEDOff))),
-            Some(FSMCommand::LEDMaintenance) => Ok(Some(Box::new(LEDMaintenance))),
+            Some(FSMCommand::LEDOff) => Ok(StateResult::Running(Box::new(LEDOff))),
+            Some(FSMCommand::LEDMaintenance) => Ok(StateResult::Running(Box::new(LEDMaintenance))),
             Some(FSMCommand::LEDMaintenanceMovingCCW) => {
-                Ok(Some(Box::new(LEDMaintenanceMovingCCW)))
+                Ok(StateResult::Running(Box::new(LEDMaintenanceMovingCCW)))
             }
-            Some(FSMCommand::LEDMaintenanceMovingCW) => Ok(Some(Box::new(LEDMaintenanceMovingCW))),
-            _ => Ok(Some(Box::new(LEDHold))),
+            Some(FSMCommand::LEDMaintenanceMovingCW) => {
+                Ok(StateResult::Running(Box::new(LEDMaintenanceMovingCW)))
+            }
+            _ => Ok(StateResult::Hold),
         }
     }
 }
@@ -51,9 +53,9 @@ impl State<LEDContext, FSMCommand> for LEDOff {
         ctx: &mut LEDContext,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<LEDContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
         ctx.led.display_none()?;
-        Ok(Some(Box::new(LEDHold)))
+        Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
@@ -63,9 +65,9 @@ impl State<LEDContext, FSMCommand> for LEDMaintenance {
         ctx: &mut LEDContext,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<LEDContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
         ctx.led.display_maintenance()?;
-        Ok(Some(Box::new(LEDHold)))
+        Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
@@ -75,9 +77,9 @@ impl State<LEDContext, FSMCommand> for LEDMaintenanceMovingCCW {
         ctx: &mut LEDContext,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<LEDContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
         ctx.led.display_maintenance_moving_ccw()?;
-        Ok(Some(Box::new(LEDHold)))
+        Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
@@ -87,8 +89,8 @@ impl State<LEDContext, FSMCommand> for LEDMaintenanceMovingCW {
         ctx: &mut LEDContext,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<LEDContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
         ctx.led.display_maintenance_moving_cw()?;
-        Ok(Some(Box::new(LEDHold)))
+        Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }

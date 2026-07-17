@@ -299,33 +299,6 @@ fn oldmain() -> anyhow::Result<()> {
 
     // Hardware initialization
 
-    let temp_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {
-        Ok(mut sensor) => {
-            let _ = sensor.init();
-            if sensor.get_device_id().unwrap_or(0) == 0x1050 {
-                info!("HDC1080 detected");
-                Some(sensor)
-            } else {
-                warn!("HDC1080 not detected on I2C; temp telemetry disabled");
-                None
-            }
-        }
-        Err(e) => {
-            warn!("HDC1080 init failed: {:?}; temp telemetry disabled", e);
-            None
-        }
-    };
-
-    led.display_healthy()?;
-
-    // Runtime guardrails from switchboard
-    motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
-    motion.set_soft_limits(
-        sw.runtime.guardrails.soft_limits_enabled,
-        sw.runtime.guardrails.soft_limit_min_deg,
-        sw.runtime.guardrails.soft_limit_max_deg,
-    );
-
     const POWER_ON: bool = true;
 
     // Daily encoder mode reset before mode load

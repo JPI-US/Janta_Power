@@ -9,7 +9,7 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
     ota::EspOta,
 };
-use fsm::{drain_rx, InitialState, State};
+use fsm::{drain_rx, InitialState, State, StateResult};
 use log::{error, info};
 use motion::Motion;
 use shared_bus::{BusManager, I2cProxy};
@@ -73,13 +73,14 @@ impl State<MotionContext, FSMCommand> for MotionInit {
         &mut self,
         ctx: &mut MotionContext,
         _tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MotionContext, FSMCommand> + Send>>> {
+        _rx: &mut Receiver<FSMCommand>,
+    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
         // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
         // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
         // defaults are (re)written into NVS on every boot, so updating `.env` and
         // reflashing updates the tower coordinates on the next boot.
         let tower_latitude: f64 = ctx.switchboard.default_tower_latitude;
+
         if PERSIST_NVS {
             match ctx
                 .nvs
@@ -91,6 +92,7 @@ impl State<MotionContext, FSMCommand> for MotionInit {
         }
 
         let tower_longitude: f64 = ctx.switchboard.default_tower_longitude;
+
         if PERSIST_NVS {
             match ctx
                 .nvs
@@ -104,25 +106,27 @@ impl State<MotionContext, FSMCommand> for MotionInit {
         let mut lat_buf = [0u8; 64];
         let mut lon_buf = [0u8; 64];
 
-        // Tower location from NVS
         let latitude = ctx
             .nvs
             .get_str("tower_latitude", &mut lat_buf)?
             .unwrap_or("0")
             .parse()
             .unwrap_or(0.0);
+
         let longitude = ctx
             .nvs
             .get_str("tower_longitude", &mut lon_buf)?
             .unwrap_or("0")
             .parse()
             .unwrap_or(0.0);
+
         let altitude: f64 = 0.0;
 
         info!(
             "Retrieved latitude: {}, and longitude: {}",
             latitude, longitude
         );
+
         info!(
             "Device: {}, Lat: {}, Lon: {}, Alt: {}",
             ctx.switchboard.device_id, latitude, longitude, altitude
@@ -135,7 +139,7 @@ impl State<MotionContext, FSMCommand> for MotionInit {
             altitude,
         ));
 
-        Ok(Some(Box::new(MotionNotMoving)))
+        Ok(StateResult::Running(Box::new(MotionNotMoving)))
     }
 }
 
@@ -145,10 +149,10 @@ impl State<MotionContext, FSMCommand> for MotionNotMoving {
         _ctx: &mut MotionContext,
         _tx: &mut Sender<FSMCommand>,
         rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MotionContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
         match drain_rx(rx) {
-            Some(MotionMoveBy(by)) => Ok(Some(Box::new(MotionMoving { by }))),
-            _ => Ok(Some(Box::new(MotionNotMoving))),
+            Some(MotionMoveBy(by)) => Ok(StateResult::Running(Box::new(MotionMoving { by }))),
+            _ => Ok(StateResult::Hold),
         }
     }
 }
@@ -159,8 +163,9 @@ impl State<MotionContext, FSMCommand> for MotionMoving {
         ctx: &mut MotionContext,
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
-    ) -> anyhow::Result<Option<Box<dyn State<MotionContext, FSMCommand> + Send>>> {
+    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
         ctx.motion.move_by(self.by)?;
-        Ok(Some(Box::new(MotionNotMoving)))
+
+        Ok(StateResult::Running(Box::new(MotionNotMoving)))
     }
 }
