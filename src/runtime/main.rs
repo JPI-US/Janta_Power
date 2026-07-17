@@ -30,7 +30,6 @@ use crate::{
         encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
         tracking_loop::TrackingTickContext,
     },
-    infra::watchdog::{TaskWatchdog, UserWatchdog},
     infra::ResetReason,
 };
 
@@ -309,9 +308,6 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // create a watchdog for this task
-    let watchdog = TaskWatchdog::register()?;
-
     let sw = switchboard::active(switchboard::Profile::from_env_str(
         crate::constants::ACTIVE_PROFILE_STR,
     ));
@@ -916,8 +912,6 @@ fn main() -> anyhow::Result<()> {
         tower.publish_heartbeat(&current_datetime);
         tower.report_temperature(&current_datetime);
         tower.process_commands();
-
-        watchdog.feed();
 
         const LOOP_SLEEP_SECS: u64 = 300;
         std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));

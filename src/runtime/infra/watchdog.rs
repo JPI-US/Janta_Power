@@ -188,7 +188,7 @@ impl Drop for UserWatchdog {
 /// - `Ok(())` if `err == ESP_OK`.
 /// - `Err(anyhow::Error)` otherwise, containing the context and error code.
 fn esp_err_to_anyhow(err: i32, ctx: &'static str) -> Result<()> {
-    if err == sys::ESP_OK as i32 {
+    if err == sys::ESP_OK {
         Ok(())
     } else {
         Err(anyhow!("{ctx} failed with esp_err_t = {err}"))
