@@ -24,7 +24,6 @@ pub struct StartupContext {
     pub switchboard: Option<Switchboard>,
     pub sysloop: Option<EspSystemEventLoop>,
     pub nvs_default_partition: Option<EspDefaultNvsPartition>,
-    pub nvs: Option<EspNvs<NvsDefault>>,
     pub peripherals: Option<PeripheralMap<'static>>,
 }
 
@@ -34,7 +33,6 @@ impl StartupContext {
             switchboard: None,
             sysloop: None,
             nvs_default_partition: None,
-            nvs: None,
             peripherals: None,
         }
     }
@@ -84,7 +82,6 @@ impl State<StartupContext, FSMCommand> for Initialization {
         );
 
         ctx.nvs_default_partition = Some(nvs_default);
-        ctx.nvs = Some(nvs);
 
         // peripherals
         let mut peripherals = PeripheralMap::new()?;

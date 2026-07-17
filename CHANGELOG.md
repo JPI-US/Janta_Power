@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `cargo clippy` to pre-commit hook.
 - Added flags in the pre-commit hook to ensure every file gets checked.
 - Added Github Workflows for automated checks.
+- Added basic Watchdog setup
 
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.
