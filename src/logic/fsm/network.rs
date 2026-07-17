@@ -5,19 +5,28 @@ use std::{
     time::Instant,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::modem::Modem,
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
+    ota::EspOta,
 };
 use fsm::{InitialState, State};
-use log::{error, info};
+use log::{error, info, warn};
 use network::mqtt::Mqtt;
+use ota::OtaUpdater;
 use rtc::Rtc;
+use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::{config::switchboard::Switchboard, logic::fsm::FSMCommand};
+use crate::{config::switchboard::Switchboard, logic::fsm::FSMCommand, services::transport};
+
+// TODO: Remove const
+const PERSIST_NVS: bool = true;
+const FORCE_NTP_SKIP_RTC: bool = false;
+const ALLOW_BOOT_VALIDATION: bool = true;
+const DEFAULT_VERSION: &str = "1.1.5";
 
 pub struct NetworkContext {
     nvs: EspNvs<NvsDefault>,
@@ -30,17 +39,26 @@ pub struct NetworkContext {
     init_network_services: bool,
     rtc: Rtc,
     mqtt: Option<Mqtt>,
+    formatted_time: Option<String>,
+    current_version: Option<Version>,
 }
 
 impl NetworkContext {
     pub fn new(
-        nvs: EspNvs<NvsDefault>,
         partition: EspDefaultNvsPartition,
         sysloop: EspSystemEventLoop,
         modem: Modem,
         switchboard: Switchboard,
         rtc: Rtc,
     ) -> Self {
+        let nvs = match EspNvs::new(partition.clone(), "storage", true) {
+            Ok(nvs) => {
+                info!("Got namespace {:?} from default partition", "storage");
+                nvs
+            }
+            Err(e) => Err(anyhow!("Could't get namespace {:?}", e)).expect("Failed to get NVS"),
+        };
+
         Self {
             nvs,
             partition: Some(partition),
@@ -52,6 +70,8 @@ impl NetworkContext {
             init_network_services: true,
             rtc,
             mqtt: None,
+            formatted_time: None,
+            current_version: None,
         }
     }
 }
@@ -60,6 +80,8 @@ pub struct WifiInitialize;
 pub struct WifiConnectIfDisconnected;
 pub struct WifiWait;
 pub struct InitNetworkServices;
+pub struct BootValidation;
+pub struct OTA;
 
 impl InitialState<NetworkContext, FSMCommand> for WifiInitialize {}
 
@@ -70,8 +92,6 @@ impl State<NetworkContext, FSMCommand> for WifiInitialize {
         _tx: &mut Sender<FSMCommand>,
         _rx: &mut Receiver<FSMCommand>,
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
-        const PERSIST_NVS: bool = true;
-
         if PERSIST_NVS {
             match ctx
                 .nvs
@@ -182,7 +202,6 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
     ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
         info!("Getting current time");
 
-        const FORCE_NTP_SKIP_RTC: bool = false;
         let mut tz_buf = [0u8; 96];
         let tz_posix_str = ctx
             .nvs
@@ -200,6 +219,7 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
         let local_time_boot = rtc::timezone::local_time();
         let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));
         info!("{}", formatted_time);
+        ctx.formatted_time = Some(formatted_time);
 
         // MQTT
         info!("Initializing MQTT");
@@ -216,14 +236,298 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
             Ok(mqtt) => {
                 info!("MQTT initialized");
                 ctx.mqtt = Some(mqtt);
+                ctx.init_network_services = false;
+                Ok(Some(Box::new(BootValidation)))
             }
             Err(e) => {
-                error!("Failed to initialize MQTT: {:#}", e);
+                error!("Failed to initialize MQTT: {:#}; retrying", e);
                 ctx.mqtt = None;
+                ctx.init_network_services = true;
+                Ok(Some(Box::new(InitNetworkServices)))
+            }
+        }
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for BootValidation {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
+    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
+        let first_boot = ctx.nvs.get_u8("first_boot")?.unwrap_or(1);
+
+        info!("Beginning boot validation");
+
+        // Load firmware version early so the boot-log publish can include it.
+        let mut version_buf = [0u8; 32];
+        if PERSIST_NVS {
+            ctx.nvs.set_str("version", "1.1.5")?;
+        }
+        let current_version = ctx
+            .nvs
+            .get_str("version", &mut version_buf)?
+            .map(|s| s.trim().parse::<Version>())
+            .transpose()?
+            .unwrap_or(Version::parse(DEFAULT_VERSION)?);
+        ctx.current_version = Some(current_version.clone());
+
+        // Boot diagnostics: Wi-Fi + MQTT
+        let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
+            boot_diagnostic(
+                ctx.switchboard.device_id,
+                &mut ctx
+                    .wifi
+                    .as_mut()
+                    .expect("Wifi should always be initialized by now"),
+                &mut ctx
+                    .mqtt
+                    .as_mut()
+                    .expect("MQTT should always be initialized by now"),
+                &current_version,
+            )
+        } else {
+            info!("Boot validation disabled");
+            true
+        };
+
+        let mut mqtt = ctx
+            .mqtt
+            .as_mut()
+            .expect("MQTT should always be initialized by now");
+
+        // On first OTA boot, mark slot valid only after diagnostics.
+        if ALLOW_BOOT_VALIDATION && first_boot == 1 {
+            info!("First boot, now performing boot diagnostics");
+            let mut valid_ota = EspOta::new().context("Failed to get OTA instance")?;
+            let running_slot = valid_ota.get_running_slot();
+            info!("This is the running boot slot {:?}", running_slot);
+
+            if running_slot?.label == "factory" {
+                info!("Running from factory partition -> skipping OTA validity marking");
+                ctx.nvs.set_u8("first_boot", 0)?;
+            } else {
+                if boot_diagnostic_result {
+                    info!("Boot validation passed, now marking firmware as valid");
+                    valid_ota.mark_running_slot_valid()?;
+                    ctx.nvs.set_u8("first_boot", 0)?;
+
+                    // If a `prev_version` was stashed by the OTA path, we just
+                    // successfully booted into the new firmware. Publish the
+                    // `logs/firmware_update` success event and only clear the
+                    // stash on publish success (so a transient publish failure
+                    // doesn't lose the signal).
+                    let mut prev_ver_buf = [0u8; 32];
+                    if let Some(prev_str) = ctx.nvs.get_str("prev_version", &mut prev_ver_buf)? {
+                        match prev_str.trim().parse::<Version>() {
+                            Ok(prev_version) => {
+                                let current_time = rtc::timezone::local_time()
+                                    .format(network::telemetry::TIME_FORMAT)
+                                    .to_string();
+                                let payload = network::telemetry::FirmwareUpdateLog {
+                                    current_time: &current_time,
+                                    message: "Firmware successfully updated",
+                                    previous_version: &prev_version.to_string(),
+                                    current_version: &current_version.to_string(),
+                                    notes: "No errors during update",
+                                };
+                                let topic = network::telemetry::topic::logs_firmware_update(
+                                    ctx.switchboard.device_id,
+                                );
+
+                                let published =
+                                    network::telemetry::publish_json(&mut mqtt, &topic, &payload)
+                                        .is_ok();
+                                if published {
+                                    let _ = ctx.nvs.remove("prev_version");
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                "prev_version in NVS is not valid semver ({:?}), clearing: {:?}",
+                                prev_str, e
+                            );
+                                let _ = ctx.nvs.remove("prev_version");
+                            }
+                        }
+                    }
+                } else {
+                    error!("Boot validation failed, rolling back firmware");
+                    valid_ota.mark_running_slot_invalid_and_reboot();
+                }
+            }
+        } else {
+            info!("Normal boot firmware already validated");
+        }
+
+        // Subscribe to the remote command channel (tower/{id}/cmd/diagnostics).
+        // Non-fatal: a subscribe hiccup must not block boot. Gated by the profile.
+        if ctx.switchboard.runtime.commands_enabled {
+            if let Err(e) = transport::subscribe(&mut mqtt, ctx.switchboard.device_id) {
+                warn!("Failed to subscribe to command channel: {:?}", e);
             }
         }
 
-        ctx.init_network_services = false;
+        Ok(Some(Box::new(OTA)))
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for OTA {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _tx: &mut Sender<FSMCommand>,
+        _rx: &mut Receiver<FSMCommand>,
+    ) -> anyhow::Result<Option<Box<dyn State<NetworkContext, FSMCommand> + Send>>> {
+        if !ctx.switchboard.effects.allow_ota {
+            info!("OTA disabled: skipping version compare");
+            return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+        }
+
+        let mqtt = match ctx.mqtt.as_mut() {
+            Some(mqtt) => mqtt,
+            None => {
+                warn!("OTA failed; MQTT is not initialized");
+                return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            }
+        };
+
+        let current_version = match ctx.current_version.as_ref() {
+            Some(version) => version,
+            None => {
+                error!("OTA failed; current version is not initialized");
+                return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            }
+        };
+
+        let formatted_time = match ctx.formatted_time.as_ref() {
+            Some(time) => time,
+            None => {
+                error!("OTA failed; formatted time is not initialized");
+                return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            }
+        };
+
+        let payload = network::telemetry::Heartbeat {
+            current_time: formatted_time,
+            firmware_version: &current_version.to_string(),
+        };
+
+        let topic = network::telemetry::topic::status(ctx.switchboard.device_id);
+
+        if let Err(e) = network::telemetry::publish_json(mqtt, &topic, &payload) {
+            warn!("Failed to publish heartbeat: {:?}", e);
+        }
+
+        let mut updater = match OtaUpdater::new_ota(
+            current_version.clone(),
+            mqtt,
+            ctx.switchboard.device_id,
+            Some(ctx.switchboard.default_ota_updater),
+            Some(ctx.switchboard.default_ota_password),
+        ) {
+            Ok(updater) => updater,
+            Err(e) => {
+                warn!("Failed to create OTA updater: {:?}", e);
+                return Ok(Some(Box::new(WifiConnectIfDisconnected)));
+            }
+        };
+
+        info!("Checking for new OTA update in 3 seconds...");
+        sleep(Duration::from_secs(3));
+
+        if let Err(e) = updater.run_version_compare(&mut ctx.nvs) {
+            error!("Version compare failed: {:?}", e);
+
+            let current_time = rtc::timezone::local_time()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+
+            let version_str = current_version.to_string();
+
+            let payload = network::telemetry::FirmwareUpdateLog {
+                current_time: &current_time,
+                message: "Firmware update unsuccessful",
+                previous_version: &version_str,
+                current_version: &version_str,
+                notes: "Did not update due to failures",
+            };
+
+            let topic = network::telemetry::topic::logs_firmware_update(ctx.switchboard.device_id);
+
+            if let Err(e) = network::telemetry::publish_json(mqtt, &topic, &payload) {
+                warn!("Failed to publish OTA failure log: {:?}", e);
+            }
+        } else {
+            info!("Version compare succeeded");
+        }
+
         Ok(Some(Box::new(WifiConnectIfDisconnected)))
     }
+}
+
+fn boot_diagnostic(
+    device_id: &str,
+    wifi: &mut Wifi,
+    mqtt: &mut Mqtt,
+    current_version: &Version,
+) -> bool {
+    info!("Starting boot validation in 5 seconds...");
+    sleep(Duration::from_secs(5));
+
+    // Wi-Fi check
+    match wifi.state() {
+        WifiState::Connected(ip) => {
+            info!("Wi-Fi connected with IP: {}", ip);
+        }
+        WifiState::Connecting => {
+            warn!("Wi-Fi still connecting during validation...");
+            return false;
+        }
+        WifiState::Disconnected => {
+            error!("Wi-Fi disconnected, validation failed");
+            return false;
+        }
+    }
+
+    const MAX_RETRIES: u8 = 3;
+
+    for attempt in 1..=MAX_RETRIES {
+        info!("Boot diagnostic MQTT attempt {}/{}", attempt, MAX_RETRIES);
+
+        let mut waited = 0;
+        while !mqtt.is_connected() && waited < 12000 {
+            sleep(Duration::from_millis(3000));
+            waited += 3000;
+        }
+
+        if !mqtt.is_connected() {
+            warn!("MQTT not connected yet, retrying...");
+            continue;
+        }
+
+        let current_time = rtc::timezone::local_time()
+            .format(network::telemetry::TIME_FORMAT)
+            .to_string();
+        let payload = network::telemetry::BootLog {
+            current_time: &current_time,
+            message: "Tower rebooted successfully",
+            firmware_version: &current_version.to_string(),
+            component: network::telemetry::Component::System,
+            notes: "Scheduled reboot completed without errors",
+        };
+        let topic = network::telemetry::topic::logs_boot(device_id);
+        if network::telemetry::publish_json(mqtt, &topic, &payload).is_ok() {
+            return true;
+        }
+        error!("MQTT publish failed immediately");
+        if attempt == MAX_RETRIES {
+            error!("All MQTT boot diagnostic attempts failed...");
+            return false;
+        }
+        sleep(Duration::from_millis(1000));
+        continue;
+    }
+    false
 }

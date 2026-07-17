@@ -9,7 +9,7 @@ use rtc::Rtc;
 use crate::logic::fsm::{
     led::{LEDContext, LEDHold},
     maintenance::{MaintenanceContext, MaintenanceEnter},
-    motion::{MotionContext, MotionNotMoving},
+    motion::{MotionContext, MotionInit, MotionNotMoving},
     network::{NetworkContext, WifiInitialize},
     startup::{Initialization, StartupContext},
 };
@@ -43,7 +43,6 @@ fn main() -> Result<()> {
         switchboard,
         sysloop,
         nvs_default_partition,
-        nvs,
         peripherals,
     } = startup_result;
 
@@ -51,7 +50,6 @@ fn main() -> Result<()> {
     let sysloop = sysloop.context("Startup did not provide sysloop")?;
     let nvs_default_partition =
         nvs_default_partition.context("Startup did not provide nvs_default_partition")?;
-    let nvs = nvs.context("Startup did not provide NVS")?;
     let peripherals = peripherals.context("Startup did not provide peripherals")?;
 
     // led fsm
@@ -91,8 +89,13 @@ fn main() -> Result<()> {
     let (motion_commands_tx, motion_commands_rx) = mpsc::channel();
 
     Fsm::new_async(
-        Box::new(MotionNotMoving),
-        MotionContext::new(peripherals.motion),
+        Box::new(MotionInit),
+        MotionContext::new(
+            peripherals.motion,
+            switchboard,
+            nvs_default_partition.clone(),
+            peripherals.i2c_bus,
+        ),
         motion_events_tx,
         motion_commands_rx,
         "Motion",
@@ -108,7 +111,6 @@ fn main() -> Result<()> {
     Fsm::new_async(
         Box::new(WifiInitialize),
         NetworkContext::new(
-            nvs,
             nvs_default_partition,
             sysloop,
             peripherals.modem,
