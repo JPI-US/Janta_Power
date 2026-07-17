@@ -6,4 +6,5 @@
 //!   commands are added there; `transport` and `main.rs` stay untouched.
 
 pub mod commands;
+pub mod telemetry;
 pub mod transport;

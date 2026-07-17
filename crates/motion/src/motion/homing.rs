@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::{Context, Result};
+
 use super::{calculate_steps, Motion, MoveOutcome};
 
 impl Motion<'_> {
@@ -89,7 +91,7 @@ impl Motion<'_> {
         }
     }
 
-    pub fn find_limit_switch_cw(&mut self) -> bool {
+    pub fn find_limit_switch_cw(&mut self) -> Result<bool> {
         // Firmware is currently CCW-only for homing.
         log::warn!(
             "Homing requested CW, but firmware is configured for CCW-only homing; using CCW search"
@@ -97,7 +99,7 @@ impl Motion<'_> {
         self.find_limit_switch_ccw()
     }
 
-    pub fn find_limit_switch_ccw(&mut self) -> bool {
+    pub fn find_limit_switch_ccw(&mut self) -> Result<bool> {
         use super::HOME_HEADING_DEG;
 
         // Disable overshoot checks while homing.
@@ -114,7 +116,7 @@ impl Motion<'_> {
             self.force_zero_if_limit_switch_pressed();
             self.set_stall_detection_enabled(stall_prev);
             self.is_homing = false;
-            return true;
+            return Ok(true);
         }
 
         self.relay_on();
@@ -124,11 +126,15 @@ impl Motion<'_> {
         let mut max_steps = calculate_steps(-350.0);
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
-            if self.move_by(step_movement) != MoveOutcome::Completed {
+            if self
+                .move_by(step_movement)
+                .context("Failed to move to find limit switch CCW")?
+                != MoveOutcome::Completed
+            {
                 self.relay_off();
                 self.set_stall_detection_enabled(stall_prev);
                 self.is_homing = false;
-                return false;
+                return Ok(false);
             }
             max_steps -= step_movement;
         }
@@ -141,10 +147,10 @@ impl Motion<'_> {
             self.force_zero_if_limit_switch_pressed();
             self.set_stall_detection_enabled(stall_prev);
             self.is_homing = false;
-            return true;
+            return Ok(true);
         }
         self.set_stall_detection_enabled(stall_prev);
         self.is_homing = false;
-        false
+        Ok(false)
     }
 }

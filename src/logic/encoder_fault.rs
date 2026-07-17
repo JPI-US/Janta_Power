@@ -1,12 +1,13 @@
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
-use crate::{infra, infra::SnapshotStore};
+use crate::{services::telemetry::error_loop, storage::snapshot_store::SnapshotStore};
 
 // Local direction enum used by encoder fault recovery.
 #[derive(Clone, Copy, PartialEq)]
@@ -33,20 +34,6 @@ pub struct EncoderRecoverySwitches {
     pub rehome_dir: Direction,
 }
 
-impl EncoderRecoverySwitches {
-    /// Fallback when not using switchboard (e.g. tests). Prefer building from sw.runtime.encoder_recovery.
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
-    pub const fn default() -> Self {
-        Self {
-            enabled: true,
-            probe_interval_secs: 30,
-            probe_steps: 50_000,
-            max_drift_deg: 5.0,
-            rehome_dir: Direction::Ccw,
-        }
-    }
-}
-
 pub struct EncoderFaultRecovery {
     active: bool,
     next_probe_at: Option<Instant>,
@@ -66,7 +53,7 @@ impl EncoderFaultRecovery {
         }
     }
 
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn mode_switched_daily(&self) -> bool {
         self.mode_switched_daily
     }
@@ -114,7 +101,7 @@ impl EncoderFaultRecovery {
         }
 
         if !ctx.cfg.enabled {
-            infra::error_loop(
+            error_loop(
                 &ctx.device_id,
                 ctx.mqtt,
                 network::telemetry::Component::System,
@@ -128,7 +115,9 @@ impl EncoderFaultRecovery {
         let should_probe = self.next_probe_at.map(|t| now_i >= t).unwrap_or(true);
 
         if !should_probe {
-            let t = self.next_probe_at.unwrap();
+            let t = self
+                .next_probe_at
+                .ok_or_else(|| anyhow!("next_probe_at unexpectedly None"))?;
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
@@ -138,7 +127,7 @@ impl EncoderFaultRecovery {
         }
 
         log::info!("Encoder fault: probing for recovery...");
-        let ok = motion.probe_encoder_motion(ctx.cfg.probe_steps);
+        let ok = motion.probe_encoder_motion(ctx.cfg.probe_steps)?;
         if !ok {
             self.probe_failure_count += 1;
             log::warn!(
@@ -198,11 +187,11 @@ impl EncoderFaultRecovery {
             ctx.cfg.max_drift_deg
         );
         let ok = match ctx.cfg.rehome_dir {
-            Direction::Cw => motion.find_limit_switch_cw(),
-            Direction::Ccw => motion.find_limit_switch_ccw(),
+            Direction::Cw => motion.find_limit_switch_cw()?,
+            Direction::Ccw => motion.find_limit_switch_ccw()?,
         };
         if !ok {
-            infra::error_loop(
+            error_loop(
                 &ctx.device_id,
                 ctx.mqtt,
                 network::telemetry::Component::LimitSwitch,

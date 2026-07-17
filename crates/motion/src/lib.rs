@@ -5,6 +5,7 @@ pub mod motion {
     };
 
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
+    use anyhow::Result;
     use astronav::coords::noaa_sun::NOAASun;
     use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
@@ -67,9 +68,6 @@ pub mod motion {
         motor_device:
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
         motor_clock: OperatingSystemClock,
-        // Legacy field kept for compatibility.
-        #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
-        prev_balance: i32,
         relay: PinDriver<'a, Gpio17, Output>,
         lmsw: PinDriver<'a, Gpio14, Input>,
         encoder: IncrementalEncoder<
@@ -128,22 +126,22 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
-        ) -> Motion<'a> {
-            let step = PinDriver::output(step_pin).unwrap();
-            let direction = PinDriver::output(direction_pin).unwrap();
+        ) -> Result<Motion<'a>> {
+            let step = PinDriver::output(step_pin)?;
+            let direction = PinDriver::output(direction_pin)?;
             // Relay is active-low: boot with relay OFF.
-            let mut relay = PinDriver::output(relay_pin).unwrap();
+            let mut relay = PinDriver::output(relay_pin)?;
             relay.set_high().unwrap_or_default();
-            let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
-            let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
-            let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
+            let mut lmsw = PinDriver::input(limit_switch_pin)?;
+            let encoder_a = PinDriver::input(encoder_a_pin)?;
+            let encoder_b = PinDriver::input(encoder_b_pin)?;
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
-            Motion {
+            Ok(Motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
                 speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
@@ -151,7 +149,6 @@ pub mod motion {
                 motor: Driver::new(),
                 motor_device: StepAndDirection::new(step, direction),
                 motor_clock: OperatingSystemClock::new(),
-                prev_balance: 0,
                 relay,
                 lmsw,
                 encoder,
@@ -183,7 +180,7 @@ pub mod motion {
                 soft_limit_max_deg: 290.0,
 
                 is_homing: false,
-            }
+            })
         }
 
         pub fn update_position(&mut self, location: f32) {
@@ -316,14 +313,14 @@ pub mod motion {
             ctx: TowerPositionCtx<'_, '_, I2C, T>,
             location: f32,
             _balance: i32,
-        ) -> bool
+        ) -> Result<bool>
         where
             I2C: embedded_hal::i2c::I2c,
             T: NvsPartitionId,
         {
             self.update_position(location);
-            log::info!("{},", ctx.clock.after_sunrise());
-            if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
+            log::info!("{:?},", ctx.clock.after_sunrise());
+            if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
                 // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
@@ -353,7 +350,7 @@ pub mod motion {
                     sun.sec
                 );
                 log::info!(
-                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={}",
+                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
                     now.format("%Y-%m-%d %H:%M:%S %:z"),
                     rtc_naive
                 );
@@ -399,19 +396,19 @@ pub mod motion {
                 // Daytime tracking: no move in deadband, otherwise step by offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     self.relay_off();
-                    return true;
+                    return Ok(true);
                 }
 
                 self.relay_on();
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                 log::info!("Steps Needed: {}", steps as i64);
-                let move_outcome = self.move_by(steps as i64);
+                let move_outcome = self.move_by(steps as i64)?;
                 if move_outcome != MoveOutcome::Completed {
                     self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
                     // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                    return true;
+                    return Ok(true);
                 }
                 self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
@@ -424,7 +421,7 @@ pub mod motion {
                 let topic = network::telemetry::topic::data_angle(ctx.device_id);
                 let _ = network::telemetry::publish_json(ctx.mqtt, &topic, &payload);
 
-                false
+                Ok(false)
             } else {
                 // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
@@ -433,7 +430,7 @@ pub mod motion {
                         log::warn!(
                             "Heading near home but limit switch not pressed; verifying home by homing CCW"
                         );
-                        let ok = self.find_limit_switch_ccw();
+                        let ok = self.find_limit_switch_ccw()?;
                         if ok {
                             log::info!("Home verification homing succeeded");
                             self.report_home_error_ticks(
@@ -470,8 +467,8 @@ pub mod motion {
                     let mut last_check = Instant::now();
                     let check_interval = Duration::from_secs(2 * 60 * 60);
 
-                    while ctx.clock.after_sunset() || !ctx.clock.after_sunrise() {
-                        if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
+                    while ctx.clock.after_sunset()? || !ctx.clock.after_sunrise()? {
+                        if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
                             log::info!("Sunrise detected, exiting sleep loop");
                             break;
                         }
@@ -490,8 +487,9 @@ pub mod motion {
                                 ctx.device_id,
                                 Some("device1A"),
                                 Some("device1A"),
-                            )
-                            .expect("Failed to create OTA adapter instance");
+                            )?;
+
+                            // .expect("Failed to create OTA adapter instance");
 
                             thread::sleep(Duration::from_secs(3));
                             let run_compare = updater.run_version_compare(ctx.nvs);
@@ -512,10 +510,10 @@ pub mod motion {
                         std::thread::sleep(std::time::Duration::from_secs(600));
                     }
 
-                    true
+                    Ok(true)
                 } else {
                     log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_ccw();
+                    let limit_sw_status = self.find_limit_switch_ccw()?;
                     match limit_sw_status {
                         true => {
                             log::info!("Limit switch has returned true");
@@ -548,7 +546,7 @@ pub mod motion {
                     }
                     log::info!("Tower has reached sleep position");
 
-                    false
+                    Ok(false)
                 }
             }
         }

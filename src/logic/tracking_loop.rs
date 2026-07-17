@@ -4,7 +4,7 @@ use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::{motion::TowerPositionCtx, MotionMode};
 use semver::Version;
 
-use crate::infra::SnapshotStore;
+use crate::storage::snapshot_store::SnapshotStore;
 
 pub struct TrackingTickContext<'ctx, 'wifi, I2C, T>
 where
@@ -27,7 +27,7 @@ pub fn tick<I2C, T>(
     motion: &mut motion::Motion,
     ctx: &mut TrackingTickContext<I2C, T>,
     actual_heading: &mut f32,
-) -> motion::MoveOutcome
+) -> anyhow::Result<motion::MoveOutcome>
 where
     I2C: embedded_hal::i2c::I2c,
     T: NvsPartitionId,
@@ -55,19 +55,19 @@ where
                 SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
-            motion::MoveOutcome::Completed
+            Ok(motion::MoveOutcome::Completed)
         }
         Some(
             outcome @ (motion::MoveOutcome::AbortedPowerMissing
             | motion::MoveOutcome::AbortedStall
             | motion::MoveOutcome::AbortedOvershoot),
-        ) => outcome,
+        ) => Ok(outcome),
         None => {
             // No movement needed; treat as completed without writing NVS.
-            if !tracking_done {
+            if !tracking_done? {
                 log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
             }
-            motion::MoveOutcome::Completed
+            Ok(motion::MoveOutcome::Completed)
         }
     }
 }

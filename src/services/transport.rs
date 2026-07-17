@@ -1,6 +1,6 @@
 //! MQTT transport for the remote command channel.
 //!
-//! Kept separate from the command catalog in [`crate::diagnostics::commands`]
+//! Kept separate from the command catalog in [`crate::services::commands`]
 //! so this file does not grow as commands are added.
 //!
 //! - [`subscribe`]: subscribe to `tower/{id}/cmd/diagnostics` once at boot.
@@ -24,7 +24,7 @@ use network::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::diagnostics::commands::{self, CmdCtx};
+use crate::services::commands::{self, CmdCtx};
 
 /// Inbound command shape: `{ "cmd": "get_status", "request_id": "abc" }`.
 /// `request_id` is optional and echoed back so the caller can correlate replies.

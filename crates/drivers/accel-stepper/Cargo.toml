@@ -23,20 +23,14 @@ license = "GPL-2.0"
 repository = "https://gitlab.com/Michael-F-Bryan/accel-stepper"
 [package.metadata.docs.rs]
 all-features = true
-[dependencies.arrayvec]
-version = "0.4.11"
-
-[dependencies.embedded-hal]
-version = "1.0.0"
-optional = true
-
-[dependencies.libm]
-version = "0.1.4"
-
-[dependencies.void]
-version = "1.0.2"
 
 [features]
 default = []
 hal = ["embedded-hal"]
 std = []
+
+[dependencies]
+arrayvec = "0.4.11"
+embedded-hal = { workspace = true, optional = true }
+libm = "0.1.4"
+void = "1.0.2"

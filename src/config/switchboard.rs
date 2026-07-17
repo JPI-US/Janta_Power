@@ -222,7 +222,7 @@ pub struct Switchboard {
 
 pub const fn normal() -> Switchboard {
     Switchboard {
-        device_id: crate::constants::DEVICE_ID,
+        device_id: crate::config::constants::DEVICE_ID,
 
         wifi_connect_delay_secs: 20,
         tracking_loop_sleep_secs: 300,
@@ -235,17 +235,17 @@ pub const fn normal() -> Switchboard {
         nvs_key_enc_snapshot_version: "enc_snapshot_v",
         nvs_key_enc_ticks_adj: "enc_ticks_adj",
         enc_home_tol_ticks: 50,
-        home_heading_deg: crate::constants::HOME_HEADING_DEG,
+        home_heading_deg: crate::config::constants::HOME_HEADING_DEG,
 
-        default_wifi_ssid: crate::constants::WIFI_SSID,
-        default_wifi_pass: crate::constants::WIFI_PASSWORD,
-        default_tz_posix: crate::constants::TZ_POSIX,
+        default_wifi_ssid: crate::config::constants::WIFI_SSID,
+        default_wifi_pass: crate::config::constants::WIFI_PASSWORD,
+        default_tz_posix: crate::config::constants::TZ_POSIX,
 
         default_ota_updater: "device1A",
         default_ota_password: "device1A",
 
-        default_tower_latitude: crate::constants::TOWER_LATITUDE,
-        default_tower_longitude: crate::constants::TOWER_LONGITUDE,
+        default_tower_latitude: crate::config::constants::TOWER_LATITUDE,
+        default_tower_longitude: crate::config::constants::TOWER_LONGITUDE,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {
@@ -271,15 +271,15 @@ pub const fn normal() -> Switchboard {
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
-                probe_steps: crate::constants::ENCODER_PROBE_STEPS,
+                probe_steps: crate::config::constants::ENCODER_PROBE_STEPS,
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Cw,
             },
             guardrails: GuardrailsSwitches {
                 stall_detection_enabled: true,
                 soft_limits_enabled: true,
-                soft_limit_min_deg: crate::constants::SOFT_LIMIT_MIN_DEG,
-                soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
+                soft_limit_min_deg: crate::config::constants::SOFT_LIMIT_MIN_DEG,
+                soft_limit_max_deg: crate::config::constants::SOFT_LIMIT_MAX_DEG,
             },
             commands_enabled: true,
         },
