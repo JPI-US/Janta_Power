@@ -1,7 +1,5 @@
-use std::sync::mpsc::{Receiver, Sender};
-
 use esp_idf_hal::gpio::Pin;
-use fsm::{InitialState, State, StateResult};
+use fsm::{Channel, InitialState, State, StateResult};
 
 use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
 
@@ -93,13 +91,12 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            tx.send(FSMCommand::LEDMaintenance)?;
+            channel.send(FSMCommand::LEDMaintenance)?;
             return Ok(StateResult::Running(Box::new(MaintenanceNotMoving)));
         }
 
@@ -116,19 +113,18 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            tx.send(FSMCommand::LEDOff)?;
+            channel.send(FSMCommand::LEDOff)?;
             Ok(StateResult::Running(Box::new(MaintenanceExit)))
         } else if ctx.ccw_pressed() {
-            tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+            channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
             Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)))
         } else if ctx.cw_pressed() {
-            tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
+            channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
             Ok(StateResult::Running(Box::new(MaintenanceMoveCW)))
         } else {
             Ok(StateResult::Hold)
@@ -145,23 +141,22 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            tx.send(FSMCommand::LEDOff)?;
+            channel.send(FSMCommand::LEDOff)?;
             return Ok(StateResult::Running(Box::new(MaintenanceExit)));
         }
 
         if ctx.cw_pressed() {
-            tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
+            channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
             return Ok(StateResult::Running(Box::new(MaintenanceMoveCW)));
         }
 
-        tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-        tx.send(FSMCommand::MotionMoveBy(30_000))?;
+        channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+        channel.send(FSMCommand::MotionMoveBy(30_000))?;
 
         Ok(StateResult::Hold)
     }
@@ -176,23 +171,22 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            tx.send(FSMCommand::LEDOff)?;
+            channel.send(FSMCommand::LEDOff)?;
             return Ok(StateResult::Running(Box::new(MaintenanceExit)));
         }
 
         if ctx.ccw_pressed() {
-            tx.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+            channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
             return Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)));
         }
 
-        tx.send(FSMCommand::LEDMaintenanceMovingCW)?;
-        tx.send(FSMCommand::MotionMoveBy(-30_000))?;
+        channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
+        channel.send(FSMCommand::MotionMoveBy(-30_000))?;
 
         Ok(StateResult::Hold)
     }
@@ -207,8 +201,7 @@ where
     fn process(
         &mut self,
         _ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         Ok(StateResult::Running(Box::new(MaintenanceEnter)))
     }

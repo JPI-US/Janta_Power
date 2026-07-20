@@ -1,7 +1,7 @@
 use core::time::Duration;
-use std::sync::mpsc;
 
 use anyhow::{Context, Result};
+use crossbeam_channel::unbounded;
 use esp_idf_svc::sys::*;
 use fsm::Fsm;
 use log::{error, info};
@@ -10,7 +10,7 @@ use rtc::Rtc;
 use crate::logic::fsm::{
     led::{LEDContext, LEDHold},
     maintenance::{MaintenanceContext, MaintenanceEnter},
-    motion::{MotionContext, MotionInit, MotionNotMoving},
+    motion::{MotionContext, MotionInit},
     network::{NetworkContext, WifiInitialize},
     startup::{Initialization, StartupContext},
 };
@@ -26,17 +26,18 @@ mod storage;
 pub extern "C" fn __pender() {}
 
 fn main() -> Result<()> {
-    let (conductor_tx, conductor_rx) = mpsc::channel();
+    let (conductor_tx, conductor_rx) = unbounded();
 
     // startup
     let startup_events_tx = conductor_tx.clone();
-    let (_startup_commands_tx, startup_commands_rx) = mpsc::channel();
+    let (_startup_commands_tx, startup_commands_rx) = unbounded();
 
     let startup_result = Fsm::new_sync(
         Box::new(Initialization),
         StartupContext::new(),
         startup_events_tx,
         startup_commands_rx,
+        250,
     )
     .context("Failed to start Startup FSM")?;
 
@@ -55,7 +56,7 @@ fn main() -> Result<()> {
 
     // led fsm
     let led_events_tx = conductor_tx.clone();
-    let (led_commands_tx, led_commands_rx) = mpsc::channel();
+    let (led_commands_tx, led_commands_rx) = unbounded();
 
     Fsm::new_async(
         Box::new(LEDHold),
@@ -64,6 +65,7 @@ fn main() -> Result<()> {
         },
         led_events_tx,
         led_commands_rx,
+        250,
         "LED Control",
         8 * 1_024,
         Duration::from_millis(100),
@@ -72,13 +74,14 @@ fn main() -> Result<()> {
 
     // maintenance fsm
     let maintenance_events_tx = conductor_tx.clone();
-    let (maintenance_commands_tx, maintenance_commands_rx) = mpsc::channel();
+    let (maintenance_commands_tx, maintenance_commands_rx) = unbounded();
 
     Fsm::new_async(
         Box::new(MaintenanceEnter),
         MaintenanceContext::new(peripherals.buttons),
         maintenance_events_tx,
         maintenance_commands_rx,
+        250,
         "Maintenance Buttons",
         8 * 1_024,
         Duration::from_millis(100),
@@ -87,7 +90,7 @@ fn main() -> Result<()> {
 
     // motion fsm
     let motion_events_tx = conductor_tx.clone();
-    let (motion_commands_tx, motion_commands_rx) = mpsc::channel();
+    let (motion_commands_tx, motion_commands_rx) = unbounded();
 
     Fsm::new_async(
         Box::new(MotionInit),
@@ -99,6 +102,7 @@ fn main() -> Result<()> {
         ),
         motion_events_tx,
         motion_commands_rx,
+        250,
         "Motion",
         8 * 1_024,
         Duration::from_millis(100),
@@ -107,7 +111,7 @@ fn main() -> Result<()> {
 
     // network fsm
     let network_events_tx = conductor_tx.clone();
-    let (network_commands_tx, network_commands_rx) = mpsc::channel();
+    let (network_commands_tx, network_commands_rx) = unbounded();
 
     Fsm::new_async(
         Box::new(WifiInitialize),
@@ -120,6 +124,7 @@ fn main() -> Result<()> {
         ),
         network_events_tx,
         network_commands_rx,
+        250,
         "Network",
         8 * 1_024,
         Duration::from_secs(2),

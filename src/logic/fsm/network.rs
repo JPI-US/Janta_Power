@@ -1,9 +1,5 @@
 use core::{option::Option::None, time::Duration};
-use std::{
-    sync::mpsc::{Receiver, Sender},
-    thread::sleep,
-    time::Instant,
-};
+use std::{thread::sleep, time::Instant};
 
 use anyhow::{anyhow, Context};
 use esp_idf_svc::{
@@ -12,7 +8,7 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
     ota::EspOta,
 };
-use fsm::{InitialState, State, StateResult};
+use fsm::{Channel, InitialState, State, StateResult};
 use log::{error, info, warn};
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
@@ -93,8 +89,7 @@ impl State<NetworkContext, FSMCommand> for WifiInitialize {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         if PERSIST_NVS {
             match ctx
@@ -160,8 +155,7 @@ impl State<NetworkContext, FSMCommand> for WifiWait {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         if ctx.timer.elapsed() < Duration::from_secs(30) {
             return Ok(StateResult::Hold);
@@ -177,8 +171,7 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         let wifi = ctx
             .wifi
@@ -205,8 +198,7 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         info!("Getting current time");
 
@@ -217,7 +209,7 @@ impl State<NetworkContext, FSMCommand> for InitNetworkServices {
             .unwrap_or(ctx.switchboard.default_tz_posix);
 
         ctx.rtc.init(
-            &ctx.wifi
+            ctx.wifi
                 .as_ref()
                 .expect("Wifi should always be initialized by now"),
             tz_posix_str,
@@ -262,8 +254,7 @@ impl State<NetworkContext, FSMCommand> for BootValidation {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         let first_boot = ctx.nvs.get_u8("first_boot")?.unwrap_or(1);
 
@@ -382,8 +373,7 @@ impl State<NetworkContext, FSMCommand> for OTA {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         if !ctx.switchboard.effects.allow_ota {
             info!("OTA disabled: skipping version compare");

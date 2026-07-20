@@ -29,6 +29,7 @@
 //!     StartupContext::new(),
 //!     coordinator_tx.clone(),
 //!     startup_cmd_rx,
+//!     1,
 //! )?;
 //!
 //! // Extract resources from the completed startup context.
@@ -41,24 +42,24 @@
 //!
 //! let _ = coordinator_rx;
 //!
+//! # Ok(())
 //! # }
 //! ```
 
-use core::{option::Option::None, time::Duration};
-use std::{
-    sync::mpsc::{Receiver, Sender},
-    thread::sleep,
-};
+use core::time::Duration;
+use std::thread::sleep;
+
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 
 /// Generic thread-safe finite state machine.
 ///
-/// An FSM owns a state, a context, and communication channels. It can be
-/// executed synchronously using [`Fsm::new_sync`] or asynchronously on its own
-/// thread using [`Fsm::new_async`].
+/// An FSM owns a state, persistent context, and a communication channel. It can
+/// be executed synchronously using [`Fsm::new_sync`] or asynchronously on its
+/// own thread using [`Fsm::new_async`].
 ///
-/// FSM instances are intended to be coordinated by a higher-level component
-/// which sends commands to FSMs and receives events or status updates from
-/// them.
+/// Communication with the outside world is performed through a [`Channel`],
+/// which provides non-blocking send and receive operations and optional
+/// filtering of queued commands.
 pub struct Fsm<Ctx, Cmd> {
     /// The current state of this FSM.
     ///
@@ -73,11 +74,9 @@ pub struct Fsm<Ctx, Cmd> {
     /// state transitions.
     pub ctx: Ctx,
 
-    /// Sender used by the FSM to communicate with the coordinator.
-    pub tx: Sender<Cmd>,
-
-    /// Receiver used by the FSM to receive commands from the coordinator.
-    pub rx: Receiver<Cmd>,
+    /// Communication channel used by states to exchange commands or events
+    /// with external coordinators.
+    pub channel: Channel<Cmd>,
 }
 
 /// Result of processing an FSM state.
@@ -96,16 +95,13 @@ pub enum StateResult<Ctx, Cmd> {
     Stopped,
 }
 
-/// FSM running status.
+/// FSM execution status.
 ///
 /// # Variants
 ///
-/// - `Running` - The FSM transitioned to another state and should continue
-///   processing using the returned state.
-/// - `Hold` - The FSM did not transition states and should continue
-///   processing the current state.
-/// - `Stopped` - The FSM has completed execution because the current state did
-///   not provide further processing.
+/// - `Running` - The FSM transitioned to another state.
+/// - `Hold` - The FSM remains in the current state.
+/// - `Stopped` - The FSM has completed execution.
 pub enum FsmStatus {
     Running,
     Hold,
@@ -124,11 +120,13 @@ where
     ///
     /// # Arguments
     ///
-    /// - `initial_state` - The initial state of the FSM. Must implement
+    /// - `initial_state` - Initial state of the FSM. Must implement
     ///   [`InitialState`].
-    /// - `ctx` - The initial FSM context.
-    /// - `tx` - Sender used by states to communicate with the coordinator.
-    /// - `rx` - Receiver used by states to receive coordinator commands.
+    /// - `ctx` - Initial FSM context.
+    /// - `tx` - Sender used to transmit commands or events.
+    /// - `rx` - Receiver used to receive commands.
+    /// - `max_pending` - Maximum number of pending received commands to retain.
+    ///   Older queued commands are discarded as needed by [`Channel`].
     ///
     /// # Returns
     ///
@@ -138,12 +136,16 @@ where
         ctx: Ctx,
         tx: Sender<Cmd>,
         rx: Receiver<Cmd>,
+        max_pending: usize,
     ) -> anyhow::Result<Ctx> {
         let mut fsm = Self {
             state: initial_state,
             ctx,
-            tx,
-            rx,
+            channel: Channel {
+                tx,
+                rx,
+                max_pending,
+            },
         };
 
         loop {
@@ -163,14 +165,15 @@ where
     ///
     /// # Arguments
     ///
-    /// - `initial_state` - The initial state of the FSM. Must implement
+    /// - `initial_state` - Initial state of the FSM. Must implement
     ///   [`InitialState`].
-    /// - `ctx` - The initial FSM context.
-    /// - `tx` - Sender used by states to communicate with the coordinator.
-    /// - `rx` - Receiver used by states to receive coordinator commands.
+    /// - `ctx` - Initial FSM context.
+    /// - `tx` - Sender used to transmit commands or events.
+    /// - `rx` - Receiver used to receive commands.
+    /// - `max_pending` - Maximum number of pending received commands to retain.
     /// - `thread_name` - Name assigned to the FSM thread.
     /// - `thread_stack_size` - Stack size allocated for the FSM thread.
-    /// - `thread_period` - Delay between FSM execution steps.
+    /// - `thread_period` - Delay between successive calls to [`Fsm::step`].
     ///
     /// # Returns
     ///
@@ -180,6 +183,7 @@ where
         ctx: Ctx,
         tx: Sender<Cmd>,
         rx: Receiver<Cmd>,
+        max_pending: usize,
         thread_name: impl Into<String>,
         thread_stack_size: usize,
         thread_period: Duration,
@@ -187,8 +191,11 @@ where
         let mut fsm = Self {
             state: initial_state,
             ctx,
-            tx,
-            rx,
+            channel: Channel {
+                tx,
+                rx,
+                max_pending,
+            },
         };
 
         let thread_name = thread_name.into();
@@ -203,9 +210,7 @@ where
                     match fsm.step() {
                         Ok(FsmStatus::Running) => {}
                         Ok(FsmStatus::Hold) => {}
-                        Ok(FsmStatus::Stopped) => {
-                            break;
-                        }
+                        Ok(FsmStatus::Stopped) => break,
                         Err(e) => {
                             log::error!("FSM thread exited: {e:?}");
                             break;
@@ -221,22 +226,24 @@ where
 
     /// Advances the FSM by one execution step.
     ///
-    /// The current state is given mutable access to the context and
-    /// communication channels. It may transition to a new state, remain in the
-    /// current state, or stop the FSM.
+    /// The current state is given mutable access to the FSM context and its
+    /// communication [`Channel`]. The state may transition to a new state,
+    /// remain active, or stop the FSM.
+    ///
+    /// When a state transition occurs, any excess queued commands are discarded
+    /// according to the channel's configured pending-command limit before the
+    /// next state begins execution.
     ///
     /// # Returns
     ///
-    /// - `Ok(FsmStatus::Running)` if the FSM transitioned to another state.
+    /// - `Ok(FsmStatus::Running)` if the FSM transitioned to a new state.
     /// - `Ok(FsmStatus::Hold)` if the FSM remains in the current state.
     /// - `Ok(FsmStatus::Stopped)` if the FSM has completed execution.
     /// - `Err(_)` if the current state encountered an error.
     pub fn step(&mut self) -> anyhow::Result<FsmStatus> {
-        match self
-            .state
-            .process(&mut self.ctx, &mut self.tx, &mut self.rx)?
-        {
+        match self.state.process(&mut self.ctx, &mut self.channel)? {
             StateResult::Running(state) => {
+                self.channel.drain();
                 self.state = state;
                 Ok(FsmStatus::Running)
             }
@@ -262,8 +269,7 @@ pub trait State<Ctx, Cmd> {
     /// # Arguments
     ///
     /// - `ctx` - Mutable access to the FSM context.
-    /// - `tx` - Sender used to communicate with the coordinator.
-    /// - `rx` - Receiver used to receive coordinator commands.
+    /// - `channel` - Communication channel used to send and receive commands.
     ///
     /// # Returns
     ///
@@ -274,34 +280,75 @@ pub trait State<Ctx, Cmd> {
     fn process(
         &mut self,
         ctx: &mut Ctx,
-        tx: &mut Sender<Cmd>,
-        rx: &mut Receiver<Cmd>,
+        channel: &mut Channel<Cmd>,
     ) -> anyhow::Result<StateResult<Ctx, Cmd>>;
 }
 
-/// Drains all currently available messages from a receiver and returns the
-/// most recent one.
+/// Communication channel used by an FSM.
 ///
-/// This is useful for command channels where only the latest command matters
-/// and older pending commands can be discarded.
+/// The channel wraps a sender and receiver and provides non-blocking send and
+/// receive operations.
 ///
-/// # Arguments
-///
-/// - `rx` - The receiver to drain.
-///
-/// # Returns
-///
-/// - `Some(Cmd)` - The latest received command, if any commands were available.
-/// - `None` - No commands were available.
-pub fn drain_rx<Cmd>(rx: &mut Receiver<Cmd>) -> Option<Cmd> {
-    let mut latest = None;
+/// Incoming commands can be automatically pruned so that stale queued commands
+/// are discarded, allowing states to process only the most recent activity when
+/// appropriate.
+pub struct Channel<Cmd> {
+    tx: Sender<Cmd>,
+    rx: Receiver<Cmd>,
+    max_pending: usize,
+}
 
-    loop {
-        match rx.try_recv() {
-            Ok(cmd) => latest = Some(cmd),
-            _ => break,
+impl<Cmd> Channel<Cmd> {
+    /// Creates a new communication channel.
+    ///
+    /// `max_pending` specifies the maximum number of queued received commands
+    /// that may be retained before older commands are discarded.
+    pub fn new(tx: Sender<Cmd>, rx: Receiver<Cmd>, max_pending: usize) -> Self {
+        Self {
+            tx,
+            rx,
+            max_pending,
         }
     }
 
-    latest
+    fn drain(&self) {
+        while self.rx.len() > self.max_pending {
+            let _ = self.rx.try_recv();
+        }
+    }
+
+    fn drain_to(&self, to: usize) {
+        while self.rx.len() > to {
+            let _ = self.rx.try_recv();
+        }
+    }
+
+    /// Receives the next pending command.
+    ///
+    /// Before attempting to receive, older queued commands are discarded until
+    /// at most `max_pending` commands remain.
+    ///
+    /// Returns `TryRecvError::Empty` if no command is available.
+    pub fn recv(&self) -> Result<Cmd, TryRecvError> {
+        self.drain();
+        self.rx.try_recv()
+    }
+
+    /// Receives only the most recently queued command.
+    ///
+    /// Any older queued commands are discarded before attempting to receive,
+    /// ensuring that at most one pending command remains.
+    ///
+    /// Returns `TryRecvError::Empty` if no command is available.
+    pub fn recv_latest(&self) -> Result<Cmd, TryRecvError> {
+        self.drain_to(1);
+        self.rx.try_recv()
+    }
+
+    /// Attempts to send a command without blocking.
+    ///
+    /// Returns `TrySendError` if the command cannot be queued.
+    pub fn send(&self, cmd: Cmd) -> Result<(), TrySendError<Cmd>> {
+        self.tx.try_send(cmd)
+    }
 }

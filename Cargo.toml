@@ -30,6 +30,7 @@ members = [
 [workspace.dependencies]
 accel-stepper = { path = "crates/drivers/accel-stepper" }
 anyhow = "1.0.86"
+crossbeam-channel = "0.5.16"
 base64 = "0.22.1"
 chrono = "0.4.40"
 clock = { path = "crates/infrastructure/clock" }
@@ -100,6 +101,7 @@ shared-bus = { workspace = true, features = [
 ] }
 toml = "0.8"
 wifi.workspace = true
+crossbeam-channel.workspace = true
 
 [build-dependencies]
 dotenv.workspace = true

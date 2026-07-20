@@ -1,15 +1,8 @@
-use std::sync::mpsc::{Receiver, Sender};
-
 use anyhow::anyhow;
 use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop,
-    hal::modem::Modem,
-    nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
-    ota::EspOta,
-};
-use fsm::{drain_rx, InitialState, State, StateResult};
+use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use fsm::{Channel, InitialState, State, StateResult};
 use log::{error, info};
 use motion::Motion;
 use shared_bus::{BusManager, I2cProxy};
@@ -72,8 +65,7 @@ impl State<MotionContext, FSMCommand> for MotionInit {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
         // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
         // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
@@ -147,12 +139,15 @@ impl State<MotionContext, FSMCommand> for MotionNotMoving {
     fn process(
         &mut self,
         _ctx: &mut MotionContext,
-        _tx: &mut Sender<FSMCommand>,
-        rx: &mut Receiver<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
-        match drain_rx(rx) {
-            Some(MotionMoveBy(by)) => Ok(StateResult::Running(Box::new(MotionMoving { by }))),
-            _ => Ok(StateResult::Hold),
+        if let Ok(cmd) = channel.recv_latest() {
+            match cmd {
+                MotionMoveBy(by) => Ok(StateResult::Running(Box::new(MotionMoving { by }))),
+                _ => Ok(StateResult::Hold),
+            }
+        } else {
+            Ok(StateResult::Hold)
         }
     }
 }
@@ -161,8 +156,7 @@ impl State<MotionContext, FSMCommand> for MotionMoving {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
         ctx.motion.move_by(self.by)?;
 

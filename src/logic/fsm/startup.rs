@@ -1,13 +1,12 @@
 use core::option::Option::None;
-use std::sync::mpsc::{Receiver, Sender};
 
 use anyhow::anyhow;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     log::EspLogger,
-    nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
+    nvs::{EspDefaultNvsPartition, EspNvs},
 };
-use fsm::{InitialState, State, StateResult};
+use fsm::{Channel, InitialState, State, StateResult};
 use log::info;
 
 use crate::{
@@ -46,8 +45,7 @@ impl State<StartupContext, FSMCommand> for Initialization {
     fn process(
         &mut self,
         ctx: &mut StartupContext,
-        _tx: &mut Sender<FSMCommand>,
-        _rx: &mut Receiver<FSMCommand>,
+        _channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<StartupContext, FSMCommand>> {
         // apply patches
         esp_idf_svc::sys::link_patches();
