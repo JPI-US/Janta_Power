@@ -13,11 +13,9 @@ pub mod motion {
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
     };
-    use network::mqtt::Mqtt;
-    use ota::OtaUpdater;
+    use network::telemetry::Angle;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
-    use wifi::wifi::{Wifi, WifiState};
 
     // Focused motion modules.
     mod encoder;
@@ -25,6 +23,8 @@ pub mod motion {
     mod move_exec;
 
     use encoder::ENC_TICKS_PER_DEG;
+
+    use crate::MotionEvent::{self, CheckForOTA, Error};
 
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
@@ -248,14 +248,13 @@ pub mod motion {
         /// warning and returns without publishing.
         fn report_home_error_ticks<T: NvsPartitionId>(
             &mut self,
-            mqtt: &mut Mqtt,
             nvs: &mut EspNvs<T>,
-            device_id: &str,
+            _device_id: &str,
             persist_nvs: bool,
-        ) {
+        ) -> Option<MotionEvent> {
             let Some(home_error_ticks) = self.take_last_home_error_ticks() else {
                 log::warn!("No home_error_ticks captured on this homing run");
-                return;
+                return None;
             };
 
             let error_deg = home_error_ticks as f32 / ENC_TICKS_PER_DEG;
@@ -286,18 +285,6 @@ pub mod motion {
                 )
             };
 
-            let now = Local::now()
-                .format(network::telemetry::TIME_FORMAT)
-                .to_string();
-            let payload = network::telemetry::EncoderErrorTicks {
-                current_time: &now,
-                encoder_error_ticks: home_error_ticks,
-                category,
-                result: &result,
-            };
-            let topic = network::telemetry::topic::data_encoder_error_ticks(device_id);
-            let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
-
             if persist_nvs {
                 match nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks) {
                     Ok(()) => log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks),
@@ -306,21 +293,41 @@ pub mod motion {
             } else {
                 log::warn!("NVS persist disabled: skipping home_error_ticks store");
             }
+
+            let now = Local::now()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let payload = network::telemetry::EncoderErrorTicks {
+                current_time: now,
+                encoder_error_ticks: home_error_ticks,
+                category,
+                result,
+            };
+
+            let event = MotionEvent::HomeErrorTicks(serde_json::to_string(&payload).unwrap());
+
+            Some(event)
         }
 
         pub fn set_tower_position<I2C, T>(
             &mut self,
-            ctx: TowerPositionCtx<'_, '_, I2C, T>,
+            ctx: TowerPositionCtx<'_, I2C, T>,
             location: f32,
             _balance: i32,
-        ) -> Result<bool>
+        ) -> (Result<bool>, Vec<MotionEvent>)
         where
             I2C: embedded_hal::i2c::I2c,
             T: NvsPartitionId,
         {
-            self.update_position(location);
-            log::info!("{:?},", ctx.clock.after_sunrise());
-            if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
+            let is_daytime = match (ctx.clock.after_sunrise(), ctx.clock.after_sunset()) {
+                (Ok(after_sunrise), Ok(after_sunset)) => after_sunrise && !after_sunset,
+                (Err(e), _) => return (Err(e.into()), vec![]),
+                (_, Err(e)) => return (Err(e.into()), vec![]),
+            };
+
+            log::info!("Daytime: {}", is_daytime);
+
+            if is_daytime {
                 // If already at home, keep encoder zeroed before daytime tracking.
                 self.force_zero_if_limit_switch_pressed();
                 // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
@@ -339,16 +346,16 @@ pub mod motion {
                 };
                 let rtc_naive = ctx.clock.get_date_time();
                 log::info!(
-                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
-                    sun.year,
-                    sun.doy,
-                    sun.lat,
-                    sun.long,
-                    timezone_hours,
-                    sun.hour,
-                    sun.min,
-                    sun.sec
-                );
+                "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
+                sun.year,
+                sun.doy,
+                sun.lat,
+                sun.long,
+                timezone_hours,
+                sun.hour,
+                sun.min,
+                sun.sec
+            );
                 log::info!(
                     "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
                     now.format("%Y-%m-%d %H:%M:%S %:z"),
@@ -396,50 +403,65 @@ pub mod motion {
                 // Daytime tracking: no move in deadband, otherwise step by offset.
                 if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
                     self.relay_off();
-                    return Ok(true);
+                    return (Ok(true), vec![]);
                 }
 
                 self.relay_on();
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                 log::info!("Steps Needed: {}", steps as i64);
-                let move_outcome = self.move_by(steps as i64)?;
-                if move_outcome != MoveOutcome::Completed {
-                    self.relay_off();
-                    log::warn!("Tracking move aborted: {:?}", move_outcome);
-                    // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                    return Ok(true);
+                if let Ok(move_outcome) = self.move_by(steps as i64) {
+                    if move_outcome != MoveOutcome::Completed {
+                        self.relay_off();
+                        log::warn!("Tracking move aborted: {:?}", move_outcome);
+                        // Return true so main does NOT persist heading/snapshot for a move that did not happen.
+                        return (Ok(true), vec![]);
+                    }
                 }
+
                 self.update_position((location as f64 + angle_offset) as f32);
                 self.relay_off();
 
                 let tower_angle = location as f64 + angle_offset;
-                let payload = network::telemetry::Angle {
-                    current_time: &ctx.formatted_time,
+
+                let now = Local::now()
+                    .format(network::telemetry::TIME_FORMAT)
+                    .to_string();
+
+                let payload = Angle {
+                    current_time: &now,
                     tower_angle,
                 };
-                let topic = network::telemetry::topic::data_angle(ctx.device_id);
-                let _ = network::telemetry::publish_json(ctx.mqtt, &topic, &payload);
 
-                Ok(false)
+                (
+                    Ok(false),
+                    vec![MotionEvent::Angle(serde_json::to_string(&payload).unwrap())],
+                )
             } else {
+                let mut messages: Vec<MotionEvent> = vec![];
+
                 // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
                     // Verify home physically when heading says home.
                     if self.lmsw.is_high() {
                         log::warn!(
-                            "Heading near home but limit switch not pressed; verifying home by homing CCW"
-                        );
-                        let ok = self.find_limit_switch_ccw()?;
-                        if ok {
+                        "Heading near home but limit switch not pressed; verifying home by homing CCW"
+                    );
+
+                        let mut is_ok = false;
+                        if let Ok(ok) = self.find_limit_switch_ccw() {
+                            is_ok = ok;
                             log::info!("Home verification homing succeeded");
-                            self.report_home_error_ticks(
-                                ctx.mqtt,
+
+                            if let Some(error_ticks) = self.report_home_error_ticks(
                                 ctx.nvs,
                                 ctx.device_id,
                                 ctx.persist_nvs,
-                            );
-                        } else {
+                            ) {
+                                messages.push(error_ticks)
+                            }
+                        }
+                        if !is_ok {
                             log::error!(
                                 "Home verification failed: limit switch could not be found"
                             );
@@ -447,14 +469,9 @@ pub mod motion {
                                 let now = Local::now()
                                     .format(network::telemetry::TIME_FORMAT)
                                     .to_string();
-                                let _ = network::telemetry::publish_error(
-                                    ctx.mqtt,
-                                    ctx.device_id,
-                                    &now,
-                                    network::telemetry::Component::LimitSwitch,
-                                    "Limit switch not found during sunset home verification",
-                                    "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.",
-                                );
+
+                                messages.push(Error(now, "Limit switch not found during sunset home verification".into(), "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.".into()));
+
                                 thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
                             }
                         }
@@ -467,100 +484,84 @@ pub mod motion {
                     let mut last_check = Instant::now();
                     let check_interval = Duration::from_secs(2 * 60 * 60);
 
-                    while ctx.clock.after_sunset()? || !ctx.clock.after_sunrise()? {
-                        if ctx.clock.after_sunrise()? && !ctx.clock.after_sunset()? {
-                            log::info!("Sunrise detected, exiting sleep loop");
-                            break;
+                    loop {
+                        match (ctx.clock.after_sunrise(), ctx.clock.after_sunset()) {
+                            (Ok(true), Ok(false)) => {
+                                log::info!("Sunrise detected, exiting sleep loop");
+                                break;
+                            }
+                            (Ok(_), Ok(_)) => {
+                                // Still nighttime.
+                            }
+                            (Err(e), _) => {
+                                log::error!("Failed to determine sunrise state: {:?}", e);
+                                std::thread::sleep(Duration::from_secs(60));
+                                continue;
+                            }
+                            (_, Err(e)) => {
+                                log::error!("Failed to determine sunset state: {:?}", e);
+                                std::thread::sleep(Duration::from_secs(60));
+                                continue;
+                            }
                         }
+
                         if ctx.allow_ota && last_check.elapsed() >= check_interval {
-                            log::info!("2 hours elapsed, checking for OTA");
-
-                            log::info!("Current wifi state: {:?}", ctx.wifi.state());
-                            if ctx.wifi.state() == WifiState::Disconnected {
-                                let _ = ctx.wifi.reconnect_if_disconnected();
-                            }
-
-                            thread::sleep(Duration::from_secs(3));
-                            let mut updater = OtaUpdater::new_ota(
-                                ctx.current_version.clone(),
-                                ctx.mqtt,
-                                ctx.device_id,
-                                Some("device1A"),
-                                Some("device1A"),
-                            )?;
-
-                            // .expect("Failed to create OTA adapter instance");
-
-                            thread::sleep(Duration::from_secs(3));
-                            let run_compare = updater.run_version_compare(ctx.nvs);
-
-                            match run_compare {
-                                Ok(_) => log::info!("Version compare succeeded"),
-                                Err(e) => {
-                                    log::error!("Version compare failed: {:?}", e);
-                                }
-                            }
-
+                            messages.push(CheckForOTA);
                             last_check = Instant::now();
-                        } else if !ctx.allow_ota && last_check.elapsed() >= check_interval {
+                        } else if last_check.elapsed() >= check_interval {
                             log::info!("OTA disabled: skipping periodic OTA check");
                             last_check = Instant::now();
                         }
+
                         log::info!("Still waiting for sunrise...");
-                        std::thread::sleep(std::time::Duration::from_secs(600));
+                        std::thread::sleep(Duration::from_secs(600));
                     }
 
-                    Ok(true)
+                    (Ok(true), messages)
                 } else {
                     log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_ccw()?;
-                    match limit_sw_status {
-                        true => {
-                            log::info!("Limit switch has returned true");
-                            self.report_home_error_ticks(
-                                ctx.mqtt,
-                                ctx.nvs,
-                                ctx.device_id,
-                                ctx.persist_nvs,
-                            );
-                        }
-                        false => {
-                            log::error!(
-                                "Limit switch has returned false, limit switch could not be found"
-                            );
-                            loop {
-                                let now = Local::now()
-                                    .format(network::telemetry::TIME_FORMAT)
-                                    .to_string();
-                                let _ = network::telemetry::publish_error(
-                                    ctx.mqtt,
+                    if let Ok(limit_sw_status) = self.find_limit_switch_ccw() {
+                        match limit_sw_status {
+                            true => {
+                                log::info!("Limit switch has returned true");
+                                if let Some(error_ticks) = self.report_home_error_ticks(
+                                    ctx.nvs,
                                     ctx.device_id,
-                                    &now,
-                                    network::telemetry::Component::LimitSwitch,
-                                    "Limit switch not found during move-to-sleep homing",
-                                    "End-of-day homing sweep failed to locate the limit switch.",
-                                );
-                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
+                                    ctx.persist_nvs,
+                                ) {
+                                    messages.push(error_ticks)
+                                }
+                            }
+                            false => {
+                                log::error!(
+                            "Limit switch has returned false, limit switch could not be found"
+                        );
+                                loop {
+                                    let now = Local::now()
+                                        .format(network::telemetry::TIME_FORMAT)
+                                        .to_string();
+
+                                    messages.push(Error(now, "Limit switch not found during move-to-sleep homing".into(), "End-of-day homing sweep failed to locate the limit switch.".into()));
+                                }
                             }
                         }
                     }
+
                     log::info!("Tower has reached sleep position");
 
-                    Ok(false)
+                    (Ok(false), messages)
                 }
             }
         }
     }
 
-    pub struct TowerPositionCtx<'ctx, 'wifi, I2C, T>
+    pub struct TowerPositionCtx<'ctx, I2C, T>
     where
         I2C: embedded_hal::i2c::I2c,
         T: NvsPartitionId,
     {
         pub clock: &'ctx mut Clock<I2C>,
-        pub mqtt: &'ctx mut Mqtt,
         pub nvs: &'ctx mut EspNvs<T>,
-        pub wifi: &'ctx mut Wifi<'wifi>,
         pub current_version: Version,
         pub formatted_time: String,
         pub persist_nvs: bool,
@@ -569,4 +570,9 @@ pub mod motion {
     }
 }
 
-pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
+pub enum MotionEvent {
+    Angle(String),
+    HomeErrorTicks(String),
+    Error(String, String, String),
+    CheckForOTA,
+}

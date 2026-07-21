@@ -8,7 +8,7 @@ use esp_idf_svc::hal::{
 };
 use hdc1080::Hdc1080;
 use log::{info, warn};
-use motion::Motion;
+use motion::motion::Motion;
 use rgb_led::Led;
 use shared_bus::{BusManager, I2cProxy};
 

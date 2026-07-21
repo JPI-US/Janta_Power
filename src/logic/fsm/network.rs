@@ -2,6 +2,7 @@ use core::{option::Option::None, time::Duration};
 use std::{thread::sleep, time::Instant};
 
 use anyhow::{anyhow, Context};
+use esp_idf_hal::{delay::Ets, i2c::I2cDriver};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::modem::Modem,
@@ -9,17 +10,24 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use fsm::{Channel, InitialState, State, StateResult};
+use hdc1080::Hdc1080;
 use log::{error, info, warn};
-use network::mqtt::Mqtt;
+use motion::motion::MotionMode;
+use network::{
+    mqtt::Mqtt,
+    telemetry::{publish_json, Component},
+};
 use ota::OtaUpdater;
 use rtc::Rtc;
 use semver::Version;
+use shared_bus::I2cProxy;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
     config::switchboard::Switchboard,
+    hardware::temperature::report_system_temperature,
     logic::{fsm::FSMCommand, reset_reason::ResetReason},
-    services::transport,
+    services::{commands, transport},
 };
 
 // TODO: Remove const
@@ -41,6 +49,14 @@ pub struct NetworkContext {
     mqtt: Option<Mqtt>,
     formatted_time: Option<String>,
     current_version: Option<Version>,
+    mqtt_message: Option<String>,
+    mqtt_notes: Option<String>,
+    mqtt_component: Option<Component>,
+    last_heartbeat_instant: Instant,
+    temperature_sensor:
+        Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
+    motion_mode: Option<MotionMode>,
+    actual_heading: Option<f32>,
 }
 
 impl NetworkContext {
@@ -50,6 +66,9 @@ impl NetworkContext {
         modem: Modem,
         switchboard: Switchboard,
         rtc: Rtc,
+        temperature_sensor: Option<
+            Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>,
+        >,
     ) -> Self {
         let nvs = match EspNvs::new(partition.clone(), "storage", true) {
             Ok(nvs) => {
@@ -72,16 +91,25 @@ impl NetworkContext {
             mqtt: None,
             formatted_time: None,
             current_version: None,
+            mqtt_message: None,
+            mqtt_notes: None,
+            mqtt_component: None,
+            last_heartbeat_instant: Instant::now(),
+            temperature_sensor,
+            motion_mode: None,
+            actual_heading: None,
         }
     }
 }
 
 pub struct WifiInitialize;
 pub struct WifiConnectIfDisconnected;
+pub struct WifiPublishHeartbeat;
 pub struct WifiWait;
 pub struct InitNetworkServices;
 pub struct BootValidation;
 pub struct OTA;
+pub struct MqttPublishJson(String, String);
 
 impl InitialState<NetworkContext, FSMCommand> for WifiInitialize {}
 
@@ -147,22 +175,6 @@ impl State<NetworkContext, FSMCommand> for WifiInitialize {
 
         ctx.wifi = Some(wifi);
 
-        Ok(StateResult::Running(Box::new(WifiWait)))
-    }
-}
-
-impl State<NetworkContext, FSMCommand> for WifiWait {
-    fn process(
-        &mut self,
-        ctx: &mut NetworkContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
-        if ctx.timer.elapsed() < Duration::from_secs(30) {
-            return Ok(StateResult::Hold);
-        }
-
-        ctx.timer = Instant::now();
-
         Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
     }
 }
@@ -171,7 +183,7 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Channel<FSMCommand>,
+        channel: &mut Channel<FSMCommand>,
     ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
         let wifi = ctx
             .wifi
@@ -187,10 +199,113 @@ impl State<NetworkContext, FSMCommand> for WifiConnectIfDisconnected {
         }
 
         if ctx.init_network_services && matches!(wifi.state(), WifiState::Connected(_)) {
-            Ok(StateResult::Running(Box::new(InitNetworkServices)))
-        } else {
-            Ok(StateResult::Running(Box::new(WifiWait)))
+            return Ok(StateResult::Running(Box::new(InitNetworkServices)));
+        } else if let Ok(cmd) = channel.recv() {
+            match cmd {
+                FSMCommand::MqttPublishJson(payload, topic) => {
+                    return Ok(StateResult::Running(Box::new(MqttPublishJson(
+                        payload, topic,
+                    ))));
+                }
+                FSMCommand::UpdateNetworkMotionContext(mode, actual_heading) => {
+                    ctx.motion_mode = Some(mode);
+                    ctx.actual_heading = Some(actual_heading);
+                }
+                _ => {}
+            }
         }
+
+        if ctx.last_heartbeat_instant.elapsed() > Duration::from_mins(15) {
+            return Ok(StateResult::Running(Box::new(WifiPublishHeartbeat)));
+        }
+
+        Ok(StateResult::Hold)
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for WifiPublishHeartbeat {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _channel: &mut Channel<FSMCommand>,
+    ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
+        let local_time = rtc::timezone::local_time();
+        let current_time = local_time.format("%d/%m/%Y %H:%M:%S").to_string();
+
+        // publish heartbeat
+        let firmware_version = ctx
+            .current_version
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let payload = network::telemetry::Heartbeat {
+            current_time: &current_time,
+            firmware_version: &firmware_version,
+        };
+
+        let topic = network::telemetry::topic::status(ctx.switchboard.device_id);
+
+        if let Some(mqtt) = ctx.mqtt.as_mut() {
+            if let Err(e) = network::telemetry::publish_json(mqtt, &topic, &payload) {
+                log::error!("Failed to publish heartbeat: {:?}", e);
+            }
+
+            // publish temperature
+            if let Some(ref mut sensor) = ctx.temperature_sensor {
+                report_system_temperature(sensor, mqtt, ctx.switchboard.device_id, &current_time);
+            }
+        } else {
+            log::warn!("Skipping heartbeat publish: MQTT client unavailable");
+        }
+
+        // Receive commands
+        // Answer at most one queued remote command (gated by the switchboard).
+        if ctx.switchboard.runtime.commands_enabled {
+            let (motion_mode_str, firmware_version, mqtt, wifi, current_heading) = match (
+                ctx.motion_mode,
+                ctx.current_version.as_ref(),
+                ctx.mqtt.as_mut(),
+                ctx.wifi.as_ref(),
+                ctx.actual_heading,
+            ) {
+                (
+                    Some(MotionMode::StepperOnly),
+                    Some(version),
+                    Some(mqtt),
+                    Some(wifi),
+                    Some(heading),
+                ) => ("stepper_only", version.to_string(), mqtt, wifi, heading),
+
+                (
+                    Some(MotionMode::EncoderGuarded),
+                    Some(version),
+                    Some(mqtt),
+                    Some(wifi),
+                    Some(heading),
+                ) => ("encoder_guarded", version.to_string(), mqtt, wifi, heading),
+
+                _ => {
+                    warn!("Cannot process command: missing command context");
+                    return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
+                }
+            };
+
+            let cmd_ctx = commands::CmdCtx {
+                device_id: ctx.switchboard.device_id,
+                firmware_version: &firmware_version,
+                mqtt_connected: mqtt.is_connected(),
+                wifi_connected: matches!(wifi.state(), WifiState::Connected(_)),
+                motion_mode: motion_mode_str,
+                current_heading,
+            };
+
+            if let Err(e) = transport::process_one(mqtt, ctx.switchboard.device_id, &cmd_ctx) {
+                warn!("Command processing failed: {:?}", e);
+            }
+        }
+
+        Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
     }
 }
 
@@ -463,6 +578,27 @@ impl State<NetworkContext, FSMCommand> for OTA {
         } else {
             info!("Version compare succeeded");
         }
+
+        Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
+    }
+}
+
+impl State<NetworkContext, FSMCommand> for MqttPublishJson {
+    fn process(
+        &mut self,
+        ctx: &mut NetworkContext,
+        _channel: &mut Channel<FSMCommand>,
+    ) -> anyhow::Result<StateResult<NetworkContext, FSMCommand>> {
+        let mqtt = match ctx.mqtt.as_mut() {
+            Some(mqtt) => mqtt,
+            None => {
+                warn!("JSON publish failed; MQTT is not initialized");
+
+                return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
+            }
+        };
+
+        publish_json(mqtt, &self.0, &self.1);
 
         Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
     }

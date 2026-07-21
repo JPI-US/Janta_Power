@@ -8,6 +8,7 @@ use esp_idf_svc::{
 };
 use fsm::{Channel, InitialState, State, StateResult};
 use log::info;
+use semver::Version;
 
 use crate::{
     config::{
@@ -19,11 +20,15 @@ use crate::{
     storage::snapshot_store::SnapshotStore,
 };
 
+const PERSIST_NVS: bool = true;
+
 pub struct StartupContext {
     pub switchboard: Option<Switchboard>,
     pub sysloop: Option<EspSystemEventLoop>,
     pub nvs_default_partition: Option<EspDefaultNvsPartition>,
     pub peripherals: Option<PeripheralMap<'static>>,
+    pub trust_nvs_state: Option<bool>,
+    pub version: Option<Version>,
 }
 
 impl StartupContext {
@@ -33,6 +38,8 @@ impl StartupContext {
             sysloop: None,
             nvs_default_partition: None,
             peripherals: None,
+            trust_nvs_state: None,
+            version: None,
         }
     }
 }
@@ -74,13 +81,12 @@ impl State<StartupContext, FSMCommand> for Initialization {
         };
 
         let last_run_normal = SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
-
         let trust_nvs_state = last_run_normal;
-
         info!(
             "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
             last_run_normal, trust_nvs_state
         );
+        ctx.trust_nvs_state = Some(trust_nvs_state);
 
         ctx.nvs_default_partition = Some(nvs_default);
 
@@ -106,6 +112,20 @@ impl State<StartupContext, FSMCommand> for Initialization {
         );
 
         ctx.peripherals = Some(peripherals);
+
+        // version
+        let mut version_buf = [0u8; 32];
+        const DEFAULT_VERSION: &str = "1.1.5";
+        if PERSIST_NVS {
+            nvs.set_str("version", "1.1.5")?;
+        }
+        let version: Version = nvs
+            .get_str("version", &mut version_buf)?
+            .map(|s| s.trim().parse::<Version>())
+            .transpose()?
+            .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
+
+        ctx.version = Some(version);
 
         Ok(StateResult::Stopped)
     }

@@ -46,6 +46,8 @@ fn main() -> Result<()> {
         sysloop,
         nvs_default_partition,
         peripherals,
+        trust_nvs_state,
+        version,
     } = startup_result;
 
     let switchboard = switchboard.context("Startup did not provide switchboard")?;
@@ -53,6 +55,8 @@ fn main() -> Result<()> {
     let nvs_default_partition =
         nvs_default_partition.context("Startup did not provide nvs_default_partition")?;
     let peripherals = peripherals.context("Startup did not provide peripherals")?;
+    let trust_nvs_state = trust_nvs_state.context("Startup did not provide trust_nvs_state")?;
+    let version = version.context("Startup did not provide version")?;
 
     // led fsm
     let led_events_tx = conductor_tx.clone();
@@ -99,6 +103,8 @@ fn main() -> Result<()> {
             switchboard,
             nvs_default_partition.clone(),
             peripherals.i2c_bus,
+            trust_nvs_state,
+            version,
         ),
         motion_events_tx,
         motion_commands_rx,
@@ -121,6 +127,7 @@ fn main() -> Result<()> {
             peripherals.modem,
             switchboard,
             Rtc::new(peripherals.i2c_bus),
+            peripherals.temperature_sensor,
         ),
         network_events_tx,
         network_commands_rx,
@@ -139,15 +146,15 @@ fn main() -> Result<()> {
         if let Ok(cmd) = conductor_rx.recv_timeout(Duration::from_secs(1)) {
             info!("{cmd:?}");
 
-            if let Err(e) = led_commands_tx.send(cmd) {
+            if let Err(e) = led_commands_tx.send(cmd.clone()) {
                 error!("Failed to send command to LED FSM: {e}");
             }
 
-            if let Err(e) = maintenance_commands_tx.send(cmd) {
+            if let Err(e) = maintenance_commands_tx.send(cmd.clone()) {
                 error!("Failed to send command to Maintenance FSM: {e}");
             }
 
-            if let Err(e) = motion_commands_tx.send(cmd) {
+            if let Err(e) = motion_commands_tx.send(cmd.clone()) {
                 error!("Failed to send command to Motion FSM: {e}");
             }
 

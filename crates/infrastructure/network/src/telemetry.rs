@@ -200,11 +200,11 @@ pub struct Angle<'a> {
 /// suitable for dashboard filters. `result` is the same information rendered
 /// as a human-readable string for log panels / notifications.
 #[derive(Serialize)]
-pub struct EncoderErrorTicks<'a> {
-    pub current_time: &'a str,
+pub struct EncoderErrorTicks {
+    pub current_time: String,
     pub encoder_error_ticks: i32,
     pub category: EncoderErrorCategory,
-    pub result: &'a str,
+    pub result: String,
 }
 
 /// Structured bucket for the encoder drift metric.

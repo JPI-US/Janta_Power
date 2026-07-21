@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use motion::motion;
+
 // =============================================================================
 // Switchboard: single source of deployment/default values for the app.
 // Values default to crate::constants (generated from .env by build.rs).
