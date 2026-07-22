@@ -6,7 +6,7 @@ use ::motion::{
 };
 use ::network::telemetry::{topic, Component, ErrorLog, Severity};
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use fsm::Channel;
+use fsm::channel::Channel;
 use semver::Version;
 
 use crate::{

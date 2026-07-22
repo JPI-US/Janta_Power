@@ -1,4 +1,7 @@
-use fsm::{Channel, InitialState, State, StateResult};
+use fsm::{
+    channel::Channel,
+    state::{InitialState, State, StateResult},
+};
 use rgb_led::Led;
 
 use crate::logic::fsm::FSMCommand;

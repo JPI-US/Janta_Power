@@ -6,7 +6,10 @@ use chrono::{DateTime, Local};
 use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
-use fsm::{Channel, InitialState, State, StateResult};
+use fsm::{
+    channel::Channel,
+    state::{InitialState, State, StateResult},
+};
 use log::{error, info, warn};
 use motion::motion::{Motion, MotionMode, MoveOutcome};
 use network::telemetry::{topic, Component, ErrorLog, Severity};

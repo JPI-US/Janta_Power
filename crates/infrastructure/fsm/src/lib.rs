@@ -49,7 +49,15 @@
 use core::time::Duration;
 use std::thread::sleep;
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
+use crossbeam_channel::{Receiver, Sender};
+
+use crate::{
+    channel::Channel,
+    state::{InitialState, State, StateResult},
+};
+
+pub mod channel;
+pub mod state;
 
 /// Generic thread-safe finite state machine.
 ///
@@ -77,22 +85,6 @@ pub struct Fsm<Ctx, Cmd> {
     /// Communication channel used by states to exchange commands or events
     /// with external coordinators.
     pub channel: Channel<Cmd>,
-}
-
-/// Result of processing an FSM state.
-///
-/// # Variants
-///
-/// - `Running` - The FSM transitioned to another state and should continue
-///   processing using the returned state.
-/// - `Hold` - The FSM did not transition states and should continue
-///   processing the current state.
-/// - `Stopped` - The FSM has completed execution because the current state did
-///   not provide further processing.
-pub enum StateResult<Ctx, Cmd> {
-    Running(Box<dyn State<Ctx, Cmd> + Send>),
-    Hold,
-    Stopped,
 }
 
 /// FSM execution status.
@@ -250,105 +242,5 @@ where
             StateResult::Hold => Ok(FsmStatus::Hold),
             StateResult::Stopped => Ok(FsmStatus::Stopped),
         }
-    }
-}
-
-/// The initial state of an FSM.
-///
-/// This marker trait identifies states that are valid starting points for an
-/// FSM. Initial states must also implement [`State`].
-pub trait InitialState<Ctx, Cmd>: State<Ctx, Cmd> {}
-
-/// An FSM state.
-///
-/// Each state performs one unit of processing and may transition into another
-/// state, remain active, or stop the FSM.
-pub trait State<Ctx, Cmd> {
-    /// Processes the current state.
-    ///
-    /// # Arguments
-    ///
-    /// - `ctx` - Mutable access to the FSM context.
-    /// - `channel` - Communication channel used to send and receive commands.
-    ///
-    /// # Returns
-    ///
-    /// - `StateResult::Running(state)` - Transition to the returned next state.
-    /// - `StateResult::Hold` - Remain in the current state.
-    /// - `StateResult::Stopped` - Stop the FSM.
-    /// - `Err(_)` - The state encountered an error.
-    fn process(
-        &mut self,
-        ctx: &mut Ctx,
-        channel: &mut Channel<Cmd>,
-    ) -> anyhow::Result<StateResult<Ctx, Cmd>>;
-}
-
-/// Communication channel used by an FSM.
-///
-/// The channel wraps a sender and receiver and provides non-blocking send and
-/// receive operations.
-///
-/// Incoming commands can be automatically pruned so that stale queued commands
-/// are discarded, allowing states to process only the most recent activity when
-/// appropriate.
-pub struct Channel<Cmd> {
-    tx: Sender<Cmd>,
-    rx: Receiver<Cmd>,
-    max_pending: usize,
-}
-
-impl<Cmd> Channel<Cmd> {
-    /// Creates a new communication channel.
-    ///
-    /// `max_pending` specifies the maximum number of queued received commands
-    /// that may be retained before older commands are discarded.
-    pub fn new(tx: Sender<Cmd>, rx: Receiver<Cmd>, max_pending: usize) -> Self {
-        Self {
-            tx,
-            rx,
-            max_pending,
-        }
-    }
-
-    fn drain(&self) {
-        while self.rx.len() > self.max_pending {
-            let _ = self.rx.try_recv();
-        }
-    }
-
-    fn drain_to(&self, to: usize) {
-        while self.rx.len() > to {
-            let _ = self.rx.try_recv();
-        }
-    }
-
-    /// Receives the next pending command.
-    ///
-    /// Before attempting to receive, older queued commands are discarded until
-    /// at most `max_pending` commands remain.
-    ///
-    /// Returns `TryRecvError::Empty` if no command is available.
-    pub fn recv(&self) -> Result<Cmd, TryRecvError> {
-        self.drain();
-        self.rx.try_recv()
-    }
-
-    /// Receives only the most recently queued command.
-    ///
-    /// Any older queued commands are discarded before attempting to receive,
-    /// ensuring that at most one pending command remains.
-    ///
-    /// Returns `TryRecvError::Empty` if no command is available.
-    pub fn recv_latest(&self) -> Result<Cmd, TryRecvError> {
-        self.drain_to(1);
-        self.rx.try_recv()
-    }
-
-    /// Attempts to send a command without blocking.
-    ///
-    /// Returns `TrySendError` if the command cannot be queued.
-    pub fn send(&self, cmd: Cmd) -> Result<(), TrySendError<Cmd>> {
-        self.tx.try_send(cmd)
     }
 }

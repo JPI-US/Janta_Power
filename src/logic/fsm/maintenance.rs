@@ -1,5 +1,8 @@
 use esp_idf_hal::gpio::Pin;
-use fsm::{Channel, InitialState, State, StateResult};
+use fsm::{
+    channel::Channel,
+    state::{InitialState, State, StateResult},
+};
 
 use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
 

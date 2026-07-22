@@ -9,7 +9,10 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
     ota::EspOta,
 };
-use fsm::{Channel, InitialState, State, StateResult};
+use fsm::{
+    channel::Channel,
+    state::{InitialState, State, StateResult},
+};
 use hdc1080::Hdc1080;
 use log::{error, info, warn};
 use motion::motion::MotionMode;
