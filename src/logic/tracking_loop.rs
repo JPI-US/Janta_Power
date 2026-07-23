@@ -6,11 +6,14 @@ use ::motion::{
 };
 use ::network::telemetry::{topic, Component, ErrorLog, Severity};
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use fsm::channel::Channel;
+use fsm::postal::Mailbox;
 use semver::Version;
 
 use crate::{
-    logic::fsm::FSMCommand::{self, MqttPublishJson, PerformOTA},
+    logic::fsm::{
+        FSMAddress,
+        FSMCommand::{self, MqttPublishJson, PerformOTA},
+    },
     storage::snapshot_store::SnapshotStore,
 };
 
@@ -26,7 +29,7 @@ where
     pub persist_nvs: bool,
     pub allow_ota: bool,
     pub device_id: &'ctx str,
-    pub channel: &'ctx mut Channel<FSMCommand>,
+    pub mailbox: &'ctx mut Mailbox<FSMAddress, FSMCommand>,
 }
 
 /// Run one tracking tick and persist stable state.
@@ -79,12 +82,14 @@ where
                     MotionEvent::Angle(payload) => {
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::data_angle(ctx.device_id);
-                        ctx.channel.send(MqttPublishJson(serialized, topic));
+                        ctx.mailbox
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
                     }
                     MotionEvent::HomeErrorTicks(payload) => {
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::data_encoder_error_ticks(ctx.device_id);
-                        ctx.channel.send(MqttPublishJson(serialized, topic));
+                        ctx.mailbox
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
                     }
                     MotionEvent::Error(time, message, notes) => {
                         let payload = ErrorLog {
@@ -99,10 +104,11 @@ where
                         };
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::logs_error(ctx.device_id);
-                        ctx.channel.send(MqttPublishJson(serialized, topic));
+                        ctx.mailbox
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
                     }
                     MotionEvent::CheckForOTA => {
-                        ctx.channel.send(PerformOTA);
+                        ctx.mailbox.send(FSMAddress::Network, PerformOTA);
                     }
                 }
             }

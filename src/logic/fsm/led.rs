@@ -1,5 +1,5 @@
 use fsm::{
-    channel::Channel,
+    postal::{Address, Mailbox},
     state::{InitialState, State, StateResult},
 };
 use rgb_led::Led;
@@ -25,24 +25,31 @@ pub struct LEDMaintenanceMovingCCW;
 #[derive(Default)]
 pub struct LEDMaintenanceMovingCW;
 
-impl InitialState<LEDContext, FSMCommand> for LEDHold {}
+impl<A> InitialState<A, LEDContext, FSMCommand> for LEDHold where A: Address {}
 
-impl State<LEDContext, FSMCommand> for LEDHold {
+impl<A> State<A, LEDContext, FSMCommand> for LEDHold
+where
+    A: Address,
+{
     fn process(
         &mut self,
         _ctx: &mut LEDContext,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
-        if let Ok(cmd) = channel.recv() {
+        mailbox: &mut Mailbox<A, FSMCommand>,
+    ) -> anyhow::Result<StateResult<A, LEDContext, FSMCommand>> {
+        if let Ok(cmd) = mailbox.receive() {
             match cmd {
                 FSMCommand::LEDOff => Ok(StateResult::Running(Box::new(LEDOff))),
+
                 FSMCommand::LEDMaintenance => Ok(StateResult::Running(Box::new(LEDMaintenance))),
+
                 FSMCommand::LEDMaintenanceMovingCCW => {
                     Ok(StateResult::Running(Box::new(LEDMaintenanceMovingCCW)))
                 }
+
                 FSMCommand::LEDMaintenanceMovingCW => {
                     Ok(StateResult::Running(Box::new(LEDMaintenanceMovingCW)))
                 }
+
                 _ => Ok(StateResult::Hold),
             }
         } else {
@@ -51,46 +58,62 @@ impl State<LEDContext, FSMCommand> for LEDHold {
     }
 }
 
-impl State<LEDContext, FSMCommand> for LEDOff {
+impl<A> State<A, LEDContext, FSMCommand> for LEDOff
+where
+    A: Address,
+{
     fn process(
         &mut self,
         ctx: &mut LEDContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<A, FSMCommand>,
+    ) -> anyhow::Result<StateResult<A, LEDContext, FSMCommand>> {
         ctx.led.display_none()?;
+
         Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
-impl State<LEDContext, FSMCommand> for LEDMaintenance {
+impl<A> State<A, LEDContext, FSMCommand> for LEDMaintenance
+where
+    A: Address,
+{
     fn process(
         &mut self,
         ctx: &mut LEDContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<A, FSMCommand>,
+    ) -> anyhow::Result<StateResult<A, LEDContext, FSMCommand>> {
         ctx.led.display_maintenance()?;
+
         Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
-impl State<LEDContext, FSMCommand> for LEDMaintenanceMovingCCW {
+impl<A> State<A, LEDContext, FSMCommand> for LEDMaintenanceMovingCCW
+where
+    A: Address,
+{
     fn process(
         &mut self,
         ctx: &mut LEDContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<A, FSMCommand>,
+    ) -> anyhow::Result<StateResult<A, LEDContext, FSMCommand>> {
         ctx.led.display_maintenance_moving_ccw()?;
+
         Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }
 
-impl State<LEDContext, FSMCommand> for LEDMaintenanceMovingCW {
+impl<A> State<A, LEDContext, FSMCommand> for LEDMaintenanceMovingCW
+where
+    A: Address,
+{
     fn process(
         &mut self,
         ctx: &mut LEDContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<LEDContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<A, FSMCommand>,
+    ) -> anyhow::Result<StateResult<A, LEDContext, FSMCommand>> {
         ctx.led.display_maintenance_moving_cw()?;
+
         Ok(StateResult::Running(Box::new(LEDHold)))
     }
 }

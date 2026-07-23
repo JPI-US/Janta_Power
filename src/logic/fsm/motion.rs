@@ -7,7 +7,7 @@ use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use fsm::{
-    channel::Channel,
+    postal::Mailbox,
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};
@@ -17,14 +17,13 @@ use semver::Version;
 use shared_bus::{BusManager, I2cProxy};
 
 use crate::{
-    config::{
-        switchboard,
-        switchboard::{Direction, Switchboard},
-    },
+    config::switchboard::{self, Direction, Switchboard},
     logic::{
-        encoder_fault,
-        encoder_fault::{EncoderFaultRecovery, EncoderRecoverySwitches, EncoderTickContext},
-        fsm::FSMCommand::{self, MotionMoveBy, MqttPublishJson, UpdateNetworkMotionContext},
+        encoder_fault::{self, EncoderFaultRecovery, EncoderRecoverySwitches, EncoderTickContext},
+        fsm::{
+            FSMAddress,
+            FSMCommand::{self, MotionMoveBy, MqttPublishJson, UpdateNetworkMotionContext},
+        },
         tracking_loop::{self, TrackingTickContext},
     },
     storage::snapshot_store::SnapshotStore,
@@ -109,14 +108,14 @@ pub struct MotionTrackingWait {
     begin: Instant,
 }
 
-impl InitialState<MotionContext, FSMCommand> for MotionInit {}
+impl InitialState<FSMAddress, MotionContext, FSMCommand> for MotionInit {}
 
-impl State<MotionContext, FSMCommand> for MotionInit {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionInit {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
         // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
         // defaults are (re)written into NVS on every boot, so updating `.env` and
@@ -246,12 +245,12 @@ impl State<MotionContext, FSMCommand> for MotionInit {
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionHoming {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionHoming {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         let would_skip_homing_on_snapshot = ctx.motion_mode == MotionMode::EncoderGuarded
             && ctx.restored_from_snapshot
             && ctx.trust_nvs_state;
@@ -325,13 +324,13 @@ impl State<MotionContext, FSMCommand> for MotionHoming {
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionNotMoving {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionNotMoving {
     fn process(
         &mut self,
         _ctx: &mut MotionContext,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
-        if let Ok(cmd) = channel.recv_latest() {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        if let Ok(cmd) = mailbox.receive_latest() {
             match cmd {
                 MotionMoveBy(by) => Ok(StateResult::Running(Box::new(MotionMoving { by }))),
                 _ => Ok(StateResult::Hold),
@@ -342,24 +341,24 @@ impl State<MotionContext, FSMCommand> for MotionNotMoving {
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionMoving {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionMoving {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
+        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         ctx.motion.move_by(self.by)?;
 
         Ok(StateResult::Running(Box::new(MotionNotMoving)))
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionErrorLoop {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionErrorLoop {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         let now = Local::now()
             .format(network::telemetry::TIME_FORMAT)
             .to_string();
@@ -376,19 +375,19 @@ impl State<MotionContext, FSMCommand> for MotionErrorLoop {
         };
         let serialized = serde_json::to_string(&payload)?;
         let topic = topic::logs_error(ctx.switchboard.device_id);
-        channel.send(MqttPublishJson(serialized, topic));
+        mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic));
 
         std::thread::sleep(Duration::from_mins(15));
         Ok(StateResult::Hold)
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionTracking {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionTracking {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
@@ -458,7 +457,7 @@ impl State<MotionContext, FSMCommand> for MotionTracking {
             })));
         }
 
-        run_tracking(ctx, current_datetime.clone(), channel)?;
+        run_tracking(ctx, current_datetime.clone(), mailbox)?;
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
@@ -468,16 +467,16 @@ impl State<MotionContext, FSMCommand> for MotionTracking {
     }
 }
 
-impl State<MotionContext, FSMCommand> for MotionTrackingWait {
+impl State<FSMAddress, MotionContext, FSMCommand> for MotionTrackingWait {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MotionContext, FSMCommand>> {
-        channel.send(UpdateNetworkMotionContext(
-            ctx.motion_mode,
-            ctx.actual_heading,
-        ))?;
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        mailbox.send(
+            FSMAddress::Network,
+            UpdateNetworkMotionContext(ctx.motion_mode, ctx.actual_heading),
+        )?;
 
         if self.begin.elapsed() < Duration::from_mins(5) {
             return Ok(StateResult::Hold);
@@ -490,7 +489,7 @@ impl State<MotionContext, FSMCommand> for MotionTrackingWait {
 fn run_tracking(
     ctx: &mut MotionContext,
     current_datetime: String,
-    channel: &mut Channel<FSMCommand>,
+    mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
 ) -> anyhow::Result<()> {
     if !ctx.switchboard.runtime.tracking.enabled {
         info!("Tracking disabled");
@@ -506,7 +505,7 @@ fn run_tracking(
         persist_nvs: PERSIST_NVS,
         device_id: ctx.switchboard.device_id,
         allow_ota: ctx.switchboard.effects.allow_ota,
-        channel,
+        mailbox,
     };
 
     let outcome = tracking_loop::tick(&mut ctx.motion, &mut tracking_ctx, &mut ctx.actual_heading)?;

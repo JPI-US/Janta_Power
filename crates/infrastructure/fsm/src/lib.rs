@@ -1,22 +1,23 @@
 use core::time::Duration;
 use std::{io, thread::JoinHandle};
 
-use crossbeam_channel::{Receiver, Sender};
-
 use crate::{
-    channel::Channel,
     group::Group,
+    postal::{Address, Mailbox},
     state::{State, StateResult},
 };
 
-pub mod channel;
 pub mod group;
+pub mod postal;
 pub mod state;
 
-pub struct Fsm<Ctx, Cmd> {
-    pub state: Box<dyn State<Ctx, Cmd> + Send>,
+pub struct Fsm<A, Ctx, Cmd>
+where
+    A: Address,
+{
+    pub state: Box<dyn State<A, Ctx, Cmd> + Send>,
     pub ctx: Ctx,
-    pub channel: Channel<Cmd>,
+    pub mailbox: Mailbox<A, Cmd>,
 }
 
 pub enum FsmStatus {
@@ -25,22 +26,22 @@ pub enum FsmStatus {
     Stopped,
 }
 
-impl<Ctx, Cmd> Fsm<Ctx, Cmd>
+impl<A, Ctx, Cmd> Fsm<A, Ctx, Cmd>
 where
+    A: Address,
     Self: Send + 'static,
     Ctx: Send + 'static,
     Cmd: Send + 'static,
 {
     pub fn new(
-        state: Box<dyn State<Ctx, Cmd> + Send>,
+        state: Box<dyn State<A, Ctx, Cmd> + Send>,
         ctx: Ctx,
-        tx: Sender<Cmd>,
-        rx: Receiver<Cmd>,
+        mailbox: Mailbox<A, Cmd>,
     ) -> Self {
         Self {
             state,
             ctx,
-            channel: Channel::new(tx, rx, 10),
+            mailbox,
         }
     }
 
@@ -55,24 +56,28 @@ where
         min_thread_period: Duration,
     ) -> Result<JoinHandle<()>, io::Error> {
         let mut group = Group::new(name, thread_stack_size, min_thread_period);
+
         group.add(Box::new(self));
+
         group.spawn()
     }
 }
 
-impl<Ctx, Cmd> Runnable for Fsm<Ctx, Cmd>
+impl<A, Ctx, Cmd> Runnable for Fsm<A, Ctx, Cmd>
 where
+    A: Address,
     Ctx: Send + 'static,
     Cmd: Send + 'static,
 {
     fn step(&mut self) -> anyhow::Result<FsmStatus> {
-        match self.state.process(&mut self.ctx, &mut self.channel)? {
+        match self.state.process(&mut self.ctx, &mut self.mailbox)? {
             StateResult::Running(state) => {
-                self.channel.drain();
                 self.state = state;
                 Ok(FsmStatus::Running)
             }
+
             StateResult::Hold => Ok(FsmStatus::Hold),
+
             StateResult::Stopped => Ok(FsmStatus::Stopped),
         }
     }

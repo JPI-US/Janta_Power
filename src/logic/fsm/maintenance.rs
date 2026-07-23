@@ -1,10 +1,16 @@
 use esp_idf_hal::gpio::Pin;
 use fsm::{
-    channel::Channel,
+    postal::Mailbox,
     state::{InitialState, State, StateResult},
 };
 
-use crate::{hardware::buttons::Buttons, logic::fsm::FSMCommand};
+use crate::{
+    hardware::buttons::Buttons,
+    logic::fsm::{
+        FSMAddress,
+        FSMCommand::{self},
+    },
+};
 
 pub struct MaintenanceContext<M, Ccw, Cw>
 where
@@ -77,7 +83,8 @@ pub struct MaintenanceMoveCW;
 #[derive(Default)]
 pub struct MaintenanceExit;
 
-impl<M, Ccw, Cw> InitialState<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
+impl<M, Ccw, Cw> InitialState<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>
+    for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -85,7 +92,7 @@ where
 {
 }
 
-impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
+impl<M, Ccw, Cw> State<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceEnter
 where
     M: Pin,
     Ccw: Pin,
@@ -94,12 +101,12 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            channel.send(FSMCommand::LEDMaintenance)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenance)?;
             return Ok(StateResult::Running(Box::new(MaintenanceNotMoving)));
         }
 
@@ -107,7 +114,8 @@ where
     }
 }
 
-impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceNotMoving
+impl<M, Ccw, Cw> State<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>
+    for MaintenanceNotMoving
 where
     M: Pin,
     Ccw: Pin,
@@ -116,18 +124,18 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            channel.send(FSMCommand::LEDOff)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDOff)?;
             Ok(StateResult::Running(Box::new(MaintenanceExit)))
         } else if ctx.ccw_pressed() {
-            channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCCW)?;
             Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)))
         } else if ctx.cw_pressed() {
-            channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCW)?;
             Ok(StateResult::Running(Box::new(MaintenanceMoveCW)))
         } else {
             Ok(StateResult::Hold)
@@ -135,7 +143,8 @@ where
     }
 }
 
-impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCCW
+impl<M, Ccw, Cw> State<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>
+    for MaintenanceMoveCCW
 where
     M: Pin,
     Ccw: Pin,
@@ -144,28 +153,28 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            channel.send(FSMCommand::LEDOff)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDOff)?;
             return Ok(StateResult::Running(Box::new(MaintenanceExit)));
         }
 
         if ctx.cw_pressed() {
-            channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCW)?;
             return Ok(StateResult::Running(Box::new(MaintenanceMoveCW)));
         }
 
-        channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
-        channel.send(FSMCommand::MotionMoveBy(30_000))?;
+        mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCCW)?;
+        mailbox.send(FSMAddress::Motion, FSMCommand::MotionMoveBy(30_000))?;
 
         Ok(StateResult::Hold)
     }
 }
 
-impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
+impl<M, Ccw, Cw> State<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceMoveCW
 where
     M: Pin,
     Ccw: Pin,
@@ -174,28 +183,28 @@ where
     fn process(
         &mut self,
         ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         ctx.poll_buttons();
 
         if ctx.maintenance_pressed() {
-            channel.send(FSMCommand::LEDOff)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDOff)?;
             return Ok(StateResult::Running(Box::new(MaintenanceExit)));
         }
 
         if ctx.ccw_pressed() {
-            channel.send(FSMCommand::LEDMaintenanceMovingCCW)?;
+            mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCCW)?;
             return Ok(StateResult::Running(Box::new(MaintenanceMoveCCW)));
         }
 
-        channel.send(FSMCommand::LEDMaintenanceMovingCW)?;
-        channel.send(FSMCommand::MotionMoveBy(-30_000))?;
+        mailbox.send(FSMAddress::Led, FSMCommand::LEDMaintenanceMovingCW)?;
+        mailbox.send(FSMAddress::Motion, FSMCommand::MotionMoveBy(-30_000))?;
 
         Ok(StateResult::Hold)
     }
 }
 
-impl<M, Ccw, Cw> State<MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceExit
+impl<M, Ccw, Cw> State<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand> for MaintenanceExit
 where
     M: Pin,
     Ccw: Pin,
@@ -204,8 +213,8 @@ where
     fn process(
         &mut self,
         _ctx: &mut MaintenanceContext<M, Ccw, Cw>,
-        _channel: &mut Channel<FSMCommand>,
-    ) -> anyhow::Result<StateResult<MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
+        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    ) -> anyhow::Result<StateResult<FSMAddress, MaintenanceContext<M, Ccw, Cw>, FSMCommand>> {
         Ok(StateResult::Running(Box::new(MaintenanceEnter)))
     }
 }
