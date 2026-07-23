@@ -423,6 +423,11 @@ impl State<NetworkContext, FSMCommand> for BootValidation {
 
             info!("This is the running boot slot {:?}", running_slot);
 
+            if running_slot.is_err() {
+                error!("Failed to get running boot slot, skipping validation");
+                return Ok(StateResult::Running(Box::new(OTA)));
+            }
+
             if running_slot?.label == "factory" {
                 info!("Running from factory partition -> skipping OTA validity marking");
 

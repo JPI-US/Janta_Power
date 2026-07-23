@@ -1,18 +1,20 @@
 use core::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossbeam_channel::unbounded;
 use esp_idf_svc::sys::*;
-use fsm::Fsm;
+use fsm::{group::Group, Fsm};
 use log::{error, info};
 use rtc::Rtc;
 
-use crate::logic::fsm::{
-    led::{LEDContext, LEDHold},
-    maintenance::{MaintenanceContext, MaintenanceEnter},
-    motion::{MotionContext, MotionInit},
-    network::{NetworkContext, WifiInitialize},
-    startup::{Initialization, StartupContext},
+use crate::logic::{
+    fsm::{
+        led::{LEDContext, LEDHold},
+        maintenance::{MaintenanceContext, MaintenanceEnter},
+        motion::{MotionContext, MotionInit},
+        network::{NetworkContext, WifiInitialize},
+    },
+    startup::{startup, StartupContext},
 };
 
 mod config;
@@ -29,18 +31,6 @@ fn main() -> Result<()> {
     let (conductor_tx, conductor_rx) = unbounded();
 
     // startup
-    let startup_events_tx = conductor_tx.clone();
-    let (_startup_commands_tx, startup_commands_rx) = unbounded();
-
-    let startup_result = Fsm::new_sync(
-        Box::new(Initialization),
-        StartupContext::new(),
-        startup_events_tx,
-        startup_commands_rx,
-        25,
-    )
-    .context("Failed to start Startup FSM")?;
-
     let StartupContext {
         switchboard,
         sysloop,
@@ -48,55 +38,49 @@ fn main() -> Result<()> {
         peripherals,
         trust_nvs_state,
         version,
-    } = startup_result;
+    } = startup().expect("Failed to set up initial context");
 
-    let switchboard = switchboard.context("Startup did not provide switchboard")?;
-    let sysloop = sysloop.context("Startup did not provide sysloop")?;
-    let nvs_default_partition =
-        nvs_default_partition.context("Startup did not provide nvs_default_partition")?;
-    let peripherals = peripherals.context("Startup did not provide peripherals")?;
-    let trust_nvs_state = trust_nvs_state.context("Startup did not provide trust_nvs_state")?;
-    let version = version.context("Startup did not provide version")?;
+    // create led + maintenance button group
+    let mut group = Group::new(
+        "LED + Maintenance Button",
+        8 * 1_024,
+        Duration::from_millis(500),
+    );
 
-    // led fsm
+    // create led fsm and add to group
     let led_events_tx = conductor_tx.clone();
     let (led_commands_tx, led_commands_rx) = unbounded();
 
-    Fsm::new_async(
+    Fsm::new(
         Box::new(LEDHold),
         LEDContext {
             led: peripherals.led,
         },
         led_events_tx,
         led_commands_rx,
-        25,
-        "LED Control",
-        8 * 1_024,
-        Duration::from_millis(100),
     )
-    .context("Failed to start LED FSM")?;
+    .group(&mut group);
 
-    // maintenance fsm
+    // create maintenance fsm and add to group
     let maintenance_events_tx = conductor_tx.clone();
     let (maintenance_commands_tx, maintenance_commands_rx) = unbounded();
 
-    Fsm::new_async(
+    Fsm::new(
         Box::new(MaintenanceEnter),
         MaintenanceContext::new(peripherals.buttons),
         maintenance_events_tx,
         maintenance_commands_rx,
-        25,
-        "Maintenance Buttons",
-        8 * 1_024,
-        Duration::from_millis(100),
     )
-    .context("Failed to start Maintenance FSM")?;
+    .group(&mut group);
+
+    // start the group
+    group.spawn()?;
 
     // motion fsm
     let motion_events_tx = conductor_tx.clone();
     let (motion_commands_tx, motion_commands_rx) = unbounded();
 
-    Fsm::new_async(
+    Fsm::new(
         Box::new(MotionInit),
         MotionContext::new(
             peripherals.motion,
@@ -108,18 +92,14 @@ fn main() -> Result<()> {
         ),
         motion_events_tx,
         motion_commands_rx,
-        25,
-        "Motion",
-        8 * 1_024,
-        Duration::from_millis(100),
     )
-    .context("Failed to start Motion FSM")?;
+    .spawn("Motion", 8 * 1_024, Duration::from_millis(10))?;
 
     // network fsm
     let network_events_tx = conductor_tx.clone();
     let (network_commands_tx, network_commands_rx) = unbounded();
 
-    Fsm::new_async(
+    Fsm::new(
         Box::new(WifiInitialize),
         NetworkContext::new(
             nvs_default_partition,
@@ -131,12 +111,8 @@ fn main() -> Result<()> {
         ),
         network_events_tx,
         network_commands_rx,
-        25,
-        "Network",
-        8 * 1_024,
-        Duration::from_secs(2),
     )
-    .context("Failed to start Network FSM")?;
+    .spawn("Network", 8 * 1_024, Duration::from_millis(10))?;
 
     loop {
         unsafe {
