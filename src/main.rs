@@ -8,10 +8,10 @@ use rtc::Rtc;
 use crate::logic::{
     fsm::{
         led::{LEDContext, LEDHold},
-        maintenance::{MaintenanceContext, MaintenanceEnter},
         motion::{MotionContext, MotionInit},
         network::{NetworkContext, WifiInitialize},
-        FSMAddress, FSMCommand,
+        FSMAddress,
+        FSMCommand::{self, LEDOff},
     },
     startup::{startup, StartupContext},
 };
@@ -37,31 +37,18 @@ fn main() -> Result<()> {
 
     let mut postal = Postal::<FSMAddress, FSMCommand>::new(25);
 
-    let led_mailbox = postal.take(FSMAddress::Led);
     let maintenance_mailbox = postal.take(FSMAddress::Maintenance);
     let motion_mailbox = postal.take(FSMAddress::Motion);
     let network_mailbox = postal.take(FSMAddress::Network);
-
-    // Group containing the lightweight FSMs.
-    let mut group = Group::new("LED + Maintenance", 8 * 1024, Duration::from_millis(500));
 
     Fsm::new(
         Box::new(LEDHold),
         LEDContext {
             led: peripherals.led,
         },
-        led_mailbox,
-    )
-    .group(&mut group);
-
-    Fsm::new(
-        Box::new(MaintenanceEnter),
-        MaintenanceContext::new(peripherals.buttons),
         maintenance_mailbox,
     )
-    .group(&mut group);
-
-    group.spawn()?;
+    .spawn("LED", 8 * 1024, Duration::from_millis(500))?;
 
     // Motion FSM.
     Fsm::new(

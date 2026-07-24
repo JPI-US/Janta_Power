@@ -2,7 +2,6 @@ use ::motion::motion::MotionMode;
 use fsm::postal::Address;
 
 pub mod led;
-pub mod maintenance;
 pub mod motion;
 pub mod network;
 #[derive(Debug, Clone)]
@@ -22,7 +21,6 @@ pub enum FSMCommand {
 pub enum FSMAddress {
     Motion,
     Network,
-    Led,
     Maintenance,
 }
 
@@ -31,12 +29,11 @@ impl Address for FSMAddress {
         match self {
             FSMAddress::Motion => 0,
             FSMAddress::Network => 1,
-            FSMAddress::Led => 2,
-            FSMAddress::Maintenance => 3,
+            FSMAddress::Maintenance => 2,
         }
     }
 
     fn count() -> usize {
-        4
+        3
     }
 }
