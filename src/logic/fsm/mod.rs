@@ -1,17 +1,11 @@
 use ::motion::motion::MotionMode;
 use fsm::postal::Address;
 
-pub mod led;
 pub mod motion;
 pub mod network;
 #[derive(Debug, Clone)]
 
 pub enum FSMCommand {
-    LEDOff,
-    LEDMaintenance,
-    LEDMaintenanceMovingCCW,
-    LEDMaintenanceMovingCW,
-    MotionMoveBy(i64),
     MqttPublishJson(String, String),
     UpdateNetworkMotionContext(MotionMode, f32),
     PerformOTA,
@@ -21,7 +15,6 @@ pub enum FSMCommand {
 pub enum FSMAddress {
     Motion,
     Network,
-    Maintenance,
 }
 
 impl Address for FSMAddress {
@@ -29,7 +22,6 @@ impl Address for FSMAddress {
         match self {
             FSMAddress::Motion => 0,
             FSMAddress::Network => 1,
-            FSMAddress::Maintenance => 2,
         }
     }
 

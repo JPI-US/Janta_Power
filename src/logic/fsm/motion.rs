@@ -26,7 +26,7 @@ use crate::{
         fsm::{
             motion::MotionMovingContext::PreviouslyHoming,
             FSMAddress,
-            FSMCommand::{self, MotionMoveBy, MqttPublishJson, UpdateNetworkMotionContext},
+            FSMCommand::{self, MqttPublishJson, UpdateNetworkMotionContext},
         },
         tracking_loop::{self, TrackingTickContext},
     },
@@ -336,7 +336,7 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionHoming {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
         if self.steps_left < 0 && ctx.motion.lmsw_is_high() {
             let steps = calculate_steps(-1.0);
@@ -383,7 +383,7 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionHoming {
             }
         }
 
-        return Ok(StateResult::Running(Box::new(MotionTracking)));
+        Ok(StateResult::Running(Box::new(MotionTracking)))
     }
 }
 
@@ -396,7 +396,7 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionMoving {
         match ctx.motion.move_by(self.steps) {
             Ok(_) => match &self.ctx {
                 PreviouslyHoming(steps_left, stall_prev) => {
-                    return Ok(StateResult::Running(Box::new(MotionHoming {
+                    Ok(StateResult::Running(Box::new(MotionHoming {
                         steps_left: *steps_left - self.steps,
                         stall_prev: *stall_prev,
                     })))
@@ -407,7 +407,7 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionMoving {
 
                 match &self.ctx {
                     PreviouslyHoming(steps_left, stall_prev) => {
-                        return Ok(StateResult::Running(Box::new(MotionHoming {
+                        Ok(StateResult::Running(Box::new(MotionHoming {
                             steps_left: *steps_left,
                             stall_prev: *stall_prev,
                         })))
@@ -610,7 +610,6 @@ fn run_encoder_fault(
     let mut tick_ctx = EncoderTickContext {
         nvs: &mut ctx.nvs,
         cfg,
-        current_version: ctx.current_version.clone(),
         persist_nvs: PERSIST_NVS,
         device_id: ctx.switchboard.device_id.into(),
         home_heading_deg: ctx.switchboard.home_heading_deg,

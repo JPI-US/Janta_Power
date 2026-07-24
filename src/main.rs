@@ -2,16 +2,15 @@ use core::time::Duration;
 
 use anyhow::Result;
 use esp_idf_svc::sys::*;
-use fsm::{group::Group, postal::Postal, Fsm};
+use fsm::{postal::Postal, Fsm};
 use rtc::Rtc;
 
 use crate::logic::{
     fsm::{
-        led::{LEDContext, LEDHold},
         motion::{MotionContext, MotionInit},
         network::{NetworkContext, WifiInitialize},
         FSMAddress,
-        FSMCommand::{self, LEDOff},
+        FSMCommand::{self},
     },
     startup::{startup, StartupContext},
 };
@@ -37,18 +36,8 @@ fn main() -> Result<()> {
 
     let mut postal = Postal::<FSMAddress, FSMCommand>::new(25);
 
-    let maintenance_mailbox = postal.take(FSMAddress::Maintenance);
     let motion_mailbox = postal.take(FSMAddress::Motion);
     let network_mailbox = postal.take(FSMAddress::Network);
-
-    Fsm::new(
-        Box::new(LEDHold),
-        LEDContext {
-            led: peripherals.led,
-        },
-        maintenance_mailbox,
-    )
-    .spawn("LED", 8 * 1024, Duration::from_millis(500))?;
 
     // Motion FSM.
     Fsm::new(

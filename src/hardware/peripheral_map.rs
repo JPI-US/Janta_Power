@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use esp_idf_svc::hal::{
     delay::Ets,
-    gpio::{Gpio4, Gpio5, Gpio6, PinDriver},
     i2c::{I2cConfig, I2cDriver},
     modem::Modem,
     prelude::*,
@@ -11,8 +10,6 @@ use log::{info, warn};
 use motion::motion::Motion;
 use rgb_led::Led;
 use shared_bus::{BusManager, I2cProxy};
-
-use crate::hardware::buttons::Buttons;
 
 /// Collection of initialized hardware peripherals used by the device.
 pub struct PeripheralMap<'a> {
@@ -24,9 +21,6 @@ pub struct PeripheralMap<'a> {
 
     /// Motion control peripherals.
     pub motion: Motion<'a>,
-
-    /// Maintenance mode buttons input.
-    pub buttons: Buttons<'a, Gpio5, Gpio4, Gpio6>,
 
     /// Cellular modem peripheral.
     pub modem: Modem,
@@ -77,20 +71,6 @@ impl PeripheralMap<'_> {
             peripherals.pins.gpio11,
         )?;
 
-        // maintenance buttons
-        let maintenance = PinDriver::input(peripherals.pins.gpio5)
-            .context("Failed to create maintenance button input driver")?;
-        let ccw = PinDriver::input(peripherals.pins.gpio4)
-            .context("Failed to create CCW button input driver")?;
-        let cw = PinDriver::input(peripherals.pins.gpio6)
-            .context("Failed to create CW button input driver")?;
-
-        let buttons = Buttons {
-            maintenance,
-            ccw,
-            cw,
-        };
-
         let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {
             Ok(mut sensor) => {
                 let _ = sensor.init();
@@ -115,7 +95,6 @@ impl PeripheralMap<'_> {
             i2c_bus,
             led,
             motion,
-            buttons,
             modem,
             temperature_sensor,
         })

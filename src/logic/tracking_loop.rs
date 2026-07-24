@@ -77,19 +77,20 @@ where
                 log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
             }
 
+            // TODO: Handle these `Try` better
             for event in tracking_done.1 {
                 match event {
                     MotionEvent::Angle(payload) => {
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::data_angle(ctx.device_id);
                         ctx.mailbox
-                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
                     }
                     MotionEvent::HomeErrorTicks(payload) => {
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::data_encoder_error_ticks(ctx.device_id);
                         ctx.mailbox
-                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
                     }
                     MotionEvent::Error(time, message, notes) => {
                         let payload = ErrorLog {
@@ -105,10 +106,10 @@ where
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::logs_error(ctx.device_id);
                         ctx.mailbox
-                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic));
+                            .send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
                     }
                     MotionEvent::CheckForOTA => {
-                        ctx.mailbox.send(FSMAddress::Network, PerformOTA);
+                        ctx.mailbox.send(FSMAddress::Network, PerformOTA)?;
                     }
                 }
             }

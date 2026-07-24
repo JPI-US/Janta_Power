@@ -1,7 +1,7 @@
 use core::{option::Option::None, time::Duration};
 use std::{thread::sleep, time::Instant};
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use esp_idf_hal::{delay::Ets, i2c::I2cDriver};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -16,10 +16,7 @@ use fsm::{
 use hdc1080::Hdc1080;
 use log::{error, info, warn};
 use motion::motion::MotionMode;
-use network::{
-    mqtt::Mqtt,
-    telemetry::{publish_json, Component},
-};
+use network::{mqtt::Mqtt, telemetry::publish_json};
 use ota::OtaUpdater;
 use rtc::Rtc;
 use semver::Version;
@@ -46,15 +43,11 @@ pub struct NetworkContext {
     modem: Option<Modem>,
     switchboard: Switchboard,
     wifi: Option<Wifi<'static>>,
-    timer: Instant,
     init_network_services: bool,
     rtc: Rtc,
     mqtt: Option<Mqtt>,
     formatted_time: Option<String>,
     current_version: Option<Version>,
-    mqtt_message: Option<String>,
-    mqtt_notes: Option<String>,
-    mqtt_component: Option<Component>,
     last_heartbeat_instant: Instant,
     temperature_sensor:
         Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
@@ -73,12 +66,13 @@ impl NetworkContext {
             Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>,
         >,
     ) -> Self {
+        // TODO: Better error handling
         let nvs = match EspNvs::new(partition.clone(), "storage", true) {
             Ok(nvs) => {
                 info!("Got namespace {:?} from default partition", "storage");
                 nvs
             }
-            Err(e) => Err(anyhow!("Could't get namespace {:?}", e)).expect("Failed to get NVS"),
+            Err(e) => panic!("Failed to get NVS; could't get namespace {:?}", e),
         };
 
         Self {
@@ -88,15 +82,11 @@ impl NetworkContext {
             modem: Some(modem),
             switchboard,
             wifi: None,
-            timer: Instant::now(),
             init_network_services: true,
             rtc,
             mqtt: None,
             formatted_time: None,
             current_version: None,
-            mqtt_message: None,
-            mqtt_notes: None,
-            mqtt_component: None,
             last_heartbeat_instant: Instant::now(),
             temperature_sensor,
             motion_mode: None,
@@ -108,10 +98,9 @@ impl NetworkContext {
 pub struct WifiInitialize;
 pub struct WifiConnectIfDisconnected;
 pub struct WifiPublishHeartbeat;
-pub struct WifiWait;
 pub struct InitNetworkServices;
 pub struct BootValidation;
-pub struct OTA;
+pub struct Ota;
 pub struct MqttPublishJson(String, String);
 
 impl<A> InitialState<A, NetworkContext, FSMCommand> for WifiInitialize where A: Address {}
@@ -443,7 +432,7 @@ where
 
             if running_slot.is_err() {
                 error!("Failed to get running boot slot, skipping validation");
-                return Ok(StateResult::Running(Box::new(OTA)));
+                return Ok(StateResult::Running(Box::new(Ota)));
             }
 
             if running_slot?.label == "factory" {
@@ -506,11 +495,11 @@ where
             }
         }
 
-        Ok(StateResult::Running(Box::new(OTA)))
+        Ok(StateResult::Running(Box::new(Ota)))
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for OTA
+impl<A> State<A, NetworkContext, FSMCommand> for Ota
 where
     A: Address,
 {
@@ -630,7 +619,8 @@ where
             }
         };
 
-        publish_json(mqtt, &self.0, &self.1);
+        // TODO: Better error handling
+        publish_json(mqtt, &self.0, &self.1)?;
 
         Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
     }
@@ -694,11 +684,11 @@ fn boot_diagnostic(
 
         let payload = network::telemetry::BootLog {
             current_time: &current_time,
-            message: "Tower rebooted successfully",
+            message: reset_reason.boot_message(),
             firmware_version: &current_version.to_string(),
             component: network::telemetry::Component::System,
-            notes: "Scheduled reboot completed without errors",
-            reset_reason: reset_reason.boot_notes(),
+            reset_reason: reset_reason.as_str(),
+            notes: reset_reason.boot_notes(),
         };
 
         let topic = network::telemetry::topic::logs_boot(device_id);

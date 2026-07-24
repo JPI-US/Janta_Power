@@ -3,9 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use motion::motion::{Motion, MotionMode, MoveOutcome};
-use network::{mqtt::Mqtt, telemetry::Component};
-use semver::Version;
-use wifi::wifi::{Wifi, WifiState};
+use network::telemetry::Component;
 
 use crate::storage::snapshot_store::SnapshotStore;
 
@@ -14,15 +12,6 @@ use crate::storage::snapshot_store::SnapshotStore;
 pub enum Direction {
     Cw,
     Ccw,
-}
-
-impl Direction {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Direction::Cw => "CW",
-            Direction::Ccw => "CCW",
-        }
-    }
 }
 
 // Runtime switches for encoder fault recovery.
@@ -192,29 +181,6 @@ impl EncoderFaultRecovery {
         Ok((false, None))
     }
 
-    fn housekeeping(
-        &self,
-        wifi: &mut Wifi<'_>,
-        mqtt: &mut Mqtt,
-        current_version: &Version,
-        device_id: &str,
-    ) -> anyhow::Result<()> {
-        if wifi.state() == WifiState::Disconnected {
-            log::warn!("Wifi disconnected, attempting to reconnect...");
-            wifi.reconnect_if_disconnected()?;
-        }
-        let formatted_time = rtc::timezone::local_time()
-            .format(network::telemetry::TIME_FORMAT)
-            .to_string();
-        let payload = network::telemetry::Heartbeat {
-            current_time: &formatted_time,
-            firmware_version: &current_version.to_string(),
-        };
-        let topic = network::telemetry::topic::status(device_id);
-        let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
-        Ok(())
-    }
-
     /// Switch to StepperOnly for the rest of the day after repeated probe failures.
     fn switch_to_stepper_only_daily<T: NvsPartitionId>(
         &mut self,
@@ -272,7 +238,6 @@ fn angle_diff_deg(a: f32, b: f32) -> f32 {
 pub struct EncoderTickContext<'ctx, T: NvsPartitionId> {
     pub nvs: &'ctx mut EspNvs<T>,
     pub cfg: EncoderRecoverySwitches,
-    pub current_version: Version,
     pub persist_nvs: bool,
     pub device_id: String,
     pub home_heading_deg: f32,

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{ffi::CString, ptr};
 
 use anyhow::{anyhow, Result};
