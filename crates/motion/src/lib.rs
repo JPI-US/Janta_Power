@@ -222,7 +222,7 @@ pub mod motion {
         }
 
         #[inline]
-        pub(crate) fn relay_on(&mut self) {
+        pub fn relay_on(&mut self) {
             // Active-low: LOW = ON
             self.relay.set_low().unwrap_or_default();
         }
@@ -552,6 +552,22 @@ pub mod motion {
                     (Ok(false), messages)
                 }
             }
+        }
+
+        pub fn lmsw_is_high(&self) -> bool {
+            self.lmsw.is_high()
+        }
+
+        pub fn lmsw_is_low(&self) -> bool {
+            self.lmsw.is_low()
+        }
+
+        pub fn set_homing(&mut self, is_homing: bool) {
+            self.is_homing = is_homing
+        }
+
+        pub fn is_homing(&mut self) -> bool {
+            self.is_homing
         }
     }
 
