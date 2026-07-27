@@ -1,5 +1,7 @@
+use core::default::Default;
 use std::sync::Mutex;
 
+#[derive(Default, Debug)]
 pub struct Bulletin<T> {
     value: Mutex<Option<T>>,
 }
@@ -26,16 +28,21 @@ impl<T> Bulletin<T> {
     pub fn is_posted(&self) -> bool {
         self.value.lock().unwrap().is_some()
     }
+
+    pub fn update<F>(&self, f: F)
+    where
+        F: FnOnce(&mut T),
+        T: Default,
+    {
+        let mut guard = self.value.lock().unwrap();
+
+        let value = guard.get_or_insert_with(T::default);
+        f(value);
+    }
 }
 
 impl<T: Clone> Bulletin<T> {
     pub fn read(&self) -> Option<T> {
         self.value.lock().unwrap().clone()
-    }
-}
-
-impl<T> Default for Bulletin<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }

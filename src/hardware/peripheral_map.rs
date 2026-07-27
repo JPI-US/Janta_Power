@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use esp_idf_svc::hal::{
     delay::Ets,
+    gpio::{Gpio4, Gpio5, Gpio6},
     i2c::{I2cConfig, I2cDriver},
     modem::Modem,
     prelude::*,
@@ -10,6 +11,8 @@ use log::{info, warn};
 use motion::motion::Motion;
 use rgb_led::Led;
 use shared_bus::{BusManager, I2cProxy};
+
+use crate::hardware::buttons::Buttons;
 
 /// Collection of initialized hardware peripherals used by the device.
 pub struct PeripheralMap<'a> {
@@ -28,6 +31,9 @@ pub struct PeripheralMap<'a> {
     /// Temperature sensor.
     pub temperature_sensor:
         Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
+
+    /// East, West, and maintenance buttons
+    pub buttons: Buttons<'static, Gpio5, Gpio4, Gpio6>,
 }
 
 impl PeripheralMap<'_> {
@@ -91,12 +97,20 @@ impl PeripheralMap<'_> {
         // modem
         let modem = peripherals.modem;
 
+        // buttons
+        let buttons = Buttons::new(
+            peripherals.pins.gpio5,
+            peripherals.pins.gpio4,
+            peripherals.pins.gpio6,
+        )?;
+
         Ok(Self {
             i2c_bus,
             led,
             motion,
             modem,
             temperature_sensor,
+            buttons,
         })
     }
 }

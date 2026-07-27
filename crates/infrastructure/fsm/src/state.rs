@@ -1,10 +1,10 @@
-use crate::postal::{mailbox::Mailbox, Address};
+use crate::postal::{bulletin::Bulletin, mailbox::Mailbox, Address};
 
 /// An FSM state.
 ///
 /// Each state performs one unit of processing and may transition into another
 /// state, remain active, or stop the FSM.
-pub trait State<A, Ctx, Cmd>
+pub trait State<A, Ctx, Cmd, B>: Send
 where
     A: Address,
 {
@@ -25,14 +25,16 @@ where
         &mut self,
         ctx: &mut Ctx,
         mailbox: &mut Mailbox<A, Cmd>,
-    ) -> anyhow::Result<StateResult<A, Ctx, Cmd>>;
+        bulletin: &mut Bulletin<B>,
+        previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
+    ) -> anyhow::Result<StateResult<A, Ctx, Cmd, B>>;
 }
 
 /// The initial state of an FSM.
 ///
 /// This marker trait identifies states that are valid starting points for an
 /// FSM. Initial states must also implement [`State`].
-pub trait InitialState<A, Ctx, Cmd>: State<A, Ctx, Cmd>
+pub trait InitialState<A, Ctx, Cmd, B>: State<A, Ctx, Cmd, B>
 where
     A: Address,
 {
@@ -48,11 +50,11 @@ where
 ///   processing the current state.
 /// - `Stopped` - The FSM has completed execution because the current state did
 ///   not provide further processing.
-pub enum StateResult<A, Ctx, Cmd>
+pub enum StateResult<A, Ctx, Cmd, B>
 where
     A: Address,
 {
-    Running(Box<dyn State<A, Ctx, Cmd> + Send>),
+    Running(Box<dyn State<A, Ctx, Cmd, B> + Send>),
     Hold,
     Stopped,
 }

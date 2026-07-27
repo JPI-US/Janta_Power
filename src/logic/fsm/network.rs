@@ -10,7 +10,7 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use fsm::{
-    postal::{mailbox::Mailbox, Address},
+    postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
 use hdc1080::Hdc1080;
@@ -26,7 +26,10 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::{
     config::switchboard::Switchboard,
     hardware::temperature::report_system_temperature,
-    logic::{fsm::FSMCommand, reset_reason::ResetReason},
+    logic::{
+        fsm::{FSMAddress, FSMCommand, FSMState},
+        reset_reason::ResetReason,
+    },
     services::{commands, transport},
 };
 
@@ -103,17 +106,18 @@ pub struct BootValidation;
 pub struct Ota;
 pub struct MqttPublishJson(String, String);
 
-impl<A> InitialState<A, NetworkContext, FSMCommand> for WifiInitialize where A: Address {}
+impl InitialState<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize {}
 
-impl<A> State<A, NetworkContext, FSMCommand> for WifiInitialize
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         if PERSIST_NVS {
             match ctx
                 .nvs
@@ -174,18 +178,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for WifiConnectIfDisconnected
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiConnectIfDisconnected {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        mailbox: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>>
-    where
-        A: Address,
-    {
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         let wifi = ctx
             .wifi
             .as_mut()
@@ -224,15 +226,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for WifiPublishHeartbeat
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiPublishHeartbeat {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         let local_time = rtc::timezone::local_time();
         let current_time = local_time.format("%d/%m/%Y %H:%M:%S").to_string();
 
@@ -313,15 +316,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for InitNetworkServices
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for InitNetworkServices {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         info!("Getting current time");
 
         let mut tz_buf = [0u8; 96];
@@ -372,15 +376,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for BootValidation
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for BootValidation {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         let first_boot = ctx.nvs.get_u8("first_boot")?.unwrap_or(1);
 
         info!("Beginning boot validation");
@@ -499,15 +504,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for Ota
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         if !ctx.switchboard.effects.allow_ota {
             info!("OTA disabled: skipping version compare");
 
@@ -601,15 +607,16 @@ where
     }
 }
 
-impl<A> State<A, NetworkContext, FSMCommand> for MqttPublishJson
-where
-    A: Address,
-{
+impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for MqttPublishJson {
     fn process(
         &mut self,
         ctx: &mut NetworkContext,
-        _channel: &mut Mailbox<A, FSMCommand>,
-    ) -> anyhow::Result<StateResult<A, NetworkContext, FSMCommand>> {
+        _channel: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         let mqtt = match ctx.mqtt.as_mut() {
             Some(mqtt) => mqtt,
             None => {

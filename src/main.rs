@@ -7,6 +7,7 @@ use rtc::Rtc;
 
 use crate::logic::{
     fsm::{
+        buttons::{ButtonsCheckPressed, ButtonsContext},
         motion::{MotionContext, MotionInit},
         network::{NetworkContext, WifiInitialize},
         FSMAddress,
@@ -39,6 +40,7 @@ fn main() -> Result<()> {
 
     let (motion_mailbox, motion_bulletin) = postal.take(FSMAddress::Motion);
     let (network_mailbox, network_bulletin) = postal.take(FSMAddress::Network);
+    let (buttons_mailbox, buttons_bulletin) = postal.take(FSMAddress::Buttons);
 
     // Motion FSM.
     Fsm::new(
@@ -71,6 +73,15 @@ fn main() -> Result<()> {
         network_bulletin,
     )
     .spawn("Network", 8 * 1024, Duration::from_millis(10))?;
+
+    // Buttons FSM.
+    Fsm::new(
+        Box::new(ButtonsCheckPressed),
+        ButtonsContext::new(peripherals.buttons),
+        buttons_mailbox,
+        buttons_bulletin,
+    )
+    .spawn("Buttons", 8 * 1024, Duration::from_millis(100))?;
 
     loop {
         unsafe {

@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{mem, time::Duration};
 use std::{io, thread::JoinHandle};
 
 use crate::{
@@ -15,7 +15,8 @@ pub struct Fsm<A, Ctx, Cmd, B>
 where
     A: Address,
 {
-    pub state: Box<dyn State<A, Ctx, Cmd> + Send>,
+    pub state: Box<dyn State<A, Ctx, Cmd, B> + Send>,
+    pub previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
     pub ctx: Ctx,
     pub mailbox: Mailbox<A, Cmd>,
     pub bulletin: Bulletin<B>,
@@ -36,17 +37,22 @@ where
     B: Send + 'static,
 {
     pub fn new(
-        state: Box<dyn State<A, Ctx, Cmd> + Send>,
+        state: Box<dyn State<A, Ctx, Cmd, B> + Send>,
         ctx: Ctx,
         mailbox: Mailbox<A, Cmd>,
         bulletin: Bulletin<B>,
     ) -> Self {
         Self {
             state,
+            previous_state: None,
             ctx,
             mailbox,
             bulletin,
         }
+    }
+
+    fn transition(&mut self, next: Box<dyn State<A, Ctx, Cmd, B> + Send>) {
+        self.previous_state = Some(mem::replace(&mut self.state, next));
     }
 
     pub fn group(self, group: &mut Group) {
@@ -75,9 +81,18 @@ where
     B: Send + 'static,
 {
     fn step(&mut self) -> anyhow::Result<FsmStatus> {
-        match self.state.process(&mut self.ctx, &mut self.mailbox)? {
-            StateResult::Running(state) => {
-                self.state = state;
+        let previous_state = self.previous_state.take();
+
+        let result = self.state.process(
+            &mut self.ctx,
+            &mut self.mailbox,
+            &mut self.bulletin,
+            previous_state,
+        )?;
+
+        match result {
+            StateResult::Running(next) => {
+                self.transition(next);
                 Ok(FsmStatus::Running)
             }
 

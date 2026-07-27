@@ -7,7 +7,7 @@ use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use fsm::{
-    postal::mailbox::Mailbox,
+    postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};
@@ -24,9 +24,9 @@ use crate::{
     logic::{
         encoder_fault::{self, EncoderFaultRecovery, EncoderRecoverySwitches, EncoderTickContext},
         fsm::{
-            motion::MotionMovingContext::PreviouslyHoming,
             FSMAddress,
             FSMCommand::{self, MqttPublishJson, UpdateNetworkMotionContext},
+            FSMState,
         },
         tracking_loop::{self, TrackingTickContext},
     },
@@ -103,11 +103,7 @@ pub struct MotionHoming {
     steps_left: i64,
 }
 
-pub enum MotionMovingContext {
-    PreviouslyHoming(i64, bool),
-}
 pub struct MotionMoving {
-    ctx: MotionMovingContext,
     steps: i64,
 }
 pub struct MotionErrorLoop {
@@ -120,14 +116,18 @@ pub struct MotionTrackingWait {
     begin: Instant,
 }
 
-impl InitialState<FSMAddress, MotionContext, FSMCommand> for MotionInit {}
+impl InitialState<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {}
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionInit {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
         // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
         // defaults are (re)written into NVS on every boot, so updating `.env` and
@@ -257,12 +257,16 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionInit {
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionBeginHoming {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHoming {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         let would_skip_homing_on_snapshot = ctx.motion_mode == MotionMode::EncoderGuarded
             && ctx.restored_from_snapshot
             && ctx.trust_nvs_state;
@@ -332,19 +336,20 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionBeginHoming {
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionHoming {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         if self.steps_left < 0 && ctx.motion.lmsw_is_high() {
             let steps = calculate_steps(-1.0);
 
-            return Ok(StateResult::Running(Box::new(MotionMoving {
-                ctx: MotionMovingContext::PreviouslyHoming(self.steps_left, self.stall_prev),
-                steps,
-            })));
+            return Ok(StateResult::Running(Box::new(MotionMoving { steps })));
         }
 
         ctx.motion.set_stall_detection_enabled(self.stall_prev);
@@ -387,43 +392,42 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionHoming {
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionMoving {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMoving {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         match ctx.motion.move_by(self.steps) {
-            Ok(_) => match &self.ctx {
-                PreviouslyHoming(steps_left, stall_prev) => {
-                    Ok(StateResult::Running(Box::new(MotionHoming {
-                        steps_left: *steps_left - self.steps,
-                        stall_prev: *stall_prev,
-                    })))
-                }
-            },
+            Ok(_) => {}
             Err(e) => {
                 error!("Failed to move motor with error: {e}");
-
-                match &self.ctx {
-                    PreviouslyHoming(steps_left, stall_prev) => {
-                        Ok(StateResult::Running(Box::new(MotionHoming {
-                            steps_left: *steps_left,
-                            stall_prev: *stall_prev,
-                        })))
-                    }
-                }
             }
+        }
+
+        if let Some(previous_state) = previous_state {
+            Ok(StateResult::Running(previous_state))
+        } else {
+            warn!("No previous state found after motion movement; re-initializing");
+            Ok(StateResult::Running(Box::new(MotionInit)))
         }
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionErrorLoop {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionErrorLoop {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         let now = Local::now()
             .format(network::telemetry::TIME_FORMAT)
             .to_string();
@@ -447,12 +451,16 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionErrorLoop {
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionTracking {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
@@ -532,12 +540,16 @@ impl State<FSMAddress, MotionContext, FSMCommand> for MotionTracking {
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand> for MotionTrackingWait {
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWait {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand>> {
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         mailbox.send(
             FSMAddress::Network,
             UpdateNetworkMotionContext(ctx.motion_mode, ctx.actual_heading),

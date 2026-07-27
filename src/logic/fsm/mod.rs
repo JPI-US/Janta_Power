@@ -1,20 +1,25 @@
 use ::motion::motion::MotionMode;
 use fsm::postal::Address;
 
+pub mod buttons;
 pub mod motion;
 pub mod network;
-#[derive(Debug, Clone)]
 
+#[derive(Debug, Clone)]
 pub enum FSMCommand {
     MqttPublishJson(String, String),
     UpdateNetworkMotionContext(MotionMode, f32),
     PerformOTA,
+    MaintenancePressed,
+    CCWPressed,
+    CWPressed,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum FSMAddress {
     Motion,
     Network,
+    Buttons,
 }
 
 impl Address for FSMAddress {
@@ -22,6 +27,7 @@ impl Address for FSMAddress {
         match self {
             FSMAddress::Motion => 0,
             FSMAddress::Network => 1,
+            FSMAddress::Buttons => 2,
         }
     }
 
@@ -30,7 +36,5 @@ impl Address for FSMAddress {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct FSMState {
-    maintenance_pressed: bool,
-}
+#[derive(Copy, Clone, Debug, Default)]
+pub struct FSMState {}
