@@ -101,8 +101,13 @@ where
             StateResult::Stopped => Ok(FsmStatus::Stopped),
         }
     }
+
+    fn drain(&mut self) {
+        self.mailbox.drain();
+    }
 }
 
 pub trait Runnable: Send {
     fn step(&mut self) -> anyhow::Result<FsmStatus>;
+    fn drain(&mut self);
 }

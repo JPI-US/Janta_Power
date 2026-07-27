@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use core::ops::Not;
+
 use motion::motion;
 
 // =============================================================================
@@ -36,6 +38,17 @@ impl Profile {
 pub enum Direction {
     Cw,
     Ccw,
+}
+
+impl Not for Direction {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Direction::Cw => Direction::Ccw,
+            Direction::Ccw => Direction::Cw,
+        }
+    }
 }
 
 impl Direction {

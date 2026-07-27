@@ -34,7 +34,6 @@ where
     }
 
     pub fn receive(&self) -> Result<M, TryRecvError> {
-        self.drain();
         self.receiver.try_recv()
     }
 
@@ -46,7 +45,7 @@ where
         self.receiver.try_recv()
     }
 
-    fn drain(&self) {
+    pub fn drain(&self) {
         while self.receiver.len() > self.capacity {
             let _ = self.receiver.try_recv();
         }

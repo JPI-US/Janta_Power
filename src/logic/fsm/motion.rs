@@ -115,6 +115,11 @@ pub struct MotionTracking;
 pub struct MotionTrackingWait {
     begin: Instant,
 }
+pub struct MotionMaintenance {
+    action: MaintenanceAction,
+    return_to:
+        Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send + 'static>>,
+}
 
 impl InitialState<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {}
 
@@ -261,12 +266,16 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &mut Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionBeginHoming)) {
+            return Ok(StateResult::Running(state));
+        }
+
         let would_skip_homing_on_snapshot = ctx.motion_mode == MotionMode::EncoderGuarded
             && ctx.restored_from_snapshot
             && ctx.trust_nvs_state;
@@ -340,12 +349,22 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
     fn process(
         &mut self,
         ctx: &mut MotionContext,
-        _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &mut Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = perform_maintenance_transition(
+            mailbox,
+            Box::new(MotionHoming {
+                steps_left: self.steps_left,
+                stall_prev: self.stall_prev,
+            }),
+        ) {
+            return Ok(StateResult::Running(state));
+        }
+
         if self.steps_left < 0 && ctx.motion.lmsw_is_high() {
             let steps = calculate_steps(-1.0);
 
@@ -412,7 +431,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMoving {
         if let Some(previous_state) = previous_state {
             Ok(StateResult::Running(previous_state))
         } else {
-            warn!("No previous state found after motion movement; re-initializing");
+            error!("No previous state found after motion movement; re-initializing");
             Ok(StateResult::Running(Box::new(MotionInit)))
         }
     }
@@ -461,6 +480,10 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionTracking)) {
+            return Ok(StateResult::Running(state));
+        }
+
         let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
@@ -560,6 +583,76 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWa
         }
 
         Ok(StateResult::Running(Box::new(MotionTracking)))
+    }
+}
+
+impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenance {
+    fn process(
+        &mut self,
+        ctx: &mut MotionContext,
+        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+        _bulletin: &mut Bulletin<FSMState>,
+        _previous_state: Option<
+            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+        >,
+    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        let Some(action) = check_maintenance(mailbox) else {
+            return Ok(StateResult::Hold);
+        };
+
+        match action {
+            MaintenanceAction::Idle => match self.action {
+                MaintenanceAction::Moving(_) => {
+                    self.action = MaintenanceAction::Idle;
+                    Ok(StateResult::Hold)
+                }
+
+                MaintenanceAction::Idle => match self.return_to.take() {
+                    Some(state) => Ok(StateResult::Running(state)),
+                    None => {
+                        error!(
+                                "No return state found in MotionMaintenance; falling back to MotionInit"
+                            );
+                        Ok(StateResult::Running(Box::new(MotionInit)))
+                    }
+                },
+            },
+
+            MaintenanceAction::Moving(direction) => {
+                self.action = MaintenanceAction::Moving(direction);
+
+                ctx.motion.move_by(match direction {
+                    Direction::Ccw => -150_000,
+                    Direction::Cw => 150_000,
+                })?;
+
+                Ok(StateResult::Hold)
+            }
+        }
+    }
+}
+
+enum MaintenanceAction {
+    Moving(Direction),
+    Idle,
+}
+
+fn perform_maintenance_transition(
+    mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    return_to: Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>,
+) -> Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>> {
+    Some(Box::new(MotionMaintenance {
+        action: check_maintenance(mailbox)?,
+        return_to: Some(return_to),
+    }))
+}
+
+fn check_maintenance(mailbox: &mut Mailbox<FSMAddress, FSMCommand>) -> Option<MaintenanceAction> {
+    match mailbox.receive_latest().ok()? {
+        FSMCommand::CCWPressed => Some(MaintenanceAction::Moving(Direction::Ccw)),
+        FSMCommand::CWPressed => Some(MaintenanceAction::Moving(Direction::Cw)),
+        FSMCommand::MaintenancePressed => Some(MaintenanceAction::Idle),
+        _ => None,
     }
 }
 
