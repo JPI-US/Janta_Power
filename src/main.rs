@@ -11,6 +11,7 @@ use crate::logic::{
         network::{NetworkContext, WifiInitialize},
         FSMAddress,
         FSMCommand::{self},
+        FSMState,
     },
     startup::{startup, StartupContext},
 };
@@ -34,10 +35,10 @@ fn main() -> Result<()> {
         version,
     } = startup()?;
 
-    let mut postal = Postal::<FSMAddress, FSMCommand>::new(25);
+    let mut postal = Postal::<FSMAddress, FSMCommand, FSMState>::new(25);
 
-    let motion_mailbox = postal.take(FSMAddress::Motion);
-    let network_mailbox = postal.take(FSMAddress::Network);
+    let (motion_mailbox, motion_bulletin) = postal.take(FSMAddress::Motion);
+    let (network_mailbox, network_bulletin) = postal.take(FSMAddress::Network);
 
     // Motion FSM.
     Fsm::new(
@@ -51,6 +52,7 @@ fn main() -> Result<()> {
             version,
         ),
         motion_mailbox,
+        motion_bulletin,
     )
     .spawn("Motion", 8 * 1024, Duration::from_millis(10))?;
 
@@ -66,6 +68,7 @@ fn main() -> Result<()> {
             peripherals.temperature_sensor,
         ),
         network_mailbox,
+        network_bulletin,
     )
     .spawn("Network", 8 * 1024, Duration::from_millis(10))?;
 

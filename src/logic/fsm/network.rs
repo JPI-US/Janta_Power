@@ -10,7 +10,7 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use fsm::{
-    postal::{Address, Mailbox},
+    postal::{mailbox::Mailbox, Address},
     state::{InitialState, State, StateResult},
 };
 use hdc1080::Hdc1080;

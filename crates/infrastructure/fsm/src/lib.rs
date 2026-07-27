@@ -3,7 +3,7 @@ use std::{io, thread::JoinHandle};
 
 use crate::{
     group::Group,
-    postal::{Address, Mailbox},
+    postal::{bulletin::Bulletin, mailbox::Mailbox, Address},
     state::{State, StateResult},
 };
 
@@ -11,13 +11,14 @@ pub mod group;
 pub mod postal;
 pub mod state;
 
-pub struct Fsm<A, Ctx, Cmd>
+pub struct Fsm<A, Ctx, Cmd, B>
 where
     A: Address,
 {
     pub state: Box<dyn State<A, Ctx, Cmd> + Send>,
     pub ctx: Ctx,
     pub mailbox: Mailbox<A, Cmd>,
+    pub bulletin: Bulletin<B>,
 }
 
 pub enum FsmStatus {
@@ -26,22 +27,25 @@ pub enum FsmStatus {
     Stopped,
 }
 
-impl<A, Ctx, Cmd> Fsm<A, Ctx, Cmd>
+impl<A, Ctx, Cmd, B> Fsm<A, Ctx, Cmd, B>
 where
     A: Address,
     Self: Send + 'static,
     Ctx: Send + 'static,
     Cmd: Send + 'static,
+    B: Send + 'static,
 {
     pub fn new(
         state: Box<dyn State<A, Ctx, Cmd> + Send>,
         ctx: Ctx,
         mailbox: Mailbox<A, Cmd>,
+        bulletin: Bulletin<B>,
     ) -> Self {
         Self {
             state,
             ctx,
             mailbox,
+            bulletin,
         }
     }
 
@@ -63,11 +67,12 @@ where
     }
 }
 
-impl<A, Ctx, Cmd> Runnable for Fsm<A, Ctx, Cmd>
+impl<A, Ctx, Cmd, B> Runnable for Fsm<A, Ctx, Cmd, B>
 where
     A: Address,
     Ctx: Send + 'static,
     Cmd: Send + 'static,
+    B: Send + 'static,
 {
     fn step(&mut self) -> anyhow::Result<FsmStatus> {
         match self.state.process(&mut self.ctx, &mut self.mailbox)? {

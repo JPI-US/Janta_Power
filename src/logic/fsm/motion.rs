@@ -7,7 +7,7 @@ use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use fsm::{
-    postal::Mailbox,
+    postal::mailbox::Mailbox,
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};

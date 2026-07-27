@@ -29,3 +29,8 @@ impl Address for FSMAddress {
         3
     }
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct FSMState {
+    maintenance_pressed: bool,
+}

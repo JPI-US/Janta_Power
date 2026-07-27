@@ -6,7 +6,7 @@ use ::motion::{
 };
 use ::network::telemetry::{topic, Component, ErrorLog, Severity};
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use fsm::postal::Mailbox;
+use fsm::postal::mailbox::Mailbox;
 use semver::Version;
 
 use crate::{

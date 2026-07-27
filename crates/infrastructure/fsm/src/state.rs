@@ -1,4 +1,4 @@
-use crate::postal::{Address, Mailbox};
+use crate::postal::{mailbox::Mailbox, Address};
 
 /// An FSM state.
 ///
