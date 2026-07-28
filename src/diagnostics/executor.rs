@@ -75,6 +75,16 @@ impl DiagnosticIo for TranscriptIo {
     }
 }
 
+/// Emit the failure on the wire before returning it.
+///
+/// `serial.rs` only falls back to `transcript.message` when the transcript has no
+/// lines, so a board method that fails after writing output would otherwise go
+/// silent and leave the installer waiting for its timeout.
+fn hdc1080_failure<IO: DiagnosticIo>(io: &mut IO, message: String) -> RuntimeBoardError {
+    let _ = io.write_line(&format!("ERROR {message}"));
+    RuntimeBoardError::Hdc1080(message)
+}
+
 impl<T> DiagnosticBoard for RuntimeDiagnosticBoard<'_, '_, T>
 where
     T: NvsPartitionId,
@@ -82,25 +92,24 @@ where
     type Error = RuntimeBoardError;
 
     fn hdc1080_read<IO: DiagnosticIo>(&mut self, io: &mut IO) -> Result<(), Self::Error> {
-        let hdc = Hdc1080::new(self.bus.acquire_i2c(), Ets)
-            .map_err(|err| RuntimeBoardError::Hdc1080(format!("HDC1080 init failed: {:?}", err)))?;
+        let mut sensor = Hdc1080::new(self.bus.acquire_i2c(), Ets)
+            .map_err(|err| hdc1080_failure(io, format!("HDC1080 init failed: {:?}", err)))?;
 
-        let mut sensor = hdc;
         let device_id = sensor
             .get_device_id()
-            .map_err(|err| RuntimeBoardError::Hdc1080(format!("HDC1080 get_device_id failed: {:?}", err)))?;
+            .map_err(|err| hdc1080_failure(io, format!("HDC1080 get_device_id failed: {:?}", err)))?;
         let _ = io.write_line(&format!("HDC1080 device_id: 0x{device_id:04X}"));
 
         let manufacturer_id = sensor
             .get_man_id()
-            .map_err(|err| RuntimeBoardError::Hdc1080(format!("HDC1080 get_manufacturer_id failed: {:?}", err)))?;
+            .map_err(|err| hdc1080_failure(io, format!("HDC1080 get_manufacturer_id failed: {:?}", err)))?;
         let _ = io.write_line(&format!(
             "HDC1080 manufacturer_id: 0x{manufacturer_id:04X}"
         ));
 
         let serial_id = sensor
             .get_serial_id()
-            .map_err(|err| RuntimeBoardError::Hdc1080(format!("HDC1080 get_serial_id failed: {:?}", err)))?;
+            .map_err(|err| hdc1080_failure(io, format!("HDC1080 get_serial_id failed: {:?}", err)))?;
         let _ = io.write_line(&format!(
             "HDC1080 serial_id: {:04X}-{:04X}-{:04X}",
             serial_id[0], serial_id[1], serial_id[2]
@@ -108,9 +117,11 @@ where
 
         let (temp_c, humidity) = sensor
             .read()
-            .map_err(|err| RuntimeBoardError::Hdc1080(format!("HDC1080 read failed: {:?}", err)))?;
+            .map_err(|err| hdc1080_failure(io, format!("HDC1080 read failed: {:?}", err)))?;
+        // Terminal line for HDC1080_READ. The installer matches this exact shape;
+        // see `docs/serial-protocol.md` in Janta_Installer before changing it.
         let _ = io.write_line(&format!(
-            "HDC1080 read: temp_c:{temp_c:.2} humidity:{humidity:.2}"
+            "HDC1080 Correct read: temp:{temp_c:.2} hum:{humidity:.2}"
         ));
         Ok(())
     }

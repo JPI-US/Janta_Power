@@ -15,3 +15,9 @@ MCU = "esp32s3"
 # Note: this variable is not used by the pio builder (`cargo build --features pio`)
 ESP_IDF_VERSION = "v5.2.2"
 LD_LIBRARY_PATH = "/usr/lib64:/usr/lib"
+# esp-idf-sys hard-fails when its OUT_DIR exceeds 88 chars on Windows, which any
+# checkout under a normal user directory does. Downgrade that check to a warning.
+# Safe here because the machine has LongPathsEnabled=1; on a host without it the
+# ESP IDF CMake/ninja build can still hit MAX_PATH deeper in, so a short checkout
+# path remains the more robust fix.
+ESP_IDF_PATH_ISSUES = "warn"
