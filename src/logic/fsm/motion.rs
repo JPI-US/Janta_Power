@@ -1,27 +1,30 @@
-use core::{convert::Into, option::Option::None, time::Duration};
-use std::{thread::sleep, time::Instant};
+use core::{convert::Into, error::Error, option::Option::None, time::Duration};
+use std::{thread, thread::sleep, time::Instant};
 
-use anyhow::anyhow;
-use chrono::{DateTime, Local};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use esp_idf_svc::{
+    hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
+    nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault, *},
+};
 use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};
 use motion::{
-    motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TowerPositionCtx},
+    motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TowerPositionCtx, STEPS_PER_REV},
     MotionEvent,
 };
-use network::telemetry::{topic, Component, ErrorLog, Severity};
+use network::telemetry::{topic, Angle, Component, ErrorLog, Severity};
 use semver::Version;
 use shared_bus::{BusManager, I2cProxy};
 
 use crate::{
     config::{
-        constants::HOME_HEADING_DEG,
+        constants::{HOME_HEADING_DEG, TRACKING_DEADBAND_DEG},
         switchboard::{self, Direction, Switchboard},
     },
     logic::{
@@ -35,6 +38,8 @@ use crate::{
     storage::snapshot_store::SnapshotStore,
 };
 
+// TODO: Shouldn't create::config::constants be in switchboard?
+
 // TODO: Replace const
 const PERSIST_NVS: bool = true;
 const POWER_ON: bool = true;
@@ -46,6 +51,9 @@ const POWER_ON: bool = true;
 const HOMING_DIRECTION: Direction = Direction::Ccw;
 /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
 const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
+/// Interval between republishes of a critical error while the device is
+/// wedged (mirrors `src/runtime/infra/telemetry.rs::CRITICAL_REPUBLISH_INTERVAL`).
+const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
 
 pub struct MotionContext {
     motion: Motion<'static>,
@@ -703,17 +711,7 @@ fn tracking_tick(
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
     current_datetime: String,
 ) -> anyhow::Result<MoveOutcome> {
-    let nctx = TowerPositionCtx {
-        allow_ota: ctx.switchboard.effects.allow_ota,
-        clock: &mut ctx.clock.as_mut().unwrap(),
-        current_version: ctx.current_version.clone(),
-        device_id: ctx.switchboard.device_id,
-        formatted_time: current_datetime,
-        nvs: &mut ctx.nvs,
-        persist_nvs: ctx.switchboard.effects.persist_nvs,
-    };
-
-    let tracking_done = ctx.motion.set_tower_position(nctx, ctx.actual_heading, 0);
+    let tracking_done = set_tower_position(ctx, ctx.actual_heading);
 
     // Persist only after completed moves.
     match ctx.motion.take_last_move_outcome() {
@@ -774,6 +772,228 @@ fn tracking_tick(
             }
 
             Ok(MoveOutcome::Completed)
+        }
+    }
+}
+
+fn set_tower_position(
+    ctx: &mut MotionContext,
+    location: f32,
+) -> (anyhow::Result<bool>, Vec<MotionEvent>) {
+    let is_daytime = match (
+        ctx.clock.as_mut().unwrap().after_sunrise(),
+        ctx.clock.as_mut().unwrap().after_sunset(),
+    ) {
+        (Ok(after_sunrise), Ok(after_sunset)) => after_sunrise && !after_sunset,
+        (Err(e), _) => return (Err(e.into()), vec![]),
+        (_, Err(e)) => return (Err(e.into()), vec![]),
+    };
+
+    log::info!("Daytime: {}", is_daytime);
+
+    if is_daytime {
+        // If already at home, keep encoder zeroed before daytime tracking.
+        ctx.motion.force_zero_if_limit_switch_pressed();
+
+        let sun = ctx.clock.as_mut().unwrap().noaa_sun();
+        let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
+
+        // Clamp daytime target heading to soft limits.
+        let target_raw = (location as f64) + angle_offset_raw;
+        let target_clamped = if ctx.motion.is_soft_limits_enabled() {
+            let min = ctx.motion.soft_limit_min_deg() as f64;
+            let max = ctx.motion.soft_limit_max_deg() as f64;
+            if target_raw < min {
+                log::warn!(
+                    "SOFT_LIMIT clamp: target_raw={:.2} < min={:.2} -> clamping",
+                    target_raw,
+                    min
+                );
+                min
+            } else if target_raw > max {
+                log::warn!(
+                    "SOFT_LIMIT clamp: target_raw={:.2} > max={:.2} -> clamping",
+                    target_raw,
+                    max
+                );
+                max
+            } else {
+                target_raw
+            }
+        } else {
+            target_raw
+        };
+
+        let angle_offset = target_clamped - (location as f64);
+        log::info!("Actual Location: {}", location);
+        log::info!(
+            "Angle Offset: {} (raw_offset={} target_raw={} target_clamped={})",
+            angle_offset,
+            angle_offset_raw,
+            target_raw,
+            target_clamped
+        );
+        log::info!("Sun Angle: {}", sun.azimuth_in_deg());
+        // Daytime tracking: no move in deadband, otherwise step by offset.
+        if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
+            ctx.motion.relay_off();
+            return (Ok(true), vec![]);
+        }
+
+        ctx.motion.relay_on();
+
+        log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
+        let steps = (angle_offset / 360.0) * STEPS_PER_REV;
+        log::info!("Steps Needed: {}", steps as i64);
+        if let Ok(move_outcome) = ctx.motion.move_by(steps as i64) {
+            if move_outcome != MoveOutcome::Completed {
+                ctx.motion.relay_off();
+                log::warn!("Tracking move aborted: {:?}", move_outcome);
+                // Return true so main does NOT persist heading/snapshot for a move that did not happen.
+                return (Ok(true), vec![]);
+            }
+        }
+
+        ctx.motion
+            .update_position((location as f64 + angle_offset) as f32);
+        ctx.motion.relay_off();
+
+        let tower_angle = location as f64 + angle_offset;
+
+        let now = Local::now()
+            .format(network::telemetry::TIME_FORMAT)
+            .to_string();
+
+        let payload = Angle {
+            current_time: &now,
+            tower_angle,
+        };
+
+        (
+            Ok(false),
+            vec![MotionEvent::Angle(serde_json::to_string(&payload).unwrap())],
+        )
+    } else {
+        let mut messages: Vec<MotionEvent> = vec![];
+
+        // Sunset Operation
+        if (location - HOME_HEADING_DEG).abs() < 0.01 {
+            // Verify home physically when heading says home.
+            if ctx.motion.lmsw_is_high() {
+                log::warn!(
+                    "Heading near home but limit switch not pressed; verifying home by homing CCW"
+                );
+
+                let mut is_ok = false;
+                if let Ok(ok) = ctx.motion.find_limit_switch_ccw() {
+                    is_ok = ok;
+                    log::info!("Home verification homing succeeded");
+
+                    if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
+                        &mut ctx.nvs,
+                        ctx.switchboard.device_id,
+                        ctx.switchboard.effects.persist_nvs,
+                    ) {
+                        messages.push(error_ticks)
+                    }
+                }
+                if !is_ok {
+                    log::error!("Home verification failed: limit switch could not be found");
+                    loop {
+                        // TODO NOW: Remove error loop
+                        let now = Local::now()
+                            .format(network::telemetry::TIME_FORMAT)
+                            .to_string();
+
+                        messages.push(MotionEvent::Error(now, "Limit switch not found during sunset home verification".into(), "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.".into()));
+
+                        thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
+                    }
+                }
+            }
+
+            log::info!("At sleep position");
+            // Ensure encoder ticks are truly 0 at home while we sleep.
+            ctx.motion.force_zero_if_limit_switch_pressed();
+
+            let mut last_check = Instant::now();
+            let check_interval = Duration::from_secs(2 * 60 * 60);
+
+            loop {
+                // TODO NOW: Remove sunset loop
+                match (
+                    ctx.clock.as_mut().unwrap().after_sunrise(),
+                    ctx.clock.as_mut().unwrap().after_sunset(),
+                ) {
+                    (Ok(true), Ok(false)) => {
+                        log::info!("Sunrise detected, exiting sleep loop");
+                        break;
+                    }
+                    (Ok(_), Ok(_)) => {
+                        // Still nighttime.
+                    }
+                    (Err(e), _) => {
+                        log::error!("Failed to determine sunrise state: {:?}", e);
+                        std::thread::sleep(Duration::from_secs(60));
+                        continue;
+                    }
+                    (_, Err(e)) => {
+                        log::error!("Failed to determine sunset state: {:?}", e);
+                        std::thread::sleep(Duration::from_secs(60));
+                        continue;
+                    }
+                }
+
+                if ctx.switchboard.effects.allow_ota && last_check.elapsed() >= check_interval {
+                    messages.push(MotionEvent::CheckForOTA);
+                    last_check = Instant::now();
+                } else if last_check.elapsed() >= check_interval {
+                    log::info!("OTA disabled: skipping periodic OTA check");
+                    last_check = Instant::now();
+                }
+
+                log::info!("Still waiting for sunrise...");
+                std::thread::sleep(Duration::from_secs(600));
+            }
+
+            (Ok(true), messages)
+        } else {
+            log::info!("Moving to sleep position...");
+            if let Ok(limit_sw_status) = ctx.motion.find_limit_switch_ccw() {
+                match limit_sw_status {
+                    true => {
+                        log::info!("Limit switch has returned true");
+                        if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
+                            &mut ctx.nvs,
+                            ctx.switchboard.device_id,
+                            ctx.switchboard.effects.persist_nvs,
+                        ) {
+                            messages.push(error_ticks)
+                        }
+                    }
+                    false => {
+                        log::error!(
+                            "Limit switch has returned false, limit switch could not be found"
+                        );
+                        loop {
+                            // TODO: Remove error loop
+                            let now = Local::now()
+                                .format(network::telemetry::TIME_FORMAT)
+                                .to_string();
+
+                            messages.push(MotionEvent::Error(
+                                now,
+                                "Limit switch not found during move-to-sleep homing".into(),
+                                "End-of-day homing sweep failed to locate the limit switch.".into(),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            log::info!("Tower has reached sleep position");
+
+            (Ok(false), messages)
         }
     }
 }

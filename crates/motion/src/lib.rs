@@ -6,7 +6,6 @@ pub mod motion {
 
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use anyhow::Result;
-    use astronav::coords::noaa_sun::NOAASun;
     use chrono::{Datelike, Local, Timelike};
     use clock::Clock;
     use esp_idf_svc::{
@@ -32,12 +31,9 @@ pub mod motion {
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
-    /// Interval between republishes of a critical error while the device is
-    /// wedged (mirrors `src/runtime/infra/telemetry.rs::CRITICAL_REPUBLISH_INTERVAL`).
-    const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
-
     // Keep step math in one place.
-    pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
+    // TODO: This should be in switchboard i think
+    pub const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
     #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
@@ -228,7 +224,7 @@ pub mod motion {
         }
 
         #[inline]
-        pub(crate) fn relay_off(&mut self) {
+        pub fn relay_off(&mut self) {
             // Active-low: HIGH = OFF
             self.relay.set_high().unwrap_or_default();
         }
@@ -246,7 +242,7 @@ pub mod motion {
         /// Called from the two sunset-time homing sites inside
         /// `set_tower_position`. If no drift was captured this run, logs a
         /// warning and returns without publishing.
-        fn report_home_error_ticks<T: NvsPartitionId>(
+        pub fn report_home_error_ticks<T: NvsPartitionId>(
             &mut self,
             nvs: &mut EspNvs<T>,
             _device_id: &str,
@@ -309,251 +305,6 @@ pub mod motion {
             Some(event)
         }
 
-        pub fn set_tower_position<I2C, T>(
-            &mut self,
-            ctx: TowerPositionCtx<'_, I2C, T>,
-            location: f32,
-            _balance: i32,
-        ) -> (Result<bool>, Vec<MotionEvent>)
-        where
-            I2C: embedded_hal::i2c::I2c,
-            T: NvsPartitionId,
-        {
-            let is_daytime = match (ctx.clock.after_sunrise(), ctx.clock.after_sunset()) {
-                (Ok(after_sunrise), Ok(after_sunset)) => after_sunrise && !after_sunset,
-                (Err(e), _) => return (Err(e.into()), vec![]),
-                (_, Err(e)) => return (Err(e.into()), vec![]),
-            };
-
-            log::info!("Daytime: {}", is_daytime);
-
-            if is_daytime {
-                // If already at home, keep encoder zeroed before daytime tracking.
-                self.force_zero_if_limit_switch_pressed();
-                // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
-                // (same instant as settimeofday after RTC/NTP) so h/m/s match tz_offset_h.
-                let now = Local::now();
-                let timezone_hours = (now.offset().local_minus_utc() as f32) / 3600.0;
-                let sun = NOAASun {
-                    year: now.year() as u16,
-                    doy: now.ordinal() as u16,
-                    long: ctx.clock.get_longitude() as f32,
-                    lat: ctx.clock.get_latitude() as f32,
-                    timezone: timezone_hours,
-                    hour: now.hour() as u8,
-                    min: now.minute() as u8,
-                    sec: now.second() as u8,
-                };
-                let rtc_naive = ctx.clock.get_date_time();
-                log::info!(
-                "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
-                sun.year,
-                sun.doy,
-                sun.lat,
-                sun.long,
-                timezone_hours,
-                sun.hour,
-                sun.min,
-                sun.sec
-            );
-                log::info!(
-                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
-                    now.format("%Y-%m-%d %H:%M:%S %:z"),
-                    rtc_naive
-                );
-                log::info!("Tracking in progress");
-                let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
-
-                // Clamp daytime target heading to soft limits.
-                let target_raw = (location as f64) + angle_offset_raw;
-                let target_clamped = if self.soft_limits_enabled {
-                    let min = self.soft_limit_min_deg as f64;
-                    let max = self.soft_limit_max_deg as f64;
-                    if target_raw < min {
-                        log::warn!(
-                            "SOFT_LIMIT clamp: target_raw={:.2} < min={:.2} -> clamping",
-                            target_raw,
-                            min
-                        );
-                        min
-                    } else if target_raw > max {
-                        log::warn!(
-                            "SOFT_LIMIT clamp: target_raw={:.2} > max={:.2} -> clamping",
-                            target_raw,
-                            max
-                        );
-                        max
-                    } else {
-                        target_raw
-                    }
-                } else {
-                    target_raw
-                };
-
-                let angle_offset = target_clamped - (location as f64);
-                log::info!("Actual Location: {}", location);
-                log::info!(
-                    "Angle Offset: {} (raw_offset={} target_raw={} target_clamped={})",
-                    angle_offset,
-                    angle_offset_raw,
-                    target_raw,
-                    target_clamped
-                );
-                log::info!("Sun Angle: {}", sun.azimuth_in_deg());
-                // Daytime tracking: no move in deadband, otherwise step by offset.
-                if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
-                    self.relay_off();
-                    return (Ok(true), vec![]);
-                }
-
-                self.relay_on();
-                log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
-                let steps = (angle_offset / 360.0) * STEPS_PER_REV;
-                log::info!("Steps Needed: {}", steps as i64);
-                if let Ok(move_outcome) = self.move_by(steps as i64) {
-                    if move_outcome != MoveOutcome::Completed {
-                        self.relay_off();
-                        log::warn!("Tracking move aborted: {:?}", move_outcome);
-                        // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                        return (Ok(true), vec![]);
-                    }
-                }
-
-                self.update_position((location as f64 + angle_offset) as f32);
-                self.relay_off();
-
-                let tower_angle = location as f64 + angle_offset;
-
-                let now = Local::now()
-                    .format(network::telemetry::TIME_FORMAT)
-                    .to_string();
-
-                let payload = Angle {
-                    current_time: &now,
-                    tower_angle,
-                };
-
-                (
-                    Ok(false),
-                    vec![MotionEvent::Angle(serde_json::to_string(&payload).unwrap())],
-                )
-            } else {
-                let mut messages: Vec<MotionEvent> = vec![];
-
-                // Sunset Operation
-                if (location - HOME_HEADING_DEG).abs() < 0.01 {
-                    // Verify home physically when heading says home.
-                    if self.lmsw.is_high() {
-                        log::warn!(
-                        "Heading near home but limit switch not pressed; verifying home by homing CCW"
-                    );
-
-                        let mut is_ok = false;
-                        if let Ok(ok) = self.find_limit_switch_ccw() {
-                            is_ok = ok;
-                            log::info!("Home verification homing succeeded");
-
-                            if let Some(error_ticks) = self.report_home_error_ticks(
-                                ctx.nvs,
-                                ctx.device_id,
-                                ctx.persist_nvs,
-                            ) {
-                                messages.push(error_ticks)
-                            }
-                        }
-                        if !is_ok {
-                            log::error!(
-                                "Home verification failed: limit switch could not be found"
-                            );
-                            loop {
-                                let now = Local::now()
-                                    .format(network::telemetry::TIME_FORMAT)
-                                    .to_string();
-
-                                messages.push(Error(now, "Limit switch not found during sunset home verification".into(), "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.".into()));
-
-                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
-                            }
-                        }
-                    }
-
-                    log::info!("At sleep position");
-                    // Ensure encoder ticks are truly 0 at home while we sleep.
-                    self.force_zero_if_limit_switch_pressed();
-
-                    let mut last_check = Instant::now();
-                    let check_interval = Duration::from_secs(2 * 60 * 60);
-
-                    loop {
-                        match (ctx.clock.after_sunrise(), ctx.clock.after_sunset()) {
-                            (Ok(true), Ok(false)) => {
-                                log::info!("Sunrise detected, exiting sleep loop");
-                                break;
-                            }
-                            (Ok(_), Ok(_)) => {
-                                // Still nighttime.
-                            }
-                            (Err(e), _) => {
-                                log::error!("Failed to determine sunrise state: {:?}", e);
-                                std::thread::sleep(Duration::from_secs(60));
-                                continue;
-                            }
-                            (_, Err(e)) => {
-                                log::error!("Failed to determine sunset state: {:?}", e);
-                                std::thread::sleep(Duration::from_secs(60));
-                                continue;
-                            }
-                        }
-
-                        if ctx.allow_ota && last_check.elapsed() >= check_interval {
-                            messages.push(CheckForOTA);
-                            last_check = Instant::now();
-                        } else if last_check.elapsed() >= check_interval {
-                            log::info!("OTA disabled: skipping periodic OTA check");
-                            last_check = Instant::now();
-                        }
-
-                        log::info!("Still waiting for sunrise...");
-                        std::thread::sleep(Duration::from_secs(600));
-                    }
-
-                    (Ok(true), messages)
-                } else {
-                    log::info!("Moving to sleep position...");
-                    if let Ok(limit_sw_status) = self.find_limit_switch_ccw() {
-                        match limit_sw_status {
-                            true => {
-                                log::info!("Limit switch has returned true");
-                                if let Some(error_ticks) = self.report_home_error_ticks(
-                                    ctx.nvs,
-                                    ctx.device_id,
-                                    ctx.persist_nvs,
-                                ) {
-                                    messages.push(error_ticks)
-                                }
-                            }
-                            false => {
-                                log::error!(
-                            "Limit switch has returned false, limit switch could not be found"
-                        );
-                                loop {
-                                    let now = Local::now()
-                                        .format(network::telemetry::TIME_FORMAT)
-                                        .to_string();
-
-                                    messages.push(Error(now, "Limit switch not found during move-to-sleep homing".into(), "End-of-day homing sweep failed to locate the limit switch.".into()));
-                                }
-                            }
-                        }
-                    }
-
-                    log::info!("Tower has reached sleep position");
-
-                    (Ok(false), messages)
-                }
-            }
-        }
-
         pub fn lmsw_is_high(&self) -> bool {
             self.lmsw.is_high()
         }
@@ -568,6 +319,18 @@ pub mod motion {
 
         pub fn is_homing(&mut self) -> bool {
             self.is_homing
+        }
+
+        pub fn is_soft_limits_enabled(&self) -> bool {
+            self.soft_limits_enabled
+        }
+
+        pub fn soft_limit_min_deg(&self) -> f32 {
+            self.soft_limit_min_deg
+        }
+
+        pub fn soft_limit_max_deg(&self) -> f32 {
+            self.soft_limit_max_deg
         }
     }
 
