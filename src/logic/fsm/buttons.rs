@@ -50,7 +50,7 @@ where
         &mut self,
         ctx: &mut ButtonsContext<M, Ccw, Cw>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, ButtonsContext<M, Ccw, Cw>, FSMCommand, FSMState> + Send>,
         >,

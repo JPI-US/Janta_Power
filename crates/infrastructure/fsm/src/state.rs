@@ -14,6 +14,8 @@ where
     ///
     /// - `ctx` - Mutable access to the FSM context.
     /// - `mailbox` - Mailbox used to send and receive messages.
+    /// - `bulletin` - Shared bulletin available to all FSM instances.
+    /// - `previous_state` - The state that was active before this transition.
     ///
     /// # Returns
     ///
@@ -25,7 +27,7 @@ where
         &mut self,
         ctx: &mut Ctx,
         mailbox: &mut Mailbox<A, Cmd>,
-        bulletin: &mut Bulletin<B>,
+        bulletin: &Bulletin<B>,
         previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
     ) -> anyhow::Result<StateResult<A, Ctx, Cmd, B>>;
 }

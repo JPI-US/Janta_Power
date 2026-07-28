@@ -17,7 +17,7 @@ where
     A: Address,
 {
     mailboxes: Vec<Option<Mailbox<A, M>>>,
-    bulletins: Vec<Option<Bulletin<B>>>,
+    bulletin: Arc<Bulletin<B>>,
 }
 
 impl<A, M, B> Postal<A, M, B>
@@ -38,8 +38,6 @@ where
 
         let routes = Arc::new(senders);
 
-        let bulletins = (0..A::count()).map(|_| Some(Bulletin::new())).collect();
-
         let mailboxes = receivers
             .into_iter()
             .map(|rx| Some(Mailbox::new(rx, Arc::clone(&routes), capacity)))
@@ -47,19 +45,15 @@ where
 
         Self {
             mailboxes,
-            bulletins,
+            bulletin: Arc::new(Bulletin::new()),
         }
     }
 
-    pub fn take(&mut self, address: A) -> (Mailbox<A, M>, Bulletin<B>) {
+    pub fn take(&mut self, address: A) -> (Mailbox<A, M>, Arc<Bulletin<B>>) {
         let mailbox = self.mailboxes[address.index()]
             .take()
             .expect("Mailbox already taken");
 
-        let bulletin = self.bulletins[address.index()]
-            .take()
-            .expect("Bulletin already taken");
-
-        (mailbox, bulletin)
+        (mailbox, Arc::clone(&self.bulletin))
     }
 }

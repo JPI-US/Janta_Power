@@ -113,7 +113,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -183,7 +183,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiConnectIfDi
         &mut self,
         ctx: &mut NetworkContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -231,7 +231,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiPublishHear
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -321,7 +321,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for InitNetworkServ
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -381,7 +381,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for BootValidation 
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -509,7 +509,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -612,7 +612,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for MqttPublishJson
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,

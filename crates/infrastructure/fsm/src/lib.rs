@@ -1,5 +1,5 @@
 use core::{mem, time::Duration};
-use std::{io, thread::JoinHandle};
+use std::{io, sync::Arc, thread::JoinHandle};
 
 use crate::{
     group::Group,
@@ -19,7 +19,7 @@ where
     pub previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
     pub ctx: Ctx,
     pub mailbox: Mailbox<A, Cmd>,
-    pub bulletin: Bulletin<B>,
+    pub bulletin: Arc<Bulletin<B>>,
 }
 
 pub enum FsmStatus {
@@ -40,7 +40,7 @@ where
         state: Box<dyn State<A, Ctx, Cmd, B> + Send>,
         ctx: Ctx,
         mailbox: Mailbox<A, Cmd>,
-        bulletin: Bulletin<B>,
+        bulletin: Arc<Bulletin<B>>,
     ) -> Self {
         Self {
             state,
@@ -86,7 +86,7 @@ where
         let result = self.state.process(
             &mut self.ctx,
             &mut self.mailbox,
-            &mut self.bulletin,
+            &self.bulletin,
             previous_state,
         )?;
 

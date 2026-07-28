@@ -1,13 +1,14 @@
 use core::time::Duration;
+use std::thread::sleep;
 
 use anyhow::Result;
-use esp_idf_svc::sys::*;
-use fsm::{postal::Postal, Fsm};
+use fsm::{group::Group, postal::Postal, Fsm};
 use rtc::Rtc;
 
 use crate::logic::{
     fsm::{
         buttons::{ButtonsCheckPressed, ButtonsContext},
+        led::{LEDCheck, LEDContext},
         motion::{MotionContext, MotionInit},
         network::{NetworkContext, WifiInitialize},
         FSMAddress,
@@ -40,6 +41,7 @@ fn main() -> Result<()> {
     let (motion_mailbox, motion_bulletin) = postal.take(FSMAddress::Motion);
     let (network_mailbox, network_bulletin) = postal.take(FSMAddress::Network);
     let (buttons_mailbox, buttons_bulletin) = postal.take(FSMAddress::Buttons);
+    let (led_mailbox, led_bulletin) = postal.take(FSMAddress::Led);
 
     // Motion FSM.
     Fsm::new(
@@ -72,6 +74,9 @@ fn main() -> Result<()> {
     )
     .spawn("Network", 8 * 1024, Duration::from_millis(10))?;
 
+    // Buttons + LED group
+    let mut group = Group::new("Buttons + LED", 8 * 1024, Duration::from_millis(100));
+
     // Buttons FSM.
     Fsm::new(
         Box::new(ButtonsCheckPressed),
@@ -79,13 +84,19 @@ fn main() -> Result<()> {
         buttons_mailbox,
         buttons_bulletin,
     )
-    .spawn("Buttons", 8 * 1024, Duration::from_millis(100))?;
+    .group(&mut group);
 
-    loop {
-        unsafe {
-            println!("Free heap: {}", esp_get_free_heap_size());
-        }
+    // LED FSM.
+    Fsm::new(
+        Box::new(LEDCheck),
+        LEDContext::new(peripherals.led),
+        led_mailbox,
+        led_bulletin,
+    )
+    .group(&mut group);
 
-        std::thread::sleep(Duration::from_secs(1));
-    }
+    // Start buttons + LED
+    group.spawn()?;
+
+    Ok(())
 }

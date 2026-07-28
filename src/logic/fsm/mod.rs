@@ -2,6 +2,7 @@ use ::motion::motion::MotionMode;
 use fsm::postal::Address;
 
 pub mod buttons;
+pub mod led;
 pub mod motion;
 pub mod network;
 
@@ -20,6 +21,7 @@ pub enum FSMAddress {
     Motion,
     Network,
     Buttons,
+    Led,
 }
 
 impl Address for FSMAddress {
@@ -28,13 +30,17 @@ impl Address for FSMAddress {
             FSMAddress::Motion => 0,
             FSMAddress::Network => 1,
             FSMAddress::Buttons => 2,
+            FSMAddress::Led => 3,
         }
     }
 
     fn count() -> usize {
-        3
+        4
     }
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct FSMState {}
+pub struct FSMState {
+    motion_moving: bool,
+    maintenance_mode: bool,
+}

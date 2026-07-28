@@ -130,7 +130,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -277,7 +277,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -360,7 +360,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -426,7 +426,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMoving {
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -452,7 +452,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionErrorLoop 
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -485,7 +485,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -587,7 +587,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWa
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
@@ -614,11 +614,15 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
         &mut self,
         ctx: &mut MotionContext,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &mut Bulletin<FSMState>,
+        bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        bulletin.update(|state| {
+            state.maintenance_mode = true;
+        });
+
         let Some(action) = check_maintenance(mailbox) else {
             return Ok(StateResult::Hold);
         };
@@ -631,7 +635,13 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
                 }
 
                 MaintenanceAction::Idle => match self.return_to.take() {
-                    Some(state) => Ok(StateResult::Running(state)),
+                    Some(state) => {
+                        bulletin.update(|state| {
+                            state.maintenance_mode = false;
+                        });
+
+                        Ok(StateResult::Running(state))
+                    }
                     None => {
                         error!(
                                 "No return state found in MotionMaintenance; falling back to MotionInit"
@@ -835,6 +845,7 @@ fn set_tower_position(
         log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
         let steps = (angle_offset / 360.0) * STEPS_PER_REV;
         log::info!("Steps Needed: {}", steps as i64);
+        // TODO: Either remove the motion_moving state or force these functions to abide by it
         if let Ok(move_outcome) = ctx.motion.move_by(steps as i64) {
             if move_outcome != MoveOutcome::Completed {
                 ctx.motion.relay_off();
