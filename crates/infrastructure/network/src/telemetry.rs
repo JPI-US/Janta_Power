@@ -71,7 +71,7 @@ pub mod topic {
 // ---------- Shared enums ----------
 
 /// Tower sub-component taxonomy used by `logs/*` and `component/*/status` topics.
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Component {
     Motor,

@@ -64,7 +64,7 @@ impl Motion<'_> {
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
 
-        self.last_move_outcome = Some(outcome);
+        self.last_move_outcome = Some(outcome.clone());
         Ok(outcome)
     }
 
@@ -108,7 +108,7 @@ impl Motion<'_> {
         self.relay_off();
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
 
-        self.last_move_outcome = Some(outcome);
+        self.last_move_outcome = Some(outcome.clone());
         Ok(outcome)
     }
 

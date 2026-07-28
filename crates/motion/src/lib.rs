@@ -1,3 +1,5 @@
+use network::telemetry::Component;
+
 pub mod motion {
     use std::{
         thread,
@@ -12,7 +14,7 @@ pub mod motion {
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
     };
-    use network::telemetry::Angle;
+    use network::telemetry::Component;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
 
@@ -23,7 +25,7 @@ pub mod motion {
 
     use encoder::ENC_TICKS_PER_DEG;
 
-    use crate::MotionEvent::{self, CheckForOTA, Error};
+    use crate::MotionEvent::{self, CheckForOTA, ErrorLoop};
 
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
@@ -43,12 +45,13 @@ pub mod motion {
         EncoderGuarded,
     }
 
-    #[derive(Debug, PartialEq, Copy, Clone)]
+    #[derive(Debug, PartialEq, Clone)]
     pub enum MoveOutcome {
         Completed,
         AbortedPowerMissing,
         AbortedStall,
         AbortedOvershoot,
+        AbortedErrorLoop(Component, String, String),
     }
 
     pub fn calculate_steps(offset_deg: f32) -> i64 {
@@ -352,6 +355,6 @@ pub mod motion {
 pub enum MotionEvent {
     Angle(String),
     HomeErrorTicks(String),
-    Error(String, String, String),
+    ErrorLoop(Component, String, String),
     CheckForOTA,
 }
