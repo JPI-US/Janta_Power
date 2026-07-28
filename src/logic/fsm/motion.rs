@@ -585,6 +585,10 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWa
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionTracking)) {
+            return Ok(StateResult::Running(state));
+        }
+
         mailbox.send(
             FSMAddress::Network,
             UpdateNetworkMotionContext(ctx.motion_mode, ctx.actual_heading),
