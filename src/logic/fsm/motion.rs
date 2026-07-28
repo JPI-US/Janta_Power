@@ -623,37 +623,36 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
             state.maintenance_mode = true;
         });
 
-        let Some(action) = check_maintenance(mailbox) else {
-            return Ok(StateResult::Hold);
-        };
-
-        match action {
-            MaintenanceAction::Idle => match self.action {
-                MaintenanceAction::Moving(_) => {
-                    self.action = MaintenanceAction::Idle;
-                    Ok(StateResult::Hold)
-                }
-
-                MaintenanceAction::Idle => match self.return_to.take() {
-                    Some(state) => {
+        if let Some(action) = check_maintenance(mailbox) {
+            match action {
+                MaintenanceAction::Idle => {
+                    if matches!(self.action, MaintenanceAction::Idle) {
                         bulletin.update(|state| {
                             state.maintenance_mode = false;
                         });
 
-                        Ok(StateResult::Running(state))
-                    }
-                    None => {
-                        error!(
+                        return Ok(match self.return_to.take() {
+                            Some(state) => StateResult::Running(state),
+                            None => {
+                                error!(
                                 "No return state found in MotionMaintenance; falling back to MotionInit"
                             );
-                        Ok(StateResult::Running(Box::new(MotionInit)))
+                                StateResult::Running(Box::new(MotionInit))
+                            }
+                        });
                     }
-                },
-            },
 
+                    self.action = MaintenanceAction::Idle;
+                }
+
+                action => {
+                    self.action = action;
+                }
+            }
+        }
+
+        match self.action {
             MaintenanceAction::Moving(direction) => {
-                self.action = MaintenanceAction::Moving(direction);
-
                 ctx.motion.move_by(match direction {
                     Direction::Ccw => -150_000,
                     Direction::Cw => 150_000,
@@ -661,6 +660,8 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
 
                 Ok(StateResult::Hold)
             }
+
+            MaintenanceAction::Idle => Ok(StateResult::Hold),
         }
     }
 }
