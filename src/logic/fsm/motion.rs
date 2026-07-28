@@ -11,7 +11,10 @@ use fsm::{
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};
-use motion::motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
+use motion::{
+    motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TowerPositionCtx},
+    MotionEvent,
+};
 use network::telemetry::{topic, Component, ErrorLog, Severity};
 use semver::Version;
 use shared_bus::{BusManager, I2cProxy};
@@ -25,10 +28,9 @@ use crate::{
         encoder_fault::{self, EncoderFaultRecovery, EncoderRecoverySwitches, EncoderTickContext},
         fsm::{
             FSMAddress,
-            FSMCommand::{self, MqttPublishJson, UpdateNetworkMotionContext},
+            FSMCommand::{self, MqttPublishJson, PerformOTA, UpdateNetworkMotionContext},
             FSMState,
         },
-        tracking_loop::{self, TrackingTickContext},
     },
     storage::snapshot_store::SnapshotStore,
 };
@@ -59,6 +61,7 @@ pub struct MotionContext {
     encoder_fault: EncoderFaultRecovery,
     need_rehome: bool,
     current_version: Version,
+    clock: Option<Clock<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>>>,
 }
 
 impl MotionContext {
@@ -92,6 +95,7 @@ impl MotionContext {
             restored_from_snapshot: false,
             actual_heading: 0.0,
             encoder_fault: EncoderFaultRecovery::new(),
+            clock: None,
         }
     }
 }
@@ -257,6 +261,14 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
         let encoder_daily_mode =
             SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS).load_encoder_daily_mode();
         encoder_fault.set_mode_switched_daily(encoder_daily_mode);
+
+        // clock
+        ctx.clock = Some(Clock::new(
+            ctx.i2c_bus.acquire_i2c(),
+            latitude,
+            longitude,
+            altitude,
+        ));
 
         Ok(StateResult::Running(Box::new(MotionBeginHoming)))
     }
@@ -553,7 +565,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             })));
         }
 
-        run_tracking(ctx, current_datetime.clone(), mailbox)?;
+        run_tracking(ctx, mailbox, current_datetime.clone())?;
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
@@ -658,8 +670,8 @@ fn check_maintenance(mailbox: &mut Mailbox<FSMAddress, FSMCommand>) -> Option<Ma
 
 fn run_tracking(
     ctx: &mut MotionContext,
-    current_datetime: String,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    current_datetime: String,
 ) -> anyhow::Result<()> {
     if !ctx.switchboard.runtime.tracking.enabled {
         info!("Tracking disabled");
@@ -667,18 +679,7 @@ fn run_tracking(
     }
     let cfg = encoder_recovery_cfg(ctx);
 
-    let mut tracking_ctx = TrackingTickContext {
-        calculation: ctx.calculation.as_mut().unwrap(),
-        current_version: ctx.current_version.clone(),
-        nvs: &mut ctx.nvs,
-        current_datetime,
-        persist_nvs: PERSIST_NVS,
-        device_id: ctx.switchboard.device_id,
-        allow_ota: ctx.switchboard.effects.allow_ota,
-        mailbox,
-    };
-
-    let outcome = tracking_loop::tick(&mut ctx.motion, &mut tracking_ctx, &mut ctx.actual_heading)?;
+    let outcome = tracking_tick(ctx, mailbox, current_datetime)?;
 
     if outcome != MoveOutcome::Completed {
         warn!("Last move aborted: {:?}", outcome);
@@ -691,6 +692,86 @@ fn run_tracking(
     }
 
     Ok(())
+}
+
+fn tracking_tick(
+    ctx: &mut MotionContext,
+    mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    current_datetime: String,
+) -> anyhow::Result<MoveOutcome> {
+    let nctx = TowerPositionCtx {
+        allow_ota: ctx.switchboard.effects.allow_ota,
+        clock: &mut ctx.clock.as_mut().unwrap(),
+        current_version: ctx.current_version.clone(),
+        device_id: ctx.switchboard.device_id,
+        formatted_time: current_datetime,
+        nvs: &mut ctx.nvs,
+        persist_nvs: ctx.switchboard.effects.persist_nvs,
+    };
+
+    let tracking_done = ctx.motion.set_tower_position(nctx, ctx.actual_heading, 0);
+
+    // Persist only after completed moves.
+    match ctx.motion.take_last_move_outcome() {
+        Some(MoveOutcome::Completed) => {
+            ctx.actual_heading = ctx.motion.location();
+            SnapshotStore::new(&mut ctx.nvs, ctx.switchboard.effects.persist_nvs)
+                .save_heading(ctx.actual_heading);
+            if ctx.motion.motion_mode() == MotionMode::EncoderGuarded {
+                SnapshotStore::new(&mut ctx.nvs, ctx.switchboard.effects.persist_nvs)
+                    .save_encoder_snapshot(ctx.motion.encoder_ticks_adjusted());
+            }
+            Ok(MoveOutcome::Completed)
+        }
+        Some(
+            outcome @ (MoveOutcome::AbortedPowerMissing
+            | MoveOutcome::AbortedStall
+            | MoveOutcome::AbortedOvershoot),
+        ) => Ok(outcome),
+        None => {
+            // No movement needed; treat as completed without writing NVS.
+            // TODO: Figure out this part
+            if !tracking_done.0? {
+                log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
+            }
+
+            // TODO: Handle these `Try` better
+            for event in tracking_done.1 {
+                match event {
+                    MotionEvent::Angle(payload) => {
+                        let serialized = serde_json::to_string(&payload)?;
+                        let topic = topic::data_angle(ctx.switchboard.device_id);
+                        mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
+                    }
+                    MotionEvent::HomeErrorTicks(payload) => {
+                        let serialized = serde_json::to_string(&payload)?;
+                        let topic = topic::data_encoder_error_ticks(ctx.switchboard.device_id);
+                        mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
+                    }
+                    MotionEvent::Error(time, message, notes) => {
+                        let payload = ErrorLog {
+                            current_time: time.as_str(),
+                            log_type: "error",
+                            message: message.as_str(),
+                            component: Component::LimitSwitch,
+                            severity: Severity::Fault,
+                            value: None,
+                            unit: None,
+                            notes: notes.as_str(),
+                        };
+                        let serialized = serde_json::to_string(&payload)?;
+                        let topic = topic::logs_error(ctx.switchboard.device_id);
+                        mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
+                    }
+                    MotionEvent::CheckForOTA => {
+                        mailbox.send(FSMAddress::Network, PerformOTA)?;
+                    }
+                }
+            }
+
+            Ok(MoveOutcome::Completed)
+        }
+    }
 }
 
 /// Build the encoder-recovery config from the switchboard.
