@@ -1,14 +1,11 @@
 use network::telemetry::Component;
 
 pub mod motion {
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
+    use std::time::Instant;
 
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
     use anyhow::Result;
-    use chrono::{Datelike, Local, Timelike};
+    use chrono::Local;
     use clock::Clock;
     use esp_idf_svc::{
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
@@ -25,7 +22,7 @@ pub mod motion {
 
     use encoder::ENC_TICKS_PER_DEG;
 
-    use crate::MotionEvent::{self, CheckForOTA, ErrorLoop};
+    use crate::MotionEvent::{self};
 
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));

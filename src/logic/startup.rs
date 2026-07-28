@@ -5,7 +5,6 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs},
 };
 use log::info;
-use semver::Version;
 
 use crate::{
     config::{
@@ -16,15 +15,12 @@ use crate::{
     storage::snapshot_store::SnapshotStore,
 };
 
-const PERSIST_NVS: bool = true;
-
 pub struct StartupContext {
     pub switchboard: Switchboard,
     pub sysloop: EspSystemEventLoop,
     pub trust_nvs_state: bool,
     pub nvs_default_partition: EspDefaultNvsPartition,
     pub peripherals: PeripheralMap<'static>,
-    pub version: Version,
 }
 
 pub fn startup() -> anyhow::Result<StartupContext> {
@@ -80,24 +76,11 @@ pub fn startup() -> anyhow::Result<StartupContext> {
         switchboard.runtime.guardrails.soft_limit_max_deg,
     );
 
-    // version
-    let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.1.5";
-    if PERSIST_NVS {
-        nvs.set_str("version", "1.1.5")?;
-    }
-    let version: Version = nvs
-        .get_str("version", &mut version_buf)?
-        .map(|s| s.trim().parse::<Version>())
-        .transpose()?
-        .unwrap_or_else(|| Version::parse(DEFAULT_VERSION).unwrap());
-
     Ok(StartupContext {
         switchboard,
         sysloop,
         trust_nvs_state,
         nvs_default_partition,
         peripherals,
-        version,
     })
 }

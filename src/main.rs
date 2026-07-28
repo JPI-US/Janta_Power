@@ -33,7 +33,6 @@ fn main() -> Result<()> {
         nvs_default_partition,
         peripherals,
         trust_nvs_state,
-        version,
     } = startup()?;
 
     let mut postal = Postal::<FSMAddress, FSMCommand, FSMState>::new(25);
@@ -51,7 +50,6 @@ fn main() -> Result<()> {
             nvs_default_partition.clone(),
             peripherals.i2c_bus,
             trust_nvs_state,
-            version,
         ),
         motion_mailbox,
         motion_bulletin,

@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use clock::Clock;
 use esp_idf_svc::hal::{
     delay::Ets,
     gpio::{Gpio4, Gpio5, Gpio6},

@@ -1,28 +1,21 @@
-use core::{convert::Into, error::Error, option::Option::None, time::Duration};
-use std::{
-    thread::{self, sleep},
-    time::Instant,
-};
+use core::{convert::Into, option::Option::None, time::Duration};
+use std::{thread::sleep, time::Instant};
 
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Datelike, Local, Timelike};
+use anyhow::anyhow;
+use chrono::{DateTime, Local};
 use clock::Clock;
 use esp_idf_hal::i2c::I2cDriver;
-use esp_idf_svc::{
-    hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
-    nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault, *},
-};
+use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
 use log::{error, info, warn};
 use motion::{
-    motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TowerPositionCtx, STEPS_PER_REV},
+    motion::{calculate_steps, Motion, MotionMode, MoveOutcome, STEPS_PER_REV},
     MotionEvent,
 };
 use network::telemetry::{topic, Angle, Component, ErrorLog, Severity};
-use semver::Version;
 use shared_bus::{BusManager, I2cProxy};
 
 use crate::{
@@ -54,9 +47,6 @@ const POWER_ON: bool = true;
 const HOMING_DIRECTION: Direction = Direction::Ccw;
 /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
 const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
-/// Interval between republishes of a critical error while the device is
-/// wedged (mirrors `src/runtime/infra/telemetry.rs::CRITICAL_REPUBLISH_INTERVAL`).
-const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
 
 pub struct MotionContext {
     motion: Motion<'static>,
@@ -71,7 +61,6 @@ pub struct MotionContext {
     actual_heading: f32,
     encoder_fault: EncoderFaultRecovery,
     need_rehome: bool,
-    current_version: Version,
     clock: Option<Clock<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>>>,
 }
 
@@ -82,7 +71,6 @@ impl MotionContext {
         nvs_partition: EspDefaultNvsPartition,
         i2c_bus: &'static BusManager<std::sync::Mutex<I2cDriver<'static>>>,
         trust_nvs_state: bool,
-        current_version: Version,
     ) -> Self {
         let nvs = match EspNvs::new(nvs_partition, "storage", true) {
             Ok(nvs) => {
@@ -102,7 +90,6 @@ impl MotionContext {
             motion_mode: MotionMode::EncoderGuarded,
             previous_motion_mode: MotionMode::EncoderGuarded,
             need_rehome: false,
-            current_version,
             restored_from_snapshot: false,
             actual_heading: 0.0,
             encoder_fault: EncoderFaultRecovery::new(),
@@ -576,21 +563,15 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             })));
         }
 
-        run_tracking(ctx, mailbox)?;
-
-        match run_tracking(ctx, mailbox)? {
-            Some(outcome) => match outcome {
-                MoveOutcome::AbortedErrorLoop(component, message, notes) => {
-                    error!("Catastrophic tracking error; manual intervention required");
-                    return Ok(StateResult::Running(Box::new(MotionErrorLoop {
-                        component,
-                        message,
-                        notes,
-                    })));
-                }
-                _ => {}
-            },
-            None => {}
+        if let Some(outcome) = run_tracking(ctx, mailbox)? {
+            if let MoveOutcome::AbortedErrorLoop(component, message, notes) = outcome {
+                error!("Catastrophic tracking error; manual intervention required");
+                return Ok(StateResult::Running(Box::new(MotionErrorLoop {
+                    component,
+                    message,
+                    notes,
+                })));
+            }
         }
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
@@ -924,46 +905,6 @@ fn set_tower_position(
             log::info!("At sleep position");
             // Ensure encoder ticks are truly 0 at home while we sleep.
             ctx.motion.force_zero_if_limit_switch_pressed();
-
-            let mut last_check = Instant::now();
-            let check_interval = Duration::from_secs(2 * 60 * 60);
-
-            loop {
-                // TODO NOW: Remove sunset loop
-                match (
-                    ctx.clock.as_mut().unwrap().after_sunrise(),
-                    ctx.clock.as_mut().unwrap().after_sunset(),
-                ) {
-                    (Ok(true), Ok(false)) => {
-                        log::info!("Sunrise detected, exiting sleep loop");
-                        break;
-                    }
-                    (Ok(_), Ok(_)) => {
-                        // Still nighttime.
-                    }
-                    (Err(e), _) => {
-                        log::error!("Failed to determine sunrise state: {:?}", e);
-                        std::thread::sleep(Duration::from_secs(60));
-                        continue;
-                    }
-                    (_, Err(e)) => {
-                        log::error!("Failed to determine sunset state: {:?}", e);
-                        std::thread::sleep(Duration::from_secs(60));
-                        continue;
-                    }
-                }
-
-                if ctx.switchboard.effects.allow_ota && last_check.elapsed() >= check_interval {
-                    messages.push(MotionEvent::CheckForOTA);
-                    last_check = Instant::now();
-                } else if last_check.elapsed() >= check_interval {
-                    log::info!("OTA disabled: skipping periodic OTA check");
-                    last_check = Instant::now();
-                }
-
-                log::info!("Still waiting for sunrise...");
-                std::thread::sleep(Duration::from_secs(600));
-            }
 
             Ok((true, messages))
         } else {
