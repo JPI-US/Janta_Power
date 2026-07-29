@@ -2,7 +2,6 @@ use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
-use log::error;
 use rgb_led::Led;
 
 use crate::logic::fsm::{FSMAddress, FSMCommand, FSMState};

@@ -41,6 +41,5 @@ impl Address for FSMAddress {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FSMState {
-    motion_moving: bool,
     maintenance_mode: bool,
 }

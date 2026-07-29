@@ -39,7 +39,9 @@ impl Group {
                 loop {
                     for machine in &mut self.machines {
                         match machine.step() {
-                            Ok(FsmStatus::Running) => {}
+                            Ok(FsmStatus::Running) => {
+                                log::info!("{} Transitioned to {}", machine.name(), machine.state())
+                            }
                             Ok(FsmStatus::Hold) => {}
                             Ok(FsmStatus::Stopped) => break,
                             Err(e) => {

@@ -1,5 +1,4 @@
 use core::time::Duration;
-use std::thread::sleep;
 
 use anyhow::Result;
 use fsm::{group::Group, postal::Postal, Fsm};
@@ -45,6 +44,7 @@ fn main() -> Result<()> {
 
     // Motion FSM.
     Fsm::new(
+        "Motion",
         Box::new(MotionInit),
         MotionContext::new(
             peripherals.motion,
@@ -56,10 +56,11 @@ fn main() -> Result<()> {
         motion_mailbox,
         motion_bulletin,
     )
-    .spawn("Motion", 8 * 1024, Duration::from_millis(10))?;
+    .spawn(8 * 1024, Duration::from_millis(10))?;
 
     // Network FSM.
     Fsm::new(
+        "Network",
         Box::new(WifiInitialize),
         NetworkContext::new(
             nvs_default_partition,
@@ -72,13 +73,14 @@ fn main() -> Result<()> {
         network_mailbox,
         network_bulletin,
     )
-    .spawn("Network", 8 * 1024, Duration::from_millis(10))?;
+    .spawn(8 * 1024, Duration::from_millis(10))?;
 
     // Buttons + LED group
-    let mut group = Group::new("Buttons + LED", 8 * 1024, Duration::from_millis(100));
+    let mut group = Group::new("Auxiliary", 8 * 1024, Duration::from_millis(100));
 
     // Buttons FSM.
     Fsm::new(
+        "Buttons",
         Box::new(ButtonsCheckPressed),
         ButtonsContext::new(peripherals.buttons),
         buttons_mailbox,
@@ -88,6 +90,7 @@ fn main() -> Result<()> {
 
     // LED FSM.
     Fsm::new(
+        "LED",
         Box::new(LEDCheck),
         LEDContext::new(peripherals.led),
         led_mailbox,

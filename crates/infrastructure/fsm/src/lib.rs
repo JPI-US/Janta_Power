@@ -15,6 +15,7 @@ pub struct Fsm<A, Ctx, Cmd, B>
 where
     A: Address,
 {
+    pub name: String,
     pub state: Box<dyn State<A, Ctx, Cmd, B> + Send>,
     pub previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
     pub ctx: Ctx,
@@ -37,12 +38,14 @@ where
     B: Send + 'static,
 {
     pub fn new(
+        name: impl Into<String>,
         state: Box<dyn State<A, Ctx, Cmd, B> + Send>,
         ctx: Ctx,
         mailbox: Mailbox<A, Cmd>,
         bulletin: Arc<Bulletin<B>>,
     ) -> Self {
         Self {
+            name: name.into(),
             state,
             previous_state: None,
             ctx,
@@ -61,11 +64,10 @@ where
 
     pub fn spawn(
         self,
-        name: impl Into<String>,
         thread_stack_size: usize,
         min_thread_period: Duration,
     ) -> Result<JoinHandle<()>, io::Error> {
-        let mut group = Group::new(name, thread_stack_size, min_thread_period);
+        let mut group = Group::new(self.name.clone(), thread_stack_size, min_thread_period);
 
         group.add(Box::new(self));
 
@@ -105,9 +107,19 @@ where
     fn drain(&mut self) {
         self.mailbox.drain();
     }
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn state(&self) -> String {
+        String::from(self.state.type_name())
+    }
 }
 
 pub trait Runnable: Send {
     fn step(&mut self) -> anyhow::Result<FsmStatus>;
     fn drain(&mut self);
+    fn name(&self) -> String;
+    fn state(&self) -> String;
 }

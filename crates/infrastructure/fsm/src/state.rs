@@ -30,6 +30,10 @@ where
         bulletin: &Bulletin<B>,
         previous_state: Option<Box<dyn State<A, Ctx, Cmd, B> + Send>>,
     ) -> anyhow::Result<StateResult<A, Ctx, Cmd, B>>;
+
+    fn type_name(&self) -> &'static str {
+        core::any::type_name::<Self>()
+    }
 }
 
 /// The initial state of an FSM.
