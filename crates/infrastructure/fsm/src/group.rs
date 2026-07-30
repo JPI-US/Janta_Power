@@ -1,8 +1,7 @@
-use core::{option::Option::None, time::Duration};
 use std::{
     io,
     thread::{sleep, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::{FsmStatus, Runnable};
@@ -35,12 +34,17 @@ impl Group {
             .spawn(move || {
                 log::info!("Thread \"{}\" started", self.name);
 
-                let mut start: Option<Instant> = None;
                 loop {
+                    let start = Instant::now();
+
                     for machine in &mut self.machines {
                         match machine.step() {
                             Ok(FsmStatus::Running) => {
-                                log::info!("{} Transitioned to {}", machine.name(), machine.state())
+                                log::info!(
+                                    "{} Transitioned to {}",
+                                    machine.name(),
+                                    machine.state()
+                                );
                             }
                             Ok(FsmStatus::Hold) => {}
                             Ok(FsmStatus::Stopped) => break,
@@ -51,13 +55,7 @@ impl Group {
                         }
                     }
 
-                    if let Some(s) = start {
-                        if s.elapsed() < self.min_thread_period {
-                            sleep(self.min_thread_period - s.elapsed())
-                        }
-                    }
-
-                    start = Some(Instant::now())
+                    sleep(self.min_thread_period.saturating_sub(start.elapsed()));
                 }
             })
     }
