@@ -4,11 +4,14 @@ use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{State, StateResult},
 };
-use motion::motion::{calculate_steps, MotionMode};
+use motion::{
+    motion::{calculate_steps, MotionMode},
+    Direction,
+};
 use network::telemetry::Component;
 
 use crate::{
-    config::{constants::HOME_HEADING_DEG, switchboard::Direction},
+    config::constants::HOME_HEADING_DEG,
     logic::fsm::{
         motion::{
             helpers::perform_maintenance_transition, MotionBeginHoming, MotionContext,

@@ -1,3 +1,5 @@
+use core::ops::Not;
+
 use network::telemetry::Component;
 
 pub mod motion {
@@ -7,6 +9,7 @@ pub mod motion {
     use anyhow::Result;
     use chrono::Local;
     use clock::Clock;
+    use encoder::ENC_TICKS_PER_DEG;
     use esp_idf_svc::{
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
@@ -16,14 +19,12 @@ pub mod motion {
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
 
+    use crate::MotionEvent::{self};
+
     // Focused motion modules.
     mod encoder;
     mod homing;
     mod move_exec;
-
-    use encoder::ENC_TICKS_PER_DEG;
-
-    use crate::MotionEvent::{self};
 
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
@@ -342,4 +343,38 @@ pub enum MotionEvent {
     HomeErrorTicks(String),
     ErrorLoop(Component, String, String),
     CheckForOTA,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Direction {
+    Cw,
+    Ccw,
+}
+
+impl Not for Direction {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Direction::Cw => Direction::Ccw,
+            Direction::Ccw => Direction::Cw,
+        }
+    }
+}
+
+impl Direction {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Direction::Cw => "CW",
+            Direction::Ccw => "CCW",
+        }
+    }
+
+    /// Returns degrees with sign applied (CW positive, CCW negative).
+    pub const fn apply_to_deg(&self, deg: f32) -> f32 {
+        match self {
+            Direction::Cw => deg,
+            Direction::Ccw => -deg,
+        }
+    }
 }

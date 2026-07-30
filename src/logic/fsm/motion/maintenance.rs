@@ -5,18 +5,16 @@ use ::fsm::{
     state::{State, StateResult},
 };
 use log::error;
+use motion::Direction;
 
-use crate::{
-    config::switchboard::Direction,
-    logic::fsm::{
-        motion::{
-            helpers::{check_maintenance, MaintenanceAction},
-            MotionContext, MotionInit, MotionMaintenance,
-        },
-        FSMAddress,
-        FSMCommand::{self},
-        FSMState,
+use crate::logic::fsm::{
+    motion::{
+        helpers::{check_maintenance, MaintenanceAction},
+        MotionContext, MotionInit, MotionMaintenance,
     },
+    FSMAddress,
+    FSMCommand::{self},
+    FSMState,
 };
 
 impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenance {

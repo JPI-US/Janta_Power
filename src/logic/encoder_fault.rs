@@ -2,17 +2,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use motion::motion::{Motion, MotionMode, MoveOutcome};
+use motion::{
+    motion::{Motion, MotionMode, MoveOutcome},
+    Direction,
+};
 use network::telemetry::Component;
 
 use crate::storage::snapshot_store::SnapshotStore;
-
-// Local direction enum used by encoder fault recovery.
-#[derive(Clone, Copy, PartialEq)]
-pub enum Direction {
-    Cw,
-    Ccw,
-}
 
 // Runtime switches for encoder fault recovery.
 pub struct EncoderRecoverySwitches {

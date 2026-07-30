@@ -6,17 +6,14 @@ use chrono::{DateTime, Local};
 use log::{error, info, warn};
 use motion::{
     motion::{MotionMode, MoveOutcome, STEPS_PER_REV},
-    MotionEvent,
+    Direction, MotionEvent,
 };
 use network::telemetry::{topic, Angle, Component};
 
 use crate::{
-    config::{
-        constants::{HOME_HEADING_DEG, TRACKING_DEADBAND_DEG},
-        switchboard::{self, Direction},
-    },
+    config::constants::{HOME_HEADING_DEG, TRACKING_DEADBAND_DEG},
     logic::{
-        encoder_fault::{self, EncoderRecoverySwitches, EncoderTickContext},
+        encoder_fault::{EncoderRecoverySwitches, EncoderTickContext},
         fsm::{
             motion::{MotionContext, MotionMaintenance},
             FSMAddress,
@@ -365,8 +362,8 @@ pub(crate) fn encoder_recovery_cfg(ctx: &mut MotionContext) -> EncoderRecoverySw
         probe_steps: ctx.switchboard.runtime.encoder_recovery.probe_steps,
         max_drift_deg: ctx.switchboard.runtime.encoder_recovery.max_drift_deg,
         rehome_dir: match ctx.switchboard.runtime.encoder_recovery.rehome_dir {
-            switchboard::Direction::Cw => encoder_fault::Direction::Cw,
-            switchboard::Direction::Ccw => encoder_fault::Direction::Ccw,
+            Direction::Cw => Direction::Cw,
+            Direction::Ccw => Direction::Ccw,
         },
     }
 }

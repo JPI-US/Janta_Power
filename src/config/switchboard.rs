@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use core::ops::Not;
-
-use motion::motion;
+use motion::{motion::MotionMode, Direction};
 
 // =============================================================================
 // Switchboard: single source of deployment/default values for the app.
@@ -33,40 +31,6 @@ impl Profile {
 // =========================
 // Types for future phases
 // =========================
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Direction {
-    Cw,
-    Ccw,
-}
-
-impl Not for Direction {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
-        match self {
-            Direction::Cw => Direction::Ccw,
-            Direction::Ccw => Direction::Cw,
-        }
-    }
-}
-
-impl Direction {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Direction::Cw => "CW",
-            Direction::Ccw => "CCW",
-        }
-    }
-
-    /// Returns degrees with sign applied (CW positive, CCW negative).
-    pub const fn apply_to_deg(&self, deg: f32) -> f32 {
-        match self {
-            Direction::Cw => deg,
-            Direction::Ccw => -deg,
-        }
-    }
-}
 
 #[derive(Copy, Clone, Debug)]
 pub struct RecoveryMoveSpec {
@@ -111,9 +75,9 @@ pub struct TrackingSwitches {
 #[derive(Copy, Clone)]
 pub enum MotionModePolicy {
     /// Use NVS `tracking_mode` if present; otherwise initialize NVS with this default.
-    FromNvsDefault(motion::MotionMode),
+    FromNvsDefault(MotionMode),
     /// Ignore NVS and force this mode at runtime (diagnostics / bring-up).
-    Force(motion::MotionMode),
+    Force(MotionMode),
 }
 
 impl core::fmt::Debug for MotionModePolicy {
@@ -282,7 +246,7 @@ pub const fn normal() -> Switchboard {
                 enabled: true,
                 loop_sleep_secs: 300,
             },
-            motion_mode: MotionModePolicy::FromNvsDefault(motion::MotionMode::EncoderGuarded),
+            motion_mode: MotionModePolicy::FromNvsDefault(MotionMode::EncoderGuarded),
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
