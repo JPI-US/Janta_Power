@@ -8,14 +8,37 @@ use log::error;
 use motion::Direction;
 
 use crate::logic::fsm::{
-    motion::{
-        helpers::{check_maintenance, MaintenanceAction},
-        MotionContext, MotionInit, MotionMaintenance,
-    },
+    motion::{MotionContext, MotionInit, MotionMaintenance},
     FSMAddress,
     FSMCommand::{self},
     FSMState,
 };
+
+pub(crate) enum MaintenanceAction {
+    Moving(Direction),
+    Idle,
+}
+
+pub(crate) fn perform_maintenance_transition(
+    mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+    return_to: Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>,
+) -> Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>> {
+    Some(Box::new(MotionMaintenance {
+        action: check_maintenance(mailbox)?,
+        return_to: Some(return_to),
+    }))
+}
+
+pub(crate) fn check_maintenance(
+    mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
+) -> Option<MaintenanceAction> {
+    match mailbox.receive_latest().ok()? {
+        FSMCommand::CCWPressed => Some(MaintenanceAction::Moving(Direction::Ccw)),
+        FSMCommand::CWPressed => Some(MaintenanceAction::Moving(Direction::Cw)),
+        FSMCommand::MaintenancePressed => Some(MaintenanceAction::Idle),
+        _ => None,
+    }
+}
 
 impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenance {
     fn process(

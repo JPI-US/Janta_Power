@@ -14,7 +14,7 @@ use crate::{
     config::constants::HOME_HEADING_DEG,
     logic::fsm::{
         motion::{
-            helpers::perform_maintenance_transition, MotionBeginHoming, MotionContext,
+            maintenance::perform_maintenance_transition, MotionBeginHoming, MotionContext,
             MotionErrorLoop, MotionHoming, MotionMoving, MotionTracking,
         },
         FSMAddress,

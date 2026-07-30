@@ -10,9 +10,7 @@ use crate::{
     logic::{
         encoder_fault::EncoderFaultRecovery,
         fsm::{
-            motion::{
-                helpers::check_daily_encoder_reset, MotionBeginHoming, MotionContext, MotionInit,
-            },
+            motion::{check_daily_encoder_reset, MotionBeginHoming, MotionContext, MotionInit},
             FSMAddress,
             FSMCommand::{self},
             FSMState,
