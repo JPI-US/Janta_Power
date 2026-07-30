@@ -7,14 +7,11 @@ use log::{error, info};
 use motion::motion::MotionMode;
 
 use crate::{
-    logic::{
-        encoder_fault::EncoderFaultRecovery,
-        fsm::{
-            motion::{check_daily_encoder_reset, MotionBeginHoming, MotionContext, MotionInit},
-            FSMAddress,
-            FSMCommand::{self},
-            FSMState,
-        },
+    logic::fsm::{
+        motion::{check_daily_encoder_reset, MotionBeginHoming, MotionContext, MotionInit},
+        FSMAddress,
+        FSMCommand::{self},
+        FSMState,
     },
     storage::snapshot_store::SnapshotStore,
 };
@@ -154,10 +151,11 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
         }
 
         // Encoder fault recovery
-        let mut encoder_fault = EncoderFaultRecovery::new();
+
         let encoder_daily_mode =
             SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS).load_encoder_daily_mode();
-        encoder_fault.set_mode_switched_daily(encoder_daily_mode);
+        ctx.encoder_fault
+            .set_mode_switched_daily(encoder_daily_mode);
 
         // clock
         ctx.clock = Some(Clock::new(

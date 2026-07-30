@@ -15,7 +15,7 @@ use network::{telemetry, telemetry::topic};
 use crate::{
     config::constants::{HOME_HEADING_DEG, TRACKING_DEADBAND_DEG},
     logic::{
-        encoder_fault::{EncoderRecoverySwitches, EncoderTickContext},
+        encoder_fault::{EncoderFaultRecoveryTickRes, EncoderRecoverySwitches, EncoderTickContext},
         fsm::{
             motion::{
                 check_daily_encoder_reset, maintenance::perform_maintenance_transition,
@@ -31,23 +31,31 @@ use crate::{
 
 const PERSIST_NVS: bool = true;
 
+pub(crate) struct TrackingRes {
+    pub(crate) should_rehome: bool,
+    pub(crate) outcome: Option<MoveOutcome>,
+}
+
 pub(crate) fn run_tracking(
     ctx: &mut MotionContext,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-) -> anyhow::Result<Option<MoveOutcome>> {
+) -> anyhow::Result<TrackingRes> {
     if !ctx.switchboard.runtime.tracking.enabled {
         info!("Tracking disabled");
-        return Ok(None);
+        return Ok(TrackingRes {
+            should_rehome: false,
+            outcome: None,
+        });
     }
     let cfg = encoder_recovery_cfg(ctx);
 
-    let outcome = tracking_tick(ctx, mailbox)?;
+    let res = tracking_tick(ctx, mailbox)?;
 
-    if outcome != MoveOutcome::Completed {
-        warn!("Last move aborted: {:?}", outcome);
+    if res.outcome != Some(MoveOutcome::Completed) {
+        warn!("Last move aborted: {:?}", res.outcome);
     }
     if let Err(e) = ctx.encoder_fault.on_move_outcome(
-        outcome.clone(),
+        res.outcome.as_ref().unwrap().clone(),
         &cfg,
         &mut ctx.motion,
         &mut ctx.nvs,
@@ -56,14 +64,14 @@ pub(crate) fn run_tracking(
         error!("Error in encoder fault recovery: {:?}", e);
     }
 
-    Ok(Some(outcome))
+    Ok(res)
 }
 
 pub(crate) fn tracking_tick(
     ctx: &mut MotionContext,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-) -> anyhow::Result<MoveOutcome> {
-    let tracking_done = set_tower_position(ctx, ctx.actual_heading);
+) -> anyhow::Result<TrackingRes> {
+    let res = set_tower_position(ctx, ctx.actual_heading)?;
 
     // Persist only after completed moves.
     match ctx.motion.take_last_move_outcome() {
@@ -75,25 +83,30 @@ pub(crate) fn tracking_tick(
                 SnapshotStore::new(&mut ctx.nvs, ctx.switchboard.effects.persist_nvs)
                     .save_encoder_snapshot(ctx.motion.encoder_ticks_adjusted());
             }
-            Ok(MoveOutcome::Completed)
+            Ok(TrackingRes {
+                should_rehome: res.should_rehome,
+                outcome: Some(MoveOutcome::Completed),
+            })
         }
+
         Some(
             outcome @ (MoveOutcome::AbortedPowerMissing
             | MoveOutcome::AbortedStall
             | MoveOutcome::AbortedOvershoot
             | MoveOutcome::AbortedErrorLoop(_, _, _)),
-        ) => Ok(outcome),
+        ) => Ok(TrackingRes {
+            should_rehome: res.should_rehome,
+            outcome: Some(outcome),
+        }),
         None => {
-            let tracking_done = tracking_done?;
-
             // No movement needed; treat as completed without writing NVS.
-            if !tracking_done.0 {
+            if !res.tracking_done {
                 log::warn!("tracking_done=false but no MoveOutcome recorded; skipping NVS persist");
             }
 
             // TODO: Handle these `Try` better
-            for event in tracking_done.1 {
-                match event {
+            if let Some(message) = res.message {
+                match message {
                     MotionEvent::Angle(payload) => {
                         let serialized = serde_json::to_string(&payload)?;
                         let topic = topic::data_angle(ctx.switchboard.device_id);
@@ -105,7 +118,10 @@ pub(crate) fn tracking_tick(
                         mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
                     }
                     MotionEvent::ErrorLoop(component, message, notes) => {
-                        return Ok(MoveOutcome::AbortedErrorLoop(component, message, notes));
+                        return Ok(TrackingRes {
+                            should_rehome: false,
+                            outcome: Some(MoveOutcome::AbortedErrorLoop(component, message, notes)),
+                        });
                     }
                     MotionEvent::CheckForOTA => {
                         mailbox.send(FSMAddress::Network, FSMCommand::PerformOTA)?;
@@ -113,7 +129,10 @@ pub(crate) fn tracking_tick(
                 }
             }
 
-            Ok(MoveOutcome::Completed)
+            Ok(TrackingRes {
+                should_rehome: res.should_rehome,
+                outcome: Some(MoveOutcome::Completed),
+            })
         }
     }
 }
@@ -134,7 +153,7 @@ pub(crate) fn encoder_recovery_cfg(ctx: &mut MotionContext) -> EncoderRecoverySw
 
 pub(crate) fn run_encoder_fault(
     ctx: &mut MotionContext,
-) -> anyhow::Result<(bool, Option<(telemetry::Component, String, String)>)> {
+) -> anyhow::Result<EncoderFaultRecoveryTickRes> {
     let cfg = encoder_recovery_cfg(ctx);
 
     let mut tick_ctx = EncoderTickContext {
@@ -165,10 +184,16 @@ pub(crate) fn sync_motion_mode_from_nvs(ctx: &mut MotionContext, stepper_switch_
     }
 }
 
+pub(crate) struct SetTowerPositionRes {
+    tracking_done: bool,
+    should_rehome: bool,
+    message: Option<MotionEvent>,
+}
+
 pub(crate) fn set_tower_position(
     ctx: &mut MotionContext,
     location: f32,
-) -> anyhow::Result<(bool, Vec<MotionEvent>)> {
+) -> anyhow::Result<SetTowerPositionRes> {
     let is_daytime = match (
         ctx.clock.as_mut().unwrap().after_sunrise(),
         ctx.clock.as_mut().unwrap().after_sunset(),
@@ -226,7 +251,12 @@ pub(crate) fn set_tower_position(
         // Daytime tracking: no move in deadband, otherwise step by offset.
         if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
             ctx.motion.relay_off();
-            return Ok((true, vec![]));
+
+            return Ok(SetTowerPositionRes {
+                tracking_done: true,
+                should_rehome: false,
+                message: None,
+            });
         }
 
         ctx.motion.relay_on();
@@ -240,7 +270,11 @@ pub(crate) fn set_tower_position(
                 ctx.motion.relay_off();
                 log::warn!("Tracking move aborted: {:?}", move_outcome);
                 // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                return Ok((true, vec![]));
+                return Ok(SetTowerPositionRes {
+                    tracking_done: true,
+                    should_rehome: false,
+                    message: None,
+                });
             }
         }
 
@@ -259,13 +293,12 @@ pub(crate) fn set_tower_position(
             tower_angle,
         };
 
-        Ok((
-            true,
-            vec![MotionEvent::Angle(serde_json::to_string(&payload).unwrap())],
-        ))
+        return Ok(SetTowerPositionRes {
+            tracking_done: true,
+            should_rehome: false,
+            message: Some(MotionEvent::Angle(serde_json::to_string(&payload).unwrap())),
+        });
     } else {
-        let mut messages: Vec<MotionEvent> = vec![];
-
         // Sunset Operation
         if (location - HOME_HEADING_DEG).abs() < 0.01 {
             // Verify home physically when heading says home.
@@ -274,75 +307,31 @@ pub(crate) fn set_tower_position(
                     "Heading near home but limit switch not pressed; verifying home by homing CCW"
                 );
 
-                let mut is_ok = false;
-                if let Ok(ok) = ctx.motion.find_limit_switch_ccw() {
-                    is_ok = ok;
-                    log::info!("Home verification homing succeeded");
-
-                    if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
-                        &mut ctx.nvs,
-                        ctx.switchboard.device_id,
-                        ctx.switchboard.effects.persist_nvs,
-                    ) {
-                        messages.push(error_ticks)
-                    }
-                }
-                if !is_ok {
-                    log::error!("Home verification failed: limit switch could not be found");
-
-                    let component = telemetry::Component::LimitSwitch;
-                    let msg =
-                        String::from("Limit switch not found during sunset home verification");
-                    let notes =
-                        String::from("Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.");
-
-                    messages.push(MotionEvent::ErrorLoop(component, msg, notes));
-
-                    return Ok((false, messages));
-                }
+                return Ok(SetTowerPositionRes {
+                    tracking_done: false,
+                    should_rehome: true,
+                    message: None,
+                });
             }
 
             log::info!("At sleep position");
             // Ensure encoder ticks are truly 0 at home while we sleep.
             ctx.motion.force_zero_if_limit_switch_pressed();
 
-            Ok((true, messages))
-        } else {
-            log::info!("Moving to sleep position...");
-            if let Ok(limit_sw_status) = ctx.motion.find_limit_switch_ccw() {
-                match limit_sw_status {
-                    true => {
-                        log::info!("Limit switch has returned true");
-                        if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
-                            &mut ctx.nvs,
-                            ctx.switchboard.device_id,
-                            ctx.switchboard.effects.persist_nvs,
-                        ) {
-                            messages.push(error_ticks)
-                        }
-                    }
-                    false => {
-                        log::error!(
-                            "Limit switch has returned false, limit switch could not be found"
-                        );
-                        let component = telemetry::Component::LimitSwitch;
-                        let msg =
-                            String::from("Limit switch not found during move-to-sleep homing");
-                        let notes = String::from(
-                            "End-of-day homing sweep failed to locate the limit switch.",
-                        );
-
-                        messages.push(MotionEvent::ErrorLoop(component, msg, notes));
-
-                        return Ok((false, messages));
-                    }
-                }
-            }
-
-            log::info!("Tower has reached sleep position");
-
-            Ok((true, messages))
+            return Ok(SetTowerPositionRes {
+                tracking_done: true,
+                should_rehome: false,
+                message: None,
+            });
         }
+
+        log::info!("Moving to sleep position...");
+
+        return Ok(SetTowerPositionRes {
+            tracking_done: false,
+            should_rehome: true,
+            message: None,
+        });
     }
 }
 
@@ -403,10 +392,19 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
 
         // Fault active, skip tracking this iteration
         let fault_res = run_encoder_fault(ctx)?;
-        if fault_res.0 {
+
+        if fault_res.should_rehome {
+            return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
+        }
+
+        if fault_res.fault_still_active {
             error!("Fault active, skipping tracking iteration");
             return Ok(StateResult::Hold);
-        } else if let Some((component, message, notes)) = fault_res.1 {
+        } else if let (Some(component), Some(message), Some(notes)) = (
+            fault_res.telemetry_component,
+            fault_res.telemetry_message,
+            fault_res.telemetry_notes,
+        ) {
             return Ok(StateResult::Running(Box::new(MotionErrorLoop {
                 component,
                 message,
@@ -426,7 +424,18 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
         }
 
-        if let Some(outcome) = run_tracking(ctx, mailbox)? {
+        info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
+
+        let TrackingRes {
+            should_rehome,
+            outcome,
+        } = run_tracking(ctx, mailbox)?;
+
+        if should_rehome {
+            return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
+        }
+
+        if let Some(outcome) = outcome {
             if let MoveOutcome::AbortedErrorLoop(component, message, notes) = outcome {
                 error!("Catastrophic tracking error; manual intervention required");
                 return Ok(StateResult::Running(Box::new(MotionErrorLoop {
@@ -436,8 +445,6 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
                 })));
             }
         }
-
-        info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
         return Ok(StateResult::Hold);
     }

@@ -6,9 +6,9 @@ use ::fsm::{
 };
 use motion::{
     motion::{calculate_steps, MotionMode},
-    Direction,
+    Direction, MotionEvent,
 };
-use network::telemetry::Component;
+use network::telemetry::{topic, Component};
 
 use crate::{
     config::constants::HOME_HEADING_DEG,
@@ -18,7 +18,7 @@ use crate::{
             MotionErrorLoop, MotionHoming, MotionMoving, MotionTracking,
         },
         FSMAddress,
-        FSMCommand::{self},
+        FSMCommand::{self, MqttPublishJson},
         FSMState,
     },
     storage::snapshot_store::SnapshotStore,
@@ -177,6 +177,22 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
             if ctx.motion.motion_mode == MotionMode::EncoderGuarded {
                 SnapshotStore::new(&mut ctx.nvs, true)
                     .save_encoder_snapshot(ctx.motion.encoder_ticks_adjusted());
+            }
+        }
+
+        // Report error ticks
+        if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
+            &mut ctx.nvs,
+            ctx.switchboard.device_id,
+            ctx.switchboard.effects.persist_nvs,
+        ) {
+            match error_ticks {
+                MotionEvent::HomeErrorTicks(data) => {
+                    let serialized = serde_json::to_string(&data)?;
+                    let topic = topic::data_encoder_error_ticks(ctx.switchboard.device_id);
+                    mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
+                }
+                _ => {}
             }
         }
 

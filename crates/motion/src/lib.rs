@@ -333,7 +333,7 @@ pub mod motion {
             const HOMING_DIRECTION: Direction = Direction::Ccw;
             match HOMING_DIRECTION {
                 Direction::Cw => {
-                    warn!("CW homing requested, but firmware currently only supports CCW homing; homing CCW");
+                    warn!("CW homing requested, but firmware is only configured for CCW. Performing CCW home.");
                 }
                 Direction::Ccw => {}
             };

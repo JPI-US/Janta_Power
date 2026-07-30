@@ -1,7 +1,9 @@
+use core::option::Option::None;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
+use log::warn;
 use motion::{
     motion::{Motion, MotionMode, MoveOutcome},
     Direction,
@@ -75,17 +77,35 @@ impl EncoderFaultRecovery {
         ctx: &mut EncoderTickContext<'_, T>,
         motion: &mut Motion<'_>,
         actual_heading: &mut f32,
-    ) -> anyhow::Result<(bool, Option<(Component, String, String)>)> {
+    ) -> anyhow::Result<EncoderFaultRecoveryTickRes> {
         if self.mode_switched_daily {
-            return Ok((false, None));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: false,
+                should_rehome: false,
+                telemetry_component: None,
+                telemetry_message: None,
+                telemetry_notes: None,
+            });
         }
 
         if !self.active {
-            return Ok((false, None));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: false,
+                should_rehome: false,
+                telemetry_component: None,
+                telemetry_message: None,
+                telemetry_notes: None,
+            });
         }
 
         if !ctx.cfg.enabled {
-            return Ok((false, Some((Component::System, "Encoder fault recovery disabled in switchboard".into(), "Switchboard disables encoder fault recovery; device cannot proceed when encoder has faulted.".into()))));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: false,
+                should_rehome: false,
+                telemetry_component: Some(Component::System),
+                telemetry_message: Some(String::from("Encoder fault recovery disabled in switchboard")),
+                telemetry_notes: Some(String::from("Switchboard disables encoder fault recovery; device cannot proceed when encoder has faulted."))
+            });
         }
 
         let probe_interval = Duration::from_secs(ctx.cfg.probe_interval_secs);
@@ -98,7 +118,13 @@ impl EncoderFaultRecovery {
                 .ok_or_else(|| anyhow!("next_probe_at unexpectedly None"))?;
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
-            return Ok((true, None));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: true,
+                should_rehome: false,
+                telemetry_component: None,
+                telemetry_message: None,
+                telemetry_notes: None,
+            });
         }
 
         log::info!("Encoder fault: probing for recovery...");
@@ -119,11 +145,23 @@ impl EncoderFaultRecovery {
                     ctx.persist_nvs,
                     &ctx.device_id,
                 )?;
-                return Ok((false, None));
+                return Ok(EncoderFaultRecoveryTickRes {
+                    fault_still_active: false,
+                    should_rehome: false,
+                    telemetry_component: None,
+                    telemetry_message: None,
+                    telemetry_notes: None,
+                });
             }
 
             self.next_probe_at = Some(now_i + probe_interval);
-            return Ok((true, None));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: true,
+                should_rehome: false,
+                telemetry_component: None,
+                telemetry_message: None,
+                telemetry_notes: None,
+            });
         }
 
         log::info!(
@@ -150,7 +188,13 @@ impl EncoderFaultRecovery {
                 SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
-            return Ok((false, None));
+            return Ok(EncoderFaultRecoveryTickRes {
+                fault_still_active: false,
+                should_rehome: false,
+                telemetry_component: None,
+                telemetry_message: None,
+                telemetry_notes: None,
+            });
         }
 
         log::warn!(
@@ -158,22 +202,19 @@ impl EncoderFaultRecovery {
             drift,
             ctx.cfg.max_drift_deg
         );
-        let ok = match ctx.cfg.rehome_dir {
-            Direction::Cw => motion.find_limit_switch_cw()?,
-            Direction::Ccw => motion.find_limit_switch_ccw()?,
+        match ctx.cfg.rehome_dir {
+            Direction::Cw => {
+                warn!("CW homing requested, but firmware is only configured for CCW. Performing CCW home.");
+            }
+            Direction::Ccw => {}
         };
-        if !ok {
-            return Ok((false, Some((Component::LimitSwitch, "Re-home failed after drift correction".into(), "Heading drift exceeded tolerance and the re-home sweep could not locate the limit switch.".into()))));
-        }
-
-        *actual_heading = ctx.home_heading_deg;
-        motion.update_position(*actual_heading);
-        SnapshotStore::new(ctx.nvs, ctx.persist_nvs).save_heading(*actual_heading);
-        if motion.motion_mode == MotionMode::EncoderGuarded {
-            SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
-                .save_encoder_snapshot(motion.encoder_ticks_adjusted());
-        }
-        Ok((false, None))
+        return Ok(EncoderFaultRecoveryTickRes {
+            fault_still_active: false,
+            should_rehome: true,
+            telemetry_component: None,
+            telemetry_message: None,
+            telemetry_notes: None,
+        });
     }
 
     /// Switch to StepperOnly for the rest of the day after repeated probe failures.
@@ -236,4 +277,12 @@ pub struct EncoderTickContext<'ctx, T: NvsPartitionId> {
     pub persist_nvs: bool,
     pub device_id: String,
     pub home_heading_deg: f32,
+}
+
+pub struct EncoderFaultRecoveryTickRes {
+    pub fault_still_active: bool,
+    pub should_rehome: bool,
+    pub telemetry_component: Option<Component>,
+    pub telemetry_message: Option<String>,
+    pub telemetry_notes: Option<String>,
 }
