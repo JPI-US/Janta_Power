@@ -1,5 +1,4 @@
-use core::{option::Option::None, time::Duration};
-use std::time::Instant;
+use core::option::Option::None;
 
 use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
@@ -21,10 +20,9 @@ use crate::{
             motion::{
                 check_daily_encoder_reset, maintenance::perform_maintenance_transition,
                 MotionBeginHoming, MotionContext, MotionErrorLoop, MotionTracking,
-                MotionTrackingWait,
             },
             FSMAddress,
-            FSMCommand::{self, MqttPublishJson, UpdateNetworkMotionContext},
+            FSMCommand::{self, MqttPublishJson},
             FSMState,
         },
     },
@@ -373,6 +371,11 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        mailbox.send(
+            FSMAddress::Network,
+            FSMCommand::UpdateNetworkMotionContext(ctx.motion.motion_mode, ctx.actual_heading),
+        )?;
+
         if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionTracking)) {
             return Ok(StateResult::Running(state));
         }
@@ -401,9 +404,8 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
         // Fault active, skip tracking this iteration
         let fault_res = run_encoder_fault(ctx)?;
         if fault_res.0 {
-            return Ok(StateResult::Running(Box::new(MotionTrackingWait {
-                begin: Instant::now(),
-            })));
+            error!("Fault active, skipping tracking iteration");
+            return Ok(StateResult::Hold);
         } else if let Some((component, message, notes)) = fault_res.1 {
             return Ok(StateResult::Running(Box::new(MotionErrorLoop {
                 component,
@@ -437,35 +439,6 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
 
         info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
-        Ok(StateResult::Running(Box::new(MotionTrackingWait {
-            begin: Instant::now(),
-        })))
-    }
-}
-
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWait {
-    fn process(
-        &mut self,
-        ctx: &mut MotionContext,
-        mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &Bulletin<FSMState>,
-        _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
-        >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
-        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionTracking)) {
-            return Ok(StateResult::Running(state));
-        }
-
-        mailbox.send(
-            FSMAddress::Network,
-            UpdateNetworkMotionContext(ctx.motion.motion_mode, ctx.actual_heading),
-        )?;
-
-        if self.begin.elapsed() < Duration::from_mins(5) {
-            return Ok(StateResult::Hold);
-        }
-
-        Ok(StateResult::Running(Box::new(MotionTracking)))
+        return Ok(StateResult::Hold);
     }
 }

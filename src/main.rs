@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         motion_mailbox,
         motion_bulletin,
     )
-    .spawn(8 * 1024, Duration::from_millis(10))?;
+    .spawn(8 * 1024, Duration::from_millis(100))?;
 
     // Network FSM.
     Fsm::new(

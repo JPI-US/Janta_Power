@@ -145,8 +145,9 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
 
         ctx.motion.set_stall_detection_enabled(self.stall_prev);
         ctx.motion.is_homing = false;
+        ctx.motion.need_rehome = false;
 
-        if ctx.motion.lmsw.is_high() {
+        if ctx.motion.lmsw.is_low() {
             log::info!(
                 "Homing OK (dir={}): limit switch found",
                 HOMING_DIRECTION.as_str()

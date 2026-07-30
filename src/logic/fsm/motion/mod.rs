@@ -1,5 +1,4 @@
 use core::option::Option::None;
-use std::time::Instant;
 
 use anyhow::anyhow;
 use chrono::{DateTime, Local};
@@ -93,9 +92,6 @@ pub struct MotionErrorLoop {
     notes: String,
 }
 pub struct MotionTracking;
-pub struct MotionTrackingWait {
-    begin: Instant,
-}
 pub struct MotionMaintenance {
     action: MaintenanceAction,
     return_to:
