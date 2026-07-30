@@ -1,5 +1,5 @@
 use core::{option::Option::None, time::Duration};
-use std::{thread::sleep, time::Instant};
+use std::time::Instant;
 
 use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
@@ -348,45 +348,6 @@ pub(crate) fn set_tower_position(
     }
 }
 
-pub(crate) fn rehome_if_pending(
-    ctx: &mut MotionContext,
-    intro_log: &str,
-) -> anyhow::Result<(bool, Option<(telemetry::Component, String, String)>)> {
-    if !(ctx.motion.need_rehome && ctx.motion.motion_mode == MotionMode::StepperOnly) {
-        return Ok((false, None));
-    }
-    info!("{}", intro_log);
-    const HOMING_DIRECTION: Direction = Direction::Ccw;
-    let limit_sw_status = match HOMING_DIRECTION {
-        Direction::Cw => ctx.motion.find_limit_switch_cw(),
-        Direction::Ccw => ctx.motion.find_limit_switch_ccw(),
-    }?;
-    match limit_sw_status {
-        true => {
-            info!(
-                "Re-homing OK (dir={}): limit switch found",
-                HOMING_DIRECTION.as_str()
-            );
-            ctx.actual_heading = ctx.switchboard.home_heading_deg;
-            ctx.motion.update_position(ctx.actual_heading);
-            if PERSIST_NVS {
-                SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS).save_heading(ctx.actual_heading);
-            }
-            ctx.motion.need_rehome = false;
-        }
-        false => {
-            error!(
-                "Re-homing FAILED (dir={}): limit switch could not be found",
-                HOMING_DIRECTION.as_str()
-            );
-
-            return Ok((false, Some((telemetry::Component::LimitSwitch, "Re-home failed after encoder recovery".into(), "Encoder recovery completed but subsequent re-home could not locate the limit switch.".into()))));
-        }
-    }
-    sleep(Duration::from_secs(2));
-    Ok((true, None))
-}
-
 pub(crate) fn daily_reset(ctx: &mut MotionContext, local_time: &DateTime<Local>) {
     let reset_occurred = check_daily_encoder_reset(&mut ctx.nvs, local_time, PERSIST_NVS);
     if reset_occurred {
@@ -421,20 +382,9 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
 
         daily_reset(ctx, &local_time);
 
-        // Re-home once when transitioning into StepperOnly
-        ctx.motion.detect_stepper_transition();
-        let rehome_res = rehome_if_pending(
-            ctx,
-            "StepperOnly mode detected - re-homing to establish known position",
-        )?;
-        if rehome_res.0 {
+        if ctx.motion.is_rehome_pending()? {
+            info!("StepperOnly mode detected - re-homing to establish known position");
             return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
-        } else if let Some((component, message, notes)) = rehome_res.1 {
-            return Ok(StateResult::Running(Box::new(MotionErrorLoop {
-                component,
-                message,
-                notes,
-            })));
         }
 
         info!("Actual Heading: {}", ctx.motion.location());
@@ -469,20 +419,9 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
         );
 
         // Re-home before tracking if StepperOnly was activated during recovery.
-        let rehome_res = rehome_if_pending(
-            ctx,
-            "StepperOnly mode detected - re-homing to establish known position (CCW)",
-        )?;
-        if rehome_res.0 {
-            return Ok(StateResult::Running(Box::new(MotionTrackingWait {
-                begin: Instant::now(),
-            })));
-        } else if let Some((component, message, notes)) = rehome_res.1 {
-            return Ok(StateResult::Running(Box::new(MotionErrorLoop {
-                component,
-                message,
-                notes,
-            })));
+        if ctx.motion.is_rehome_pending()? {
+            info!("StepperOnly mode detected - re-homing to establish known position (CCW)");
+            return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
         }
 
         if let Some(outcome) = run_tracking(ctx, mailbox)? {

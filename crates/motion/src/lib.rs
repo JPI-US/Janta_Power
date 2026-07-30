@@ -14,12 +14,15 @@ pub mod motion {
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
     };
-    use log::info;
+    use log::{info, warn};
     use network::telemetry::Component;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
 
-    use crate::MotionEvent::{self};
+    use crate::{
+        Direction,
+        MotionEvent::{self},
+    };
 
     // Focused motion modules.
     mod encoder;
@@ -320,6 +323,22 @@ pub mod motion {
                 self.need_rehome = true;
             }
             self.previous_motion_mode = self.motion_mode;
+        }
+
+        pub fn is_rehome_pending(&mut self) -> anyhow::Result<bool> {
+            if !(self.need_rehome && self.motion_mode == MotionMode::StepperOnly) {
+                return Ok(false);
+            }
+
+            const HOMING_DIRECTION: Direction = Direction::Ccw;
+            match HOMING_DIRECTION {
+                Direction::Cw => {
+                    warn!("CW homing requested, but firmware currently only supports CCW homing; homing CCW");
+                }
+                Direction::Ccw => {}
+            };
+
+            Ok(true)
         }
     }
 
