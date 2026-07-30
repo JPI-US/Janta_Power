@@ -11,6 +11,7 @@ pub mod motion {
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
     };
+    use log::info;
     use network::telemetry::Component;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
@@ -56,59 +57,62 @@ pub mod motion {
     }
 
     pub struct Motion<'a> {
-        location: f32,
-        motion_mode: MotionMode,
-        speed: f32,
-        acceleration: u16,
-        motor: Driver,
-        motor_device:
+        pub location: f32,
+        pub motion_mode: MotionMode,
+        pub previous_motion_mode: MotionMode,
+        pub speed: f32,
+        pub acceleration: u16,
+        pub motor: Driver,
+        pub motor_device:
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
-        motor_clock: OperatingSystemClock,
-        relay: PinDriver<'a, Gpio17, Output>,
-        lmsw: PinDriver<'a, Gpio14, Input>,
-        encoder: IncrementalEncoder<
+        pub motor_clock: OperatingSystemClock,
+        pub relay: PinDriver<'a, Gpio17, Output>,
+        pub lmsw: PinDriver<'a, Gpio14, Input>,
+        pub encoder: IncrementalEncoder<
             Rotary,
             PinDriver<'a, Gpio10, Input>,
             PinDriver<'a, Gpio11, Input>,
             QuadStep,
         >,
         // Encoder zero is a software offset: adjusted = raw - offset.
-        encoder_zero_offset: i32,
+        pub encoder_zero_offset: i32,
         // Limit-switch debounce state (active-low switch).
-        lmsw_last_state_pressed: bool,
-        lmsw_last_change: Instant,
-        lmsw_zeroed_this_press: bool,
+        pub lmsw_last_state_pressed: bool,
+        pub lmsw_last_change: Instant,
+        pub lmsw_zeroed_this_press: bool,
         // captured when the limit switch is hit (before we re-zero).
-        last_home_error_ticks: Option<i32>,
+        pub last_home_error_ticks: Option<i32>,
 
         // Stall detector state.
-        motor_power_on: bool,
-        stall_detection_enabled: bool,
-        stall_last_check: Instant,
-        stall_step_pos_at_last_enc_change: i64,
-        stall_last_enc_ticks_seen: i32,
-        stall_reported: bool,
-        stall_consecutive: u8,
+        pub motor_power_on: bool,
+        pub stall_detection_enabled: bool,
+        pub stall_last_check: Instant,
+        pub stall_step_pos_at_last_enc_change: i64,
+        pub stall_last_enc_ticks_seen: i32,
+        pub stall_reported: bool,
+        pub stall_consecutive: u8,
 
         // Ratio-based stall detection state (EncoderGuarded mode only).
-        stall_check_start_encoder_ticks: i32,
-        stall_check_start_step_pos: i64,
-        stall_check_last_interval_step: i64,
+        pub stall_check_start_encoder_ticks: i32,
+        pub stall_check_start_step_pos: i64,
+        pub stall_check_last_interval_step: i64,
 
         // Encoder overshoot protection state (EncoderGuarded mode only).
-        overshoot_enc_start: Option<i32>,
-        overshoot_expected_ticks: Option<i64>,
+        pub overshoot_enc_start: Option<i32>,
+        pub overshoot_expected_ticks: Option<i64>,
 
         // Last attempted move outcome, consumed by `take_last_move_outcome`.
-        last_move_outcome: Option<MoveOutcome>,
+        pub last_move_outcome: Option<MoveOutcome>,
 
         // Tracking soft limits.
-        soft_limits_enabled: bool,
-        soft_limit_min_deg: f32,
-        soft_limit_max_deg: f32,
+        pub soft_limits_enabled: bool,
+        pub soft_limit_min_deg: f32,
+        pub soft_limit_max_deg: f32,
 
         // During homing, overshoot checks are disabled.
-        is_homing: bool,
+        pub is_homing: bool,
+
+        pub need_rehome: bool,
     }
 
     // Direction and step wiring notes:
@@ -140,6 +144,7 @@ pub mod motion {
             Ok(Motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
+                previous_motion_mode: MotionMode::EncoderGuarded,
                 speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
                 acceleration: DEFAULT_ACCEL_STEPS_PER_S2,
                 motor: Driver::new(),
@@ -176,6 +181,7 @@ pub mod motion {
                 soft_limit_max_deg: 290.0,
 
                 is_homing: false,
+                need_rehome: false,
             })
         }
 
@@ -305,32 +311,14 @@ pub mod motion {
             Some(event)
         }
 
-        pub fn lmsw_is_high(&self) -> bool {
-            self.lmsw.is_high()
-        }
-
-        pub fn lmsw_is_low(&self) -> bool {
-            self.lmsw.is_low()
-        }
-
-        pub fn set_homing(&mut self, is_homing: bool) {
-            self.is_homing = is_homing
-        }
-
-        pub fn is_homing(&mut self) -> bool {
-            self.is_homing
-        }
-
-        pub fn is_soft_limits_enabled(&self) -> bool {
-            self.soft_limits_enabled
-        }
-
-        pub fn soft_limit_min_deg(&self) -> f32 {
-            self.soft_limit_min_deg
-        }
-
-        pub fn soft_limit_max_deg(&self) -> f32 {
-            self.soft_limit_max_deg
+        pub fn detect_stepper_transition(&mut self) {
+            if self.motion_mode == MotionMode::StepperOnly
+                && self.previous_motion_mode != MotionMode::StepperOnly
+            {
+                info!("Motion mode switched to StepperOnly - re-homing required");
+                self.need_rehome = true;
+            }
+            self.previous_motion_mode = self.motion_mode;
         }
     }
 

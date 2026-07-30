@@ -11,8 +11,8 @@ use motion::motion::MoveOutcome;
 use crate::logic::fsm::{
     motion::{
         helpers::{
-            daily_reset, detect_stepper_transition, perform_maintenance_transition,
-            rehome_if_pending, run_encoder_fault, run_tracking, sync_motion_mode_from_nvs,
+            daily_reset, perform_maintenance_transition, rehome_if_pending, run_encoder_fault,
+            run_tracking, sync_motion_mode_from_nvs,
         },
         MotionBeginHoming, MotionContext, MotionErrorLoop, MotionTracking, MotionTrackingWait,
     },
@@ -41,7 +41,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
         daily_reset(ctx, &local_time);
 
         // Re-home once when transitioning into StepperOnly
-        detect_stepper_transition(ctx);
+        ctx.motion.detect_stepper_transition();
         let rehome_res = rehome_if_pending(
             ctx,
             "StepperOnly mode detected - re-homing to establish known position",
@@ -139,7 +139,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTrackingWa
 
         mailbox.send(
             FSMAddress::Network,
-            UpdateNetworkMotionContext(ctx.motion_mode, ctx.actual_heading),
+            UpdateNetworkMotionContext(ctx.motion.motion_mode, ctx.actual_heading),
         )?;
 
         if self.begin.elapsed() < Duration::from_mins(5) {

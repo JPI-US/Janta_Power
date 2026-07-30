@@ -45,7 +45,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
             return Ok(StateResult::Running(state));
         }
 
-        let would_skip_homing_on_snapshot = ctx.motion_mode == MotionMode::EncoderGuarded
+        let would_skip_homing_on_snapshot = ctx.motion.motion_mode == MotionMode::EncoderGuarded
             && ctx.restored_from_snapshot
             && ctx.trust_nvs_state;
 
@@ -64,13 +64,13 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
             );
         }
 
-        let should_home_by_mode = ctx.motion_mode == MotionMode::StepperOnly
+        let should_home_by_mode = ctx.motion.motion_mode == MotionMode::StepperOnly
             || !ctx.restored_from_snapshot
             || !ctx.trust_nvs_state
             || home_claim_needs_limit_verify;
 
         if should_home_by_mode && ctx.switchboard.boot.homing.enabled {
-            if ctx.motion.lmsw_is_low() {
+            if ctx.motion.lmsw.is_low() {
                 log::info!("Limit switch already pressed - skipping homing");
                 ctx.motion.update_position(ctx.switchboard.home_heading_deg);
                 ctx.motion.force_zero_if_limit_switch_pressed();
@@ -82,7 +82,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
             }
 
             // Disable overshoot checks while homing.
-            ctx.motion.set_homing(true);
+            ctx.motion.is_homing = true;
 
             // Keep searching until switch is found or travel budget is exhausted.
             // Stall detection is temporarily disabled to avoid abort cascades.
@@ -134,16 +134,16 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
             return Ok(StateResult::Running(state));
         }
 
-        if self.steps_left < 0 && ctx.motion.lmsw_is_high() {
+        if self.steps_left < 0 && ctx.motion.lmsw.is_high() {
             let steps = calculate_steps(-1.0);
 
             return Ok(StateResult::Running(Box::new(MotionMoving { steps })));
         }
 
         ctx.motion.set_stall_detection_enabled(self.stall_prev);
-        ctx.motion.set_homing(false);
+        ctx.motion.is_homing = false;
 
-        if ctx.motion.lmsw_is_high() {
+        if ctx.motion.lmsw.is_high() {
             log::info!(
                 "Homing OK (dir={}): limit switch found",
                 HOMING_DIRECTION.as_str()
@@ -170,7 +170,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         ctx.actual_heading = ctx.switchboard.home_heading_deg;
         if PERSIST_NVS {
             SnapshotStore::new(&mut ctx.nvs, true).save_heading(ctx.switchboard.home_heading_deg);
-            if ctx.motion_mode == MotionMode::EncoderGuarded {
+            if ctx.motion.motion_mode == MotionMode::EncoderGuarded {
                 SnapshotStore::new(&mut ctx.nvs, true)
                     .save_encoder_snapshot(ctx.motion.encoder_ticks_adjusted());
             }

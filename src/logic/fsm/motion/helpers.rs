@@ -200,9 +200,9 @@ pub(crate) fn set_tower_position(
 
         // Clamp daytime target heading to soft limits.
         let target_raw = (location as f64) + angle_offset_raw;
-        let target_clamped = if ctx.motion.is_soft_limits_enabled() {
-            let min = ctx.motion.soft_limit_min_deg() as f64;
-            let max = ctx.motion.soft_limit_max_deg() as f64;
+        let target_clamped = if ctx.motion.soft_limits_enabled {
+            let min = ctx.motion.soft_limit_min_deg as f64;
+            let max = ctx.motion.soft_limit_max_deg as f64;
             if target_raw < min {
                 log::warn!(
                     "SOFT_LIMIT clamp: target_raw={:.2} < min={:.2} -> clamping",
@@ -280,7 +280,7 @@ pub(crate) fn set_tower_position(
         // Sunset Operation
         if (location - HOME_HEADING_DEG).abs() < 0.01 {
             // Verify home physically when heading says home.
-            if ctx.motion.lmsw_is_high() {
+            if ctx.motion.lmsw.is_high() {
                 log::warn!(
                     "Heading near home but limit switch not pressed; verifying home by homing CCW"
                 );
@@ -384,12 +384,9 @@ pub(crate) fn run_encoder_fault(
         home_heading_deg: ctx.switchboard.home_heading_deg,
     };
 
-    let fault_active = ctx.encoder_fault.tick(
-        &mut tick_ctx,
-        &mut ctx.motion,
-        ctx.motion_mode,
-        &mut ctx.actual_heading,
-    )?;
+    let fault_active =
+        ctx.encoder_fault
+            .tick(&mut tick_ctx, &mut ctx.motion, &mut ctx.actual_heading)?;
 
     Ok(fault_active)
 }
@@ -397,12 +394,12 @@ pub(crate) fn run_encoder_fault(
 pub(crate) fn sync_motion_mode_from_nvs(ctx: &mut MotionContext, stepper_switch_log: &str) {
     let mode = SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS)
         .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-    if mode != ctx.motion_mode {
-        ctx.motion_mode = mode;
-        ctx.motion.set_motion_mode(ctx.motion_mode);
-        if ctx.motion_mode == MotionMode::StepperOnly {
+    if mode != ctx.motion.motion_mode {
+        ctx.motion.motion_mode = mode;
+        ctx.motion.set_motion_mode(ctx.motion.motion_mode);
+        if ctx.motion.motion_mode == MotionMode::StepperOnly {
             info!("{}", stepper_switch_log);
-            ctx.need_rehome = true;
+            ctx.motion.need_rehome = true;
         }
     }
 }
@@ -411,7 +408,7 @@ pub(crate) fn rehome_if_pending(
     ctx: &mut MotionContext,
     intro_log: &str,
 ) -> anyhow::Result<(bool, Option<(Component, String, String)>)> {
-    if !(ctx.need_rehome && ctx.motion_mode == MotionMode::StepperOnly) {
+    if !(ctx.motion.need_rehome && ctx.motion.motion_mode == MotionMode::StepperOnly) {
         return Ok((false, None));
     }
     info!("{}", intro_log);
@@ -431,7 +428,7 @@ pub(crate) fn rehome_if_pending(
             if PERSIST_NVS {
                 SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS).save_heading(ctx.actual_heading);
             }
-            ctx.need_rehome = false;
+            ctx.motion.need_rehome = false;
         }
         false => {
             error!(
@@ -446,24 +443,14 @@ pub(crate) fn rehome_if_pending(
     Ok((true, None))
 }
 
-pub(crate) fn detect_stepper_transition(ctx: &mut MotionContext) {
-    if ctx.motion_mode == MotionMode::StepperOnly
-        && ctx.previous_motion_mode != MotionMode::StepperOnly
-    {
-        info!("Motion mode switched to StepperOnly - re-homing required");
-        ctx.need_rehome = true;
-    }
-    ctx.previous_motion_mode = ctx.motion_mode;
-}
-
 pub(crate) fn daily_reset(ctx: &mut MotionContext, local_time: &DateTime<Local>) {
     let reset_occurred = check_daily_encoder_reset(&mut ctx.nvs, local_time, PERSIST_NVS);
     if reset_occurred {
-        ctx.motion_mode = SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS)
+        ctx.motion.motion_mode = SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS)
             .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-        ctx.motion.set_motion_mode(ctx.motion_mode);
+        ctx.motion.set_motion_mode(ctx.motion.motion_mode);
         ctx.encoder_fault.set_mode_switched_daily(false);
-        let mode_str = match ctx.motion_mode {
+        let mode_str = match ctx.motion.motion_mode {
             MotionMode::StepperOnly => "StepperOnly",
             MotionMode::EncoderGuarded => "EncoderGuarded",
         };

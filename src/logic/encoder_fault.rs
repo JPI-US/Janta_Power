@@ -78,7 +78,6 @@ impl EncoderFaultRecovery {
         &mut self,
         ctx: &mut EncoderTickContext<'_, T>,
         motion: &mut Motion<'_>,
-        motion_mode: MotionMode,
         actual_heading: &mut f32,
     ) -> anyhow::Result<(bool, Option<(Component, String, String)>)> {
         if self.mode_switched_daily {
@@ -151,7 +150,7 @@ impl EncoderFaultRecovery {
             *actual_heading = candidate_heading;
             motion.update_position(*actual_heading);
             SnapshotStore::new(ctx.nvs, ctx.persist_nvs).save_heading(*actual_heading);
-            if motion_mode == MotionMode::EncoderGuarded {
+            if motion.motion_mode == MotionMode::EncoderGuarded {
                 SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
@@ -174,7 +173,7 @@ impl EncoderFaultRecovery {
         *actual_heading = ctx.home_heading_deg;
         motion.update_position(*actual_heading);
         SnapshotStore::new(ctx.nvs, ctx.persist_nvs).save_heading(*actual_heading);
-        if motion_mode == MotionMode::EncoderGuarded {
+        if motion.motion_mode == MotionMode::EncoderGuarded {
             SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                 .save_encoder_snapshot(motion.encoder_ticks_adjusted());
         }
