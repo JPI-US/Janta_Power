@@ -1,6 +1,7 @@
 use core::option::Option::None;
 use std::time::{Duration, Instant};
 
+use ::network::telemetry;
 use anyhow::anyhow;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::warn;
@@ -8,7 +9,6 @@ use motion::{
     motion::{Motion, MotionMode, MoveOutcome},
     Direction,
 };
-use network::telemetry::Component;
 
 use crate::storage::snapshot_store::SnapshotStore;
 
@@ -102,7 +102,7 @@ impl EncoderFaultRecovery {
             return Ok(EncoderFaultRecoveryTickRes {
                 fault_still_active: false,
                 should_rehome: false,
-                telemetry_component: Some(Component::System),
+                telemetry_component: Some(telemetry::Component::System),
                 telemetry_message: Some(String::from("Encoder fault recovery disabled in switchboard")),
                 telemetry_notes: Some(String::from("Switchboard disables encoder fault recovery; device cannot proceed when encoder has faulted."))
             });
@@ -139,18 +139,19 @@ impl EncoderFaultRecovery {
 
             if self.probe_failure_count >= MAX_PROBE_FAILURES {
                 log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
-                self.switch_to_stepper_only_daily(
+                let res = self.switch_to_stepper_only_daily(
                     motion,
                     ctx.nvs,
                     ctx.persist_nvs,
                     &ctx.device_id,
                 )?;
+
                 return Ok(EncoderFaultRecoveryTickRes {
                     fault_still_active: false,
                     should_rehome: false,
-                    telemetry_component: None,
-                    telemetry_message: None,
-                    telemetry_notes: None,
+                    telemetry_component: Some(res.0),
+                    telemetry_message: Some(res.1),
+                    telemetry_notes: Some(res.2),
                 });
             }
 
@@ -224,7 +225,7 @@ impl EncoderFaultRecovery {
         nvs: &mut EspNvs<T>,
         persist_nvs: bool,
         _device_id: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(telemetry::Component, String, String)> {
         motion.set_motion_mode(MotionMode::StepperOnly);
 
         let current_date = rtc::timezone::local_time().format("%Y-%m-%d").to_string();
@@ -237,29 +238,20 @@ impl EncoderFaultRecovery {
 
         // One-shot critical: encoder probes exhausted; device falls back to
         // Stepper-only mode until midnight retry.
-        let _notes = format!(
-            "Probe failures reached the daily threshold ({}); device will retry encoder recovery at midnight.",
-            self.probe_failure_count
-        );
-        let _current_time = rtc::timezone::local_time()
-            .format(network::telemetry::TIME_FORMAT)
-            .to_string();
-        // TODO: Actually this error
-        // let _ = network::telemetry::publish_error(
-        //     mqtt,
-        //     device_id,
-        //     &current_time,
-        //     network::telemetry::Component::Encoder,
-        //     "Encoder probes exhausted, switched to Stepper-only",
-        //     &notes,
-        // );
 
         self.mode_switched_daily = true;
         self.active = false;
         self.probe_failure_count = 0;
 
         log::error!("Encoder disabled for the day. Device now operating in StepperOnly mode. Will retry at midnight.");
-        Ok(())
+
+        let component = telemetry::Component::Encoder;
+        let message = String::from("Encoder probes exhausted, switched to Stepper-only");
+        let notes = format!(
+            "Probe failures reached the daily threshold ({}); device will retry encoder recovery at midnight.",
+            self.probe_failure_count
+        );
+        Ok((component, message, notes))
     }
 }
 
@@ -282,7 +274,7 @@ pub struct EncoderTickContext<'ctx, T: NvsPartitionId> {
 pub struct EncoderFaultRecoveryTickRes {
     pub fault_still_active: bool,
     pub should_rehome: bool,
-    pub telemetry_component: Option<Component>,
+    pub telemetry_component: Option<telemetry::Component>,
     pub telemetry_message: Option<String>,
     pub telemetry_notes: Option<String>,
 }
