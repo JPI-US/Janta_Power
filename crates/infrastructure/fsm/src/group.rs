@@ -1,3 +1,5 @@
+//! Shared-thread scheduler for one or more [`crate::Runnable`] machines.
+
 use std::{
     io,
     thread::{sleep, JoinHandle},
@@ -6,6 +8,10 @@ use std::{
 
 use crate::{FsmStatus, Runnable};
 
+/// Co-schedules several machines on a single OS thread.
+///
+/// Each loop iteration steps every machine once, then sleeps so the iteration
+/// lasts at least `min_thread_period`.
 pub struct Group {
     name: String,
     thread_stack_size: usize,
@@ -14,6 +20,13 @@ pub struct Group {
 }
 
 impl Group {
+    /// Creates an empty group that will run under `name`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Thread name used when the group is spawned.
+    /// * `thread_stack_size` - Stack size in bytes for the spawned thread.
+    /// * `min_thread_period` - Minimum duration of each step-loop iteration.
     pub fn new(
         name: impl Into<String>,
         thread_stack_size: usize,
@@ -27,6 +40,15 @@ impl Group {
         }
     }
 
+    /// Spawns the group's thread and runs the step loop until the process exits.
+    ///
+    /// [`FsmStatus::Running`] transitions are logged. [`FsmStatus::Hold`] is
+    /// silent. [`FsmStatus::Stopped`] or a step error aborts the remainder of
+    /// the current round-robin pass; the outer loop continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the OS thread cannot be spawned.
     pub fn spawn(mut self) -> Result<JoinHandle<()>, io::Error> {
         std::thread::Builder::new()
             .name(self.name.clone())
@@ -60,6 +82,11 @@ impl Group {
             })
     }
 
+    /// Appends a machine to the round-robin set.
+    ///
+    /// # Arguments
+    ///
+    /// * `machine` - Runnable to step on each loop iteration.
     pub fn add(&mut self, machine: Box<dyn Runnable>) {
         self.machines.push(machine);
     }
