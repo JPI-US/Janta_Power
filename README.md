@@ -13,7 +13,7 @@ These are generic setup instructions. Specific steps will vary between systems.
 
  ### Linux:
  * On Linux, you may need to install a C linker (through something like `build-essentials` on Debian or `base-devel` on Arch).
- * [Espup environment variables](https://github.com/esp-rs/espup/?tab=readme-ov-file#environment-variables-setup)
+ * [Espup environment variables](https://github.com/esp-rs/espup/?tab=readme-ov-file#environment-variables-setup).
 
 ## Steps:
 GitHub does not allow password authentication from the command line. To clone the repository, you must first authenticate using GitHub CLI.
