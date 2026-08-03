@@ -11,9 +11,9 @@ These are generic setup instructions. Specific steps will vary between systems.
 * [Python](https://www.python.org/downloads/)
 
  ### Linux:
- * On Linux, you may need to install a C linker (through something like `build-essentials` on Debian or `base-devel` on Arch).
+ * You may need to install a C linker (through something like `build-essentials` on Debian or `base-devel` on Arch).
  * [Espup environment variables](https://github.com/esp-rs/espup/?tab=readme-ov-file#environment-variables-setup).
- * On Linux systems, Python venv is often a seperate package. On Debian, for example, you must install the `python3` and `python3-venv` packages.
+ * Python venv is often a seperate package. On Debian, for example, you must install the `python3` and `python3-venv` packages.
 
 ## Steps:
 GitHub does not allow password authentication from the command line. To clone the repository, you must first authenticate using GitHub CLI.
