@@ -3,12 +3,12 @@ These are generic setup instructions. Specific steps will vary between systems.
 
 ## Prerequisites:
 ### General:
-* [Git](https://git-scm.com/install/)
-* [Rust](https://rustup.rs/)
-  * [Rust toolchain for Xtensa Devices](https://docs.espressif.com/projects/rust/book/getting-started/toolchain.html#xtensa-devices)
+* [Git](https://git-scm.com/install/).
+* [Rust](https://rustup.rs/).
+  * [Rust toolchain for Xtensa Devices](https://docs.espressif.com/projects/rust/book/getting-started/toolchain.html#xtensa-devices).
 * ldproxy (`cargo install ldproxy`).
 * espflash (`cargo install espflash`).    
-* [Python](https://www.python.org/downloads/)
+* [Python](https://www.python.org/downloads/).
 
  ### Linux:
  * [GitHub CLI](https://github.com/cli/cli#installation).
