@@ -5,10 +5,6 @@ use std::time::{Duration, Instant};
 use super::{calculate_steps, Motion, MoveOutcome};
 
 impl Motion<'_> {
-    pub fn switch_pressed(&mut self) -> bool {
-        self.lmsw.is_low()
-    }
-
     // Retrieve and clear the most recent home error.
     pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
         self.last_home_error_ticks.take()
@@ -30,7 +26,7 @@ impl Motion<'_> {
     // drift metric is silently destroyed. The same invariant applies to
     // `poll_limit_switch_zeroing` below.
     pub(crate) fn force_zero_if_limit_switch_pressed(&mut self) {
-        if self.lmsw.is_low() {
+        if self.lmsw_active() {
             // 1. Read drift relative to the previous zero reference.
             let home_error = self.encoder_ticks_adjusted();
             // 2. Stash it for the publish site to consume later.
@@ -55,7 +51,7 @@ impl Motion<'_> {
     // Called from `run()` while moving: edge-detect, debounce, and zero on press.
     pub(crate) fn poll_limit_switch_zeroing(&mut self) {
         // Switch is active-low.
-        let pressed = self.lmsw.is_low();
+        let pressed = self.lmsw_active();
         let now = Instant::now();
         if pressed != self.lmsw_last_state_pressed {
             self.lmsw_last_state_pressed = pressed;
@@ -108,7 +104,7 @@ impl Motion<'_> {
         let stall_prev = self.stall_detection_enabled();
         self.set_stall_detection_enabled(false);
 
-        if self.lmsw.is_low() {
+        if self.lmsw_active() {
             log::info!("Limit switch already pressed - skipping homing");
             self.update_position(HOME_HEADING_DEG);
             self.force_zero_if_limit_switch_pressed();
@@ -122,7 +118,7 @@ impl Motion<'_> {
         log::info!("Looking for the limit switch (CCW search, max 350)");
 
         let mut max_steps = calculate_steps(-350.0);
-        while max_steps < 0 && self.lmsw.is_high() {
+        while max_steps < 0 && !self.lmsw_active() {
             let step_movement = calculate_steps(-1.0);
             if self.move_by(step_movement) != MoveOutcome::Completed {
                 self.relay_off();

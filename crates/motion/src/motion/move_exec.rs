@@ -238,7 +238,7 @@ impl Motion<'_> {
                 self.poll_limit_switch_zeroing();
 
                 // During homing, stop immediately once switch is pressed.
-                if self.is_homing && self.lmsw.is_low() {
+                if self.is_homing && self.lmsw_active() {
                     log::info!(
                         "Limit switch pressed during homing - found home, stopping immediately"
                     );

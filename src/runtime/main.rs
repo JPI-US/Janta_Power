@@ -385,6 +385,7 @@ fn main() -> anyhow::Result<()> {
         encoder_a,
         encoder_b,
         sw.runtime.relay_polarity,
+        sw.runtime.limit_switch_polarity,
     );
 
     motion.init();
@@ -779,9 +780,8 @@ fn main() -> anyhow::Result<()> {
         motion_mode == MotionMode::EncoderGuarded && restored_from_snapshot && trust_nvs_state;
     let restored_claims_mechanical_home =
         (actual_heading - sw.home_heading_deg).abs() < HOME_HEADING_VERIFY_EPS_DEG;
-    let home_claim_needs_limit_verify = would_skip_homing_on_snapshot
-        && restored_claims_mechanical_home
-        && !motion.switch_pressed();
+    let home_claim_needs_limit_verify =
+        would_skip_homing_on_snapshot && restored_claims_mechanical_home && !motion.lmsw_active();
     if home_claim_needs_limit_verify {
         log::info!(
             "Restored heading matches home ({}) but limit switch not pressed; homing to verify",

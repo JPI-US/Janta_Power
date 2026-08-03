@@ -55,7 +55,7 @@ pub mod motion {
     }
 
     #[derive(Copy, Clone, Debug, PartialEq)]
-    pub enum RelayPolarity {
+    pub enum ActiveLevel {
         ActiveLow,
         ActiveHigh,
     }
@@ -122,7 +122,8 @@ pub mod motion {
         // During homing, overshoot checks are disabled.
         is_homing: bool,
 
-        relay_polarity: RelayPolarity,
+        relay_active_level: ActiveLevel,
+        limit_switch_active_level: ActiveLevel,
     }
 
     // Direction and step wiring notes:
@@ -136,7 +137,8 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
-            relay_polarity: RelayPolarity,
+            relay_active_level: ActiveLevel,
+            limit_switch_active_level: ActiveLevel,
         ) -> Motion<'a> {
             let step = PinDriver::output(step_pin).unwrap();
             let direction = PinDriver::output(direction_pin).unwrap();
@@ -146,8 +148,15 @@ pub mod motion {
             let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
             let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
             let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
-            lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
-                .unwrap_or_default();
+
+            match limit_switch_active_level {
+                ActiveLevel::ActiveHigh => lmsw
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
+                    .unwrap_or_default(),
+                ActiveLevel::ActiveLow => lmsw
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
+                    .unwrap_or_default(),
+            }
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
@@ -193,7 +202,8 @@ pub mod motion {
 
                 is_homing: false,
 
-                relay_polarity,
+                relay_active_level,
+                limit_switch_active_level,
             }
         }
 
@@ -238,7 +248,7 @@ pub mod motion {
         #[inline]
         pub(crate) fn relay_on(&mut self) {
             // Active-low: LOW = ON
-            if self.relay_polarity == RelayPolarity::ActiveLow {
+            if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_low().unwrap_or_default();
             }
             // Active-high: HIGH = ON
@@ -250,12 +260,19 @@ pub mod motion {
         #[inline]
         pub(crate) fn relay_off(&mut self) {
             // Active-low: HIGH = OFF
-            if self.relay_polarity == RelayPolarity::ActiveLow {
+            if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_high().unwrap_or_default();
             }
             // Active-high: LOW = OFF
             else {
                 self.relay.set_low().unwrap_or_default();
+            }
+        }
+
+        pub fn lmsw_active(&self) -> bool {
+            match self.limit_switch_active_level {
+                ActiveLevel::ActiveHigh => self.lmsw.is_high(),
+                ActiveLevel::ActiveLow => self.lmsw.is_low(),
             }
         }
 
@@ -452,7 +469,8 @@ pub mod motion {
                 // Sunset Operation
                 if (location - HOME_HEADING_DEG).abs() < 0.01 {
                     // Verify home physically when heading says home.
-                    if self.lmsw.is_high() {
+
+                    if self.lmsw_active() {
                         log::warn!(
                             "Heading near home but limit switch not pressed; verifying home by homing CCW"
                         );
