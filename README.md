@@ -2,8 +2,8 @@
 These are generic setup instructions. Specific steps will vary between systems.
 
 ## Prerequisites:
+### General
 * [Git](https://git-scm.com/install/)
-* [GitHub CLI](https://github.com/cli/cli#installation)
 * [Rust](https://rustup.rs/)
   * [Rust toolchain for Xtensa Devices](https://docs.espressif.com/projects/rust/book/getting-started/toolchain.html#xtensa-devices)
 * ldproxy (`cargo install ldproxy`).
@@ -11,17 +11,18 @@ These are generic setup instructions. Specific steps will vary between systems.
 * [Python](https://www.python.org/downloads/)
 
  ### Linux:
+ * [GitHub CLI](https://github.com/cli/cli#installation).
  * You may need to install a C linker (through something like `build-essentials` on Debian or `base-devel` on Arch).
  * [Espup environment variables](https://github.com/esp-rs/espup/?tab=readme-ov-file#environment-variables-setup).
  * Python venv is often a seperate package. On Debian, for example, you must install the `python3` and `python3-venv` packages.
 
 ## Steps:
-GitHub does not allow password authentication from the command line. To clone the repository, you must first authenticate using GitHub CLI.
+**On Linux**, you must first authenticate using GitHub CLI.
 ```sh
 gh auth login
 ```
 
-After authenticating, clone the repository.
+Clone the repository.
 ```sh
 git clone https://github.com/JPI-US/Janta_Power
 ```
