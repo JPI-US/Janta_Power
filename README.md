@@ -2,7 +2,7 @@
 These are generic setup instructions. Specific steps will vary between systems.
 
 ## Prerequisites:
-### General
+### General:
 * [Git](https://git-scm.com/install/)
 * [Rust](https://rustup.rs/)
   * [Rust toolchain for Xtensa Devices](https://docs.espressif.com/projects/rust/book/getting-started/toolchain.html#xtensa-devices)
