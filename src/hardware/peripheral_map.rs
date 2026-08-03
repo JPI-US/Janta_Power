@@ -1,13 +1,18 @@
 use anyhow::{anyhow, Context, Result};
 use esp_idf_svc::hal::{
-    gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
+    delay::Ets,
+    gpio::{Gpio4, Gpio5, Gpio6},
     i2c::{I2cConfig, I2cDriver},
     modem::Modem,
     prelude::*,
 };
-use motion::Motion;
+use hdc1080::Hdc1080;
+use log::{info, warn};
+use motion::motion::Motion;
 use rgb_led::Led;
-use shared_bus::BusManager;
+use shared_bus::{BusManager, I2cProxy};
+
+use crate::hardware::buttons::Buttons;
 
 /// Collection of initialized hardware peripherals used by the device.
 pub struct PeripheralMap<'a> {
@@ -20,17 +25,15 @@ pub struct PeripheralMap<'a> {
     /// Motion control peripherals.
     pub motion: Motion<'a>,
 
-    /// Maintenance mode button input.
-    pub maintenance_button: PinDriver<'a, Gpio5, Input>,
-
-    /// Counter-clockwise movement button input.
-    pub ccw_button: PinDriver<'a, Gpio4, Input>,
-
-    /// Clockwise movement button input.
-    pub cw_button: PinDriver<'a, Gpio6, Input>,
-
     /// Cellular modem peripheral.
     pub modem: Modem,
+
+    /// Temperature sensor.
+    pub temperature_sensor:
+        Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
+
+    /// East, West, and maintenance buttons
+    pub buttons: Buttons<'static, Gpio5, Gpio4, Gpio6>,
 }
 
 impl PeripheralMap<'_> {
@@ -74,25 +77,40 @@ impl PeripheralMap<'_> {
             peripherals.pins.gpio11,
         )?;
 
-        // maintenance buttons
-        let maintenance_button = PinDriver::input(peripherals.pins.gpio5)
-            .context("Failed to create maintenance button input driver")?;
-        let ccw_button = PinDriver::input(peripherals.pins.gpio4)
-            .context("Failed to create CCW button input driver")?;
-        let cw_button = PinDriver::input(peripherals.pins.gpio6)
-            .context("Failed to create CW button input driver")?;
+        let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {
+            Ok(mut sensor) => {
+                let _ = sensor.init();
+                if sensor.get_device_id().unwrap_or(0) == 0x1050 {
+                    info!("HDC1080 detected");
+                    Some(sensor)
+                } else {
+                    warn!("HDC1080 not detected on I2C; temp telemetry disabled");
+                    None
+                }
+            }
+            Err(e) => {
+                warn!("HDC1080 init failed: {:?}; temp telemetry disabled", e);
+                None
+            }
+        };
 
         // modem
         let modem = peripherals.modem;
+
+        // buttons
+        let buttons = Buttons::new(
+            peripherals.pins.gpio5,
+            peripherals.pins.gpio4,
+            peripherals.pins.gpio6,
+        )?;
 
         Ok(Self {
             i2c_bus,
             led,
             motion,
-            maintenance_button,
-            ccw_button,
-            cw_button,
             modem,
+            temperature_sensor,
+            buttons,
         })
     }
 }

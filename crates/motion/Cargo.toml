@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 accel-stepper = { workspace = true, features = ["hal", "std"] }
 anyhow.workspace = true
-astronav = { version = "0.2.5", features = ["noaa-sun"] }
 chrono = { workspace = true, features = ["clock"] }
 clock.workspace = true
 ds323x.workspace = true

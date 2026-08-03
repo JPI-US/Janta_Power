@@ -1,6 +1,7 @@
 pub mod clock {
     use core::option::Option::None;
 
+    use astronav::coords::noaa_sun::NOAASun;
     use chrono::prelude::*;
     use ds323x::{DateTimeAccess, Ds323x, Rtcc};
 
@@ -143,6 +144,44 @@ pub mod clock {
         ///Returns a unix timestamp based on the current date time provided
         pub fn datetime_to_unix_timestamp(&mut self) -> Result<i64, ds323x::Error> {
             Ok(self.rtc_now_utc()?.timestamp())
+        }
+
+        pub fn noaa_sun(&mut self) -> NOAASun {
+            let now = Local::now();
+
+            // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
+            // (same instant as settimeofday after RTC/NTP) so h/m/s match tz_offset_h.
+            let timezone = (now.offset().local_minus_utc() as f32) / 3600.0;
+
+            let sun = NOAASun {
+                year: now.year() as u16,
+                doy: now.ordinal() as u16,
+                long: self.get_longitude() as f32,
+                lat: self.get_latitude() as f32,
+                timezone,
+                hour: now.hour() as u8,
+                min: now.minute() as u8,
+                sec: now.second() as u8,
+            };
+
+            log::info!(
+                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
+                    sun.year,
+                    sun.doy,
+                    sun.lat,
+                    sun.long,
+                    timezone,
+                    sun.hour,
+                    sun.min,
+                    sun.sec
+                );
+            log::info!(
+                "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
+                now.format("%Y-%m-%d %H:%M:%S %:z"),
+                self.get_date_time()
+            );
+
+            sun
         }
     }
 }

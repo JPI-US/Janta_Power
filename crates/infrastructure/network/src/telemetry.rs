@@ -71,7 +71,7 @@ pub mod topic {
 // ---------- Shared enums ----------
 
 /// Tower sub-component taxonomy used by `logs/*` and `component/*/status` topics.
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Component {
     Motor,
@@ -118,6 +118,9 @@ pub struct BootLog<'a> {
     pub message: &'a str,
     pub firmware_version: &'a str,
     pub component: Component,
+    /// Why the ESP32 restarted, read from the reset cause register (e.g.
+    /// `power_on`, `brownout`, `panic`, `task_watchdog`, `software`).
+    pub reset_reason: &'a str,
     pub notes: &'a str,
 }
 
@@ -197,11 +200,11 @@ pub struct Angle<'a> {
 /// suitable for dashboard filters. `result` is the same information rendered
 /// as a human-readable string for log panels / notifications.
 #[derive(Serialize)]
-pub struct EncoderErrorTicks<'a> {
-    pub current_time: &'a str,
+pub struct EncoderErrorTicks {
+    pub current_time: String,
     pub encoder_error_ticks: i32,
     pub category: EncoderErrorCategory,
-    pub result: &'a str,
+    pub result: String,
 }
 
 /// Structured bucket for the encoder drift metric.

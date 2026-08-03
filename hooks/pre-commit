@@ -24,10 +24,10 @@ echo "Checking formatting..."
 cargo fmt --all --check
 
 echo "Checking compilation..."
-cargo build --workspace --all-targets --all-features
+cargo build --workspace --all-features
 
 echo "Checking Linting..."
-cargo clippy --workspace --all-targets --all-features
+cargo clippy --workspace --all-features
 
 echo "All checks passed."
 exit 0

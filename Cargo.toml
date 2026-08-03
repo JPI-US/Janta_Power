@@ -7,7 +7,7 @@ authors = [
 ]
 edition = "2021"
 resolver = "2"
-rust-version = "1.77"
+rust-version = "1.91"
 
 [package.metadata.esp-idf]
 partition_table = "partitions.csv"
@@ -30,6 +30,7 @@ members = [
 [workspace.dependencies]
 accel-stepper = { path = "crates/drivers/accel-stepper" }
 anyhow = "1.0.86"
+crossbeam-channel = "0.5.16"
 base64 = "0.22.1"
 chrono = "0.4.40"
 clock = { path = "crates/infrastructure/clock" }
@@ -39,6 +40,7 @@ embedded-hal = "1.0.0"
 embedded-svc = "0.28.0"
 esp-idf-svc = "0.51"
 esp-idf-sys = "0.36.1"
+fsm = { path = "crates/infrastructure/fsm" }
 hdc1080 = { path = "crates/sensors/hdc1080" }
 heapless = "0.8.0"
 libc = "0.2"
@@ -84,6 +86,7 @@ heapless.workspace = true
 log.workspace = true
 motion.workspace = true
 network.workspace = true
+fsm.workspace = true
 ota.workspace = true
 pid = "4.0.0"
 rgb.workspace = true
@@ -98,6 +101,7 @@ shared-bus = { workspace = true, features = [
 ] }
 toml = "0.8"
 wifi.workspace = true
+crossbeam-channel.workspace = true
 
 [build-dependencies]
 dotenv.workspace = true

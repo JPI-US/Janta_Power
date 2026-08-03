@@ -2,9 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
-
-use super::{calculate_steps, Motion, MoveOutcome};
+use super::Motion;
 
 impl Motion<'_> {
     pub fn switch_pressed(&mut self) -> bool {
@@ -31,7 +29,7 @@ impl Motion<'_> {
     // If step 3 runs before step 1/2, the stashed value becomes ~0 and the
     // drift metric is silently destroyed. The same invariant applies to
     // `poll_limit_switch_zeroing` below.
-    pub(crate) fn force_zero_if_limit_switch_pressed(&mut self) {
+    pub fn force_zero_if_limit_switch_pressed(&mut self) {
         if self.lmsw.is_low() {
             // 1. Read drift relative to the previous zero reference.
             let home_error = self.encoder_ticks_adjusted();
@@ -89,68 +87,5 @@ impl Motion<'_> {
                 self.encoder_zero_offset
             );
         }
-    }
-
-    pub fn find_limit_switch_cw(&mut self) -> Result<bool> {
-        // Firmware is currently CCW-only for homing.
-        log::warn!(
-            "Homing requested CW, but firmware is configured for CCW-only homing; using CCW search"
-        );
-        self.find_limit_switch_ccw()
-    }
-
-    pub fn find_limit_switch_ccw(&mut self) -> Result<bool> {
-        use super::HOME_HEADING_DEG;
-
-        // Disable overshoot checks while homing.
-        self.is_homing = true;
-
-        // Keep searching until switch is found or travel budget is exhausted.
-        // Stall detection is temporarily disabled to avoid abort cascades.
-        let stall_prev = self.stall_detection_enabled();
-        self.set_stall_detection_enabled(false);
-
-        if self.lmsw.is_low() {
-            log::info!("Limit switch already pressed - skipping homing");
-            self.update_position(HOME_HEADING_DEG);
-            self.force_zero_if_limit_switch_pressed();
-            self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;
-            return Ok(true);
-        }
-
-        self.relay_on();
-        // Current wiring convention: negative step command moves CCW.
-        log::info!("Looking for the limit switch (CCW search, max 350)");
-
-        let mut max_steps = calculate_steps(-350.0);
-        while max_steps < 0 && self.lmsw.is_high() {
-            let step_movement = calculate_steps(-1.0);
-            if self
-                .move_by(step_movement)
-                .context("Failed to move to find limit switch CCW")?
-                != MoveOutcome::Completed
-            {
-                self.relay_off();
-                self.set_stall_detection_enabled(stall_prev);
-                self.is_homing = false;
-                return Ok(false);
-            }
-            max_steps -= step_movement;
-        }
-
-        self.relay_off();
-
-        if max_steps < 0 {
-            self.update_position(HOME_HEADING_DEG);
-            self.relay_off();
-            self.force_zero_if_limit_switch_pressed();
-            self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;
-            return Ok(true);
-        }
-        self.set_stall_detection_enabled(stall_prev);
-        self.is_homing = false;
-        Ok(false)
     }
 }
