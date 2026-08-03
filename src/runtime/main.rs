@@ -384,6 +384,7 @@ fn main() -> anyhow::Result<()> {
         peripherals.pins.gpio14,
         encoder_a,
         encoder_b,
+        sw.runtime.relay_polarity,
     );
 
     motion.init();

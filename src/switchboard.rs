@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use motion::motion::RelayPolarity;
+
 // =============================================================================
 // Switchboard: single source of deployment/default values for the app.
 // Values default to crate::constants (generated from .env by build.rs).
@@ -160,6 +162,7 @@ pub struct RuntimeSwitches {
     pub guardrails: GuardrailsSwitches,
     /// Remote MQTT command channel (subscribe at boot + handle one command per loop).
     pub commands_enabled: bool,
+    pub relay_polarity: RelayPolarity,
 }
 
 // Default "unstuck" sequence (kept identical across profiles unless overridden).
@@ -221,6 +224,12 @@ pub struct Switchboard {
 }
 
 pub const fn normal() -> Switchboard {
+    let relay_polarity = if crate::constants::RELAY_ACTIVE_HIGH {
+        RelayPolarity::ActiveHigh
+    } else {
+        RelayPolarity::ActiveLow
+    };
+
     Switchboard {
         device_id: crate::constants::DEVICE_ID,
 
@@ -282,6 +291,7 @@ pub const fn normal() -> Switchboard {
                 soft_limit_max_deg: crate::constants::SOFT_LIMIT_MAX_DEG,
             },
             commands_enabled: true,
+            relay_polarity,
         },
         effects: EffectsSwitches {
             persist_nvs: true,
