@@ -54,6 +54,12 @@ pub mod motion {
         AbortedOvershoot,
     }
 
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub enum RelayPolarity {
+        ActiveLow,
+        ActiveHigh,
+    }
+
     pub fn calculate_steps(offset_deg: f32) -> i64 {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
@@ -115,6 +121,8 @@ pub mod motion {
 
         // During homing, overshoot checks are disabled.
         is_homing: bool,
+
+        relay_polarity: RelayPolarity,
     }
 
     // Direction and step wiring notes:
@@ -128,6 +136,7 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
+            relay_polarity: RelayPolarity,
         ) -> Motion<'a> {
             let step = PinDriver::output(step_pin).unwrap();
             let direction = PinDriver::output(direction_pin).unwrap();
@@ -183,6 +192,8 @@ pub mod motion {
                 soft_limit_max_deg: 290.0,
 
                 is_homing: false,
+
+                relay_polarity,
             }
         }
 
@@ -227,13 +238,25 @@ pub mod motion {
         #[inline]
         pub(crate) fn relay_on(&mut self) {
             // Active-low: LOW = ON
-            self.relay.set_low().unwrap_or_default();
+            if self.relay_polarity == RelayPolarity::ActiveLow {
+                self.relay.set_low().unwrap_or_default();
+            }
+            // Active-high: HIGH = ON
+            else {
+                self.relay.set_high().unwrap_or_default();
+            }
         }
 
         #[inline]
         pub(crate) fn relay_off(&mut self) {
             // Active-low: HIGH = OFF
-            self.relay.set_high().unwrap_or_default();
+            if self.relay_polarity == RelayPolarity::ActiveLow {
+                self.relay.set_high().unwrap_or_default();
+            }
+            // Active-high: LOW = OFF
+            else {
+                self.relay.set_low().unwrap_or_default();
+            }
         }
 
         /// Consume the sunset-homing drift captured in `last_home_error_ticks`,
