@@ -151,10 +151,10 @@ pub mod motion {
 
             match limit_switch_active_level {
                 ActiveLevel::ActiveHigh => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
                     .unwrap_or_default(),
                 ActiveLevel::ActiveLow => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Low)
                     .unwrap_or_default(),
             }
 
