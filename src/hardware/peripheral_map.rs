@@ -8,7 +8,7 @@ use esp_idf_svc::hal::{
 };
 use hdc1080::Hdc1080;
 use log::{info, warn};
-use motion::motion::Motion;
+use motion::motion::{ActiveLevel, Motion};
 use rgb_led::Led;
 use shared_bus::{BusManager, I2cProxy};
 
@@ -49,7 +49,10 @@ impl PeripheralMap<'_> {
     ///
     /// Returns an error if any peripheral fails to initialize or if a required
     /// hardware resource cannot be acquired.
-    pub fn new() -> Result<Self> {
+    pub fn new(
+        relay_active_level: ActiveLevel,
+        limit_switch_active_level: ActiveLevel,
+    ) -> Result<Self> {
         let peripherals = Peripherals::take().context("Failed to take peripherals")?;
 
         // i2c
@@ -75,6 +78,8 @@ impl PeripheralMap<'_> {
             peripherals.pins.gpio14,
             peripherals.pins.gpio10,
             peripherals.pins.gpio11,
+            relay_active_level,
+            limit_switch_active_level,
         )?;
 
         let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {

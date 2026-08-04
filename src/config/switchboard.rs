@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use motion::{motion::MotionMode, Direction};
+use motion::{
+    motion::{ActiveLevel, MotionMode},
+    Direction,
+};
 
 // =============================================================================
 // Switchboard: single source of deployment/default values for the app.
@@ -139,6 +142,8 @@ pub struct RuntimeSwitches {
     pub guardrails: GuardrailsSwitches,
     /// Remote MQTT command channel (subscribe at boot + handle one command per loop).
     pub commands_enabled: bool,
+    pub relay_active_level: ActiveLevel,
+    pub lmsw_active_level: ActiveLevel,
 }
 
 // Default "unstuck" sequence (kept identical across profiles unless overridden).
@@ -200,6 +205,18 @@ pub struct Switchboard {
 }
 
 pub const fn normal() -> Switchboard {
+    let relay_active_level = if crate::config::constants::RELAY_ACTIVE_HIGH {
+        ActiveLevel::ActiveHigh
+    } else {
+        ActiveLevel::ActiveLow
+    };
+
+    let lmsw_active_level = if crate::config::constants::LIMIT_SWITCH_ACTIVE_HIGH {
+        ActiveLevel::ActiveHigh
+    } else {
+        ActiveLevel::ActiveLow
+    };
+
     Switchboard {
         device_id: crate::config::constants::DEVICE_ID,
 
@@ -261,6 +278,8 @@ pub const fn normal() -> Switchboard {
                 soft_limit_max_deg: crate::config::constants::SOFT_LIMIT_MAX_DEG,
             },
             commands_enabled: true,
+            relay_active_level,
+            lmsw_active_level,
         },
         effects: EffectsSwitches {
             persist_nvs: true,

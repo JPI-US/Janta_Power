@@ -5,10 +5,6 @@ use std::time::{Duration, Instant};
 use super::Motion;
 
 impl Motion<'_> {
-    pub fn switch_pressed(&mut self) -> bool {
-        self.lmsw.is_low()
-    }
-
     // Retrieve and clear the most recent home error.
     pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
         self.last_home_error_ticks.take()
@@ -55,7 +51,7 @@ impl Motion<'_> {
     // Called from `run()` while moving: edge-detect, debounce, and zero on press.
     pub(crate) fn poll_limit_switch_zeroing(&mut self) {
         // Switch is active-low.
-        let pressed = self.lmsw.is_low();
+        let pressed = self.lmsw_active();
         let now = Instant::now();
         if pressed != self.lmsw_last_state_pressed {
             self.lmsw_last_state_pressed = pressed;

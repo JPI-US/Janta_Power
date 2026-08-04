@@ -56,7 +56,10 @@ pub fn startup() -> anyhow::Result<StartupContext> {
     );
 
     // peripherals
-    let mut peripherals = PeripheralMap::new()?;
+    let mut peripherals = PeripheralMap::new(
+        switchboard.runtime.relay_active_level,
+        switchboard.runtime.lmsw_active_level,
+    )?;
 
     peripherals.led.display_none()?;
 

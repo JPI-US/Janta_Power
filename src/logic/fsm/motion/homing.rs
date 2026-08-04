@@ -58,7 +58,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
 
         let home_claim_needs_limit_verify = would_skip_homing_on_snapshot
             && restored_claims_mechanical_home
-            && !ctx.motion.switch_pressed();
+            && !ctx.motion.lmsw_active();
 
         if home_claim_needs_limit_verify {
             log::info!(

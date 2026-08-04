@@ -47,6 +47,8 @@ fn generate_constants() {
     constants.push_str(&get_env("DEFAULT_MAX_SPEED_STEPS_PER_S", "5000.0", "f32"));
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
+    constants.push_str(&get_env("RELAY_ACTIVE_HIGH", "true", "bool"));
+    constants.push_str(&get_env("LIMIT_SWITCH_ACTIVE_HIGH", "false", "bool"));
     constants.push('\n');
 
     // Encoder Constants

@@ -56,6 +56,12 @@ pub mod motion {
         AbortedErrorLoop(Component, String, String),
     }
 
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub enum ActiveLevel {
+        ActiveLow,
+        ActiveHigh,
+    }
+
     pub fn calculate_steps(offset_deg: f32) -> i64 {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
@@ -115,8 +121,10 @@ pub mod motion {
 
         // During homing, overshoot checks are disabled.
         pub is_homing: bool,
-
         pub need_rehome: bool,
+
+        pub relay_active_level: ActiveLevel,
+        pub limit_switch_active_level: ActiveLevel,
     }
 
     // Direction and step wiring notes:
@@ -130,17 +138,31 @@ pub mod motion {
             limit_switch_pin: Gpio14,
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
+            relay_active_level: ActiveLevel,
+            limit_switch_active_level: ActiveLevel,
         ) -> Result<Motion<'a>> {
             let step = PinDriver::output(step_pin)?;
             let direction = PinDriver::output(direction_pin)?;
+
             // Relay is active-low: boot with relay OFF.
             let mut relay = PinDriver::output(relay_pin)?;
             relay.set_high().unwrap_or_default();
-            let mut lmsw = PinDriver::input(limit_switch_pin)?;
+
             let encoder_a = PinDriver::input(encoder_a_pin)?;
             let encoder_b = PinDriver::input(encoder_b_pin)?;
+
+            let mut lmsw = PinDriver::input(limit_switch_pin)?;
             lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                 .unwrap_or_default();
+
+            match limit_switch_active_level {
+                ActiveLevel::ActiveHigh => lmsw
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
+                    .unwrap_or_default(),
+                ActiveLevel::ActiveLow => lmsw
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
+                    .unwrap_or_default(),
+            }
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
@@ -186,6 +208,9 @@ pub mod motion {
 
                 is_homing: false,
                 need_rehome: false,
+
+                relay_active_level,
+                limit_switch_active_level,
             })
         }
 
@@ -230,13 +255,32 @@ pub mod motion {
         #[inline]
         pub fn relay_on(&mut self) {
             // Active-low: LOW = ON
-            self.relay.set_low().unwrap_or_default();
+            if self.relay_active_level == ActiveLevel::ActiveLow {
+                self.relay.set_low().unwrap_or_default();
+            }
+            // Active-high: HIGH = ON
+            else {
+                self.relay.set_high().unwrap_or_default();
+            }
         }
 
         #[inline]
         pub fn relay_off(&mut self) {
             // Active-low: HIGH = OFF
-            self.relay.set_high().unwrap_or_default();
+            if self.relay_active_level == ActiveLevel::ActiveLow {
+                self.relay.set_high().unwrap_or_default();
+            }
+            // Active-high: LOW = OFF
+            else {
+                self.relay.set_low().unwrap_or_default();
+            }
+        }
+
+        pub fn lmsw_active(&self) -> bool {
+            match self.limit_switch_active_level {
+                ActiveLevel::ActiveHigh => self.lmsw.is_high(),
+                ActiveLevel::ActiveLow => self.lmsw.is_low(),
+            }
         }
 
         /// Consume the sunset-homing drift captured in `last_home_error_ticks`,
