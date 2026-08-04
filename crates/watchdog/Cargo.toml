@@ -1,10 +1,9 @@
 [package]
-name = "fsm"
+name = "watchdog"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
+esp-idf-hal = { workspace = true }
 log.workspace = true
-crossbeam-channel.workspace = true
-watchdog.workspace = true

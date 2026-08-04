@@ -25,19 +25,21 @@ members = [
     "crates/sensors/ds323x",
     "crates/sensors/hdc1080",
     "crates/sensors/sensors",
+    "crates/watchdog",
 ]
 
 [workspace.dependencies]
 accel-stepper = { path = "crates/drivers/accel-stepper" }
 anyhow = "1.0.86"
-crossbeam-channel = "0.5.16"
 base64 = "0.22.1"
 chrono = "0.4.40"
 clock = { path = "crates/infrastructure/clock" }
+crossbeam-channel = "0.5.16"
 dotenv = "0.15"
 ds323x = { path = "crates/sensors/ds323x" }
 embedded-hal = "1.0.0"
 embedded-svc = "0.28.0"
+esp-idf-hal = { version = "0.45" }
 esp-idf-svc = "0.51"
 esp-idf-sys = "0.36.1"
 fsm = { path = "crates/infrastructure/fsm" }
@@ -56,6 +58,7 @@ sensors = { path = "crates/sensors/sensors" }
 serde = "1"
 serde_json = "1.0.143"
 shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0" }
+watchdog = { path = "crates/watchdog" }
 wifi = { path = "crates/infrastructure/wifi" }
 
 [[bin]]
@@ -70,10 +73,11 @@ experimental = ["esp-idf-svc/experimental"]
 anyhow.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 clock.workspace = true
+crossbeam-channel.workspace = true
 ds323x.workspace = true
 embedded-hal.workspace = true
 embedded-svc.workspace = true
-esp-idf-hal = { version = "0.45", default-features = false, features = [
+esp-idf-hal = { workspace = true, default-features = false, features = [
     "rmt-legacy",
 ] }
 esp-idf-svc = { workspace = true, features = [
@@ -81,12 +85,12 @@ esp-idf-svc = { workspace = true, features = [
     "embassy-time-driver",
     "embassy-sync",
 ] }
+fsm.workspace = true
 hdc1080.workspace = true
 heapless.workspace = true
 log.workspace = true
 motion.workspace = true
 network.workspace = true
-fsm.workspace = true
 ota.workspace = true
 pid = "4.0.0"
 rgb.workspace = true
@@ -101,7 +105,6 @@ shared-bus = { workspace = true, features = [
 ] }
 toml = "0.8"
 wifi.workspace = true
-crossbeam-channel.workspace = true
 
 [build-dependencies]
 dotenv.workspace = true

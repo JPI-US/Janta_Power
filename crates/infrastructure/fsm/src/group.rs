@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use watchdog::UserWatchdog;
+
 use crate::{FsmStatus, Runnable};
 
 /// Co-schedules several machines on a single OS thread.
@@ -56,6 +58,15 @@ impl Group {
             .spawn(move || {
                 log::info!("Thread \"{}\" started", self.name);
 
+                let watchdog_name = format!("fsm_{}", self.name);
+                let watchdog = match UserWatchdog::new(&watchdog_name) {
+                    Ok(wd) => Some(wd),
+                    Err(e) => {
+                        log::error!("Failed to register watchdog: {e}");
+                        None
+                    }
+                };
+
                 loop {
                     let start = Instant::now();
 
@@ -63,7 +74,7 @@ impl Group {
                         match machine.step() {
                             Ok(FsmStatus::Running) => {
                                 log::info!(
-                                    "{} Transitioned to {}",
+                                    "{} transitioned to {}",
                                     machine.name(),
                                     machine.state()
                                 );
@@ -71,9 +82,15 @@ impl Group {
                             Ok(FsmStatus::Hold) => {}
                             Ok(FsmStatus::Stopped) => break,
                             Err(e) => {
-                                log::error!("FSM thread exited: {e:?}");
+                                log::error!("FSM error: {e:?}");
                                 break;
                             }
+                        }
+                    }
+
+                    if let Some(wd) = &watchdog {
+                        if let Err(e) = wd.feed() {
+                            log::error!("Watchdog feed failed: {e}");
                         }
                     }
 

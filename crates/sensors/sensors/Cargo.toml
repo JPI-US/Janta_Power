@@ -5,11 +5,11 @@ edition = "2021"
 
 [dependencies]
 anyhow.workspace = true
-hdc1080.workspace = true
 embedded-hal.workspace = true
-log.workspace = true
-esp-idf-svc = { workspace =  true, features = [
+esp-idf-svc = { workspace = true, features = [
     "critical-section",
     "embassy-time-driver",
     "embassy-sync",
 ] }
+hdc1080.workspace = true
+log.workspace = true
