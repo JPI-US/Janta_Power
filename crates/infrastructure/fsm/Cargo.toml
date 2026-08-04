@@ -7,4 +7,3 @@ edition = "2021"
 anyhow.workspace = true
 log.workspace = true
 crossbeam-channel.workspace = true
-watchdog.workspace = true

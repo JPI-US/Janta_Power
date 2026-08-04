@@ -8,5 +8,5 @@ astronav = { version = "0.2.5", features = ["noaa-sun"] }
 chrono.workspace = true
 ds323x.workspace = true
 embedded-hal.workspace = true
-log.workspace = true
 sun-times = "0.2.0"
+log.workspace = true
