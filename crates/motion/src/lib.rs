@@ -154,7 +154,7 @@ pub mod motion {
                     .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
                     .unwrap_or_default(),
                 ActiveLevel::ActiveLow => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Low)
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                     .unwrap_or_default(),
             }
 
