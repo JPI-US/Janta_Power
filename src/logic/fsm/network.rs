@@ -250,6 +250,8 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiPublishHear
         let local_time = rtc::timezone::local_time();
         let current_time = local_time.format("%d/%m/%Y %H:%M:%S").to_string();
 
+        ctx.last_heartbeat_instant = Instant::now();
+
         // publish heartbeat
         let firmware_version = ctx
             .current_version
