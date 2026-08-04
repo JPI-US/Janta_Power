@@ -165,9 +165,20 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
             }
         };
 
-        let modem = ctx.modem.take().unwrap();
-        let sysloop = ctx.sysloop.take().unwrap();
-        let partition = ctx.partition.take().unwrap();
+        let modem = ctx
+            .modem
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get modem"))?;
+
+        let sysloop = ctx
+            .sysloop
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get sysloop"))?;
+
+        let partition = ctx
+            .partition
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get partition"))?;
 
         let wifi = Wifi::new(modem, sysloop, partition, ssid, pass)
             .context("Failed to initialize WiFi")?;

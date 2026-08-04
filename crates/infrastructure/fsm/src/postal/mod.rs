@@ -84,6 +84,8 @@ where
     pub fn take(&mut self, address: A) -> (Mailbox<A, M>, Arc<Bulletin<B>>) {
         let mailbox = self.mailboxes[address.index()]
             .take()
+            // we intentionally panic here. Mailboxes should only be gotten at startup,
+            // and it's never acceptable to get the same mailbox twice.
             .expect("Mailbox already taken");
 
         (mailbox, Arc::clone(&self.bulletin))
