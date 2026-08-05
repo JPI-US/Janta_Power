@@ -1,23 +1,32 @@
+use std::{
+    collections::VecDeque,
+    ffi::CStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
+
 use anyhow::Result;
-use log::*;
 use esp_idf_svc::{
-    mqtt::client::{
-    EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
+    mqtt::client::{EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
     tls::X509,
 };
-use std::{sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, thread};
-use std::ffi::CStr;
-use std::time::Duration;
-use std::collections::VecDeque;
+use log::*;
+
+pub type MqttMessageQueue = Arc<Mutex<VecDeque<(String, Vec<u8>)>>>;
+
 pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,
-    message_queue: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
+    message_queue: MqttMessageQueue,
 }
 
 const ROOT_CA: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
-        concat!(include_str!("../AmazonRootCA1.pem"), "\0").as_bytes(),
+        concat!(include_str!("../../../../certs/AmazonRootCA1.pem"), "\0").as_bytes(),
     )
 };
 
@@ -29,7 +38,7 @@ const DEVICE_CERT: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
         concat!(
             include_str!(concat!(
-                "../tower_",
+                "../../../../certs/tower_",
                 env!("DEVICE_ID"),
                 "-certificate.pem.crt"
             )),
@@ -43,7 +52,7 @@ const PRIVATE_KEY: &CStr = unsafe {
     CStr::from_bytes_with_nul_unchecked(
         concat!(
             include_str!(concat!(
-                "../tower_",
+                "../../../../certs/tower_",
                 env!("DEVICE_ID"),
                 "-private.pem.key"
             )),
@@ -74,11 +83,9 @@ impl Mqtt {
         let connected = Arc::new(AtomicBool::new(false));
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let message_queue_clone = message_queue.clone();
 
-        let (mut client, mut connection) = EspMqttClient::new(
-            broker_url,
-            &mqtt_config,
-        )?;
+        let (client, mut connection) = EspMqttClient::new(broker_url, &mqtt_config)?;
         info!("MQTT client created successfully!");
 
         thread::spawn(move || {
@@ -97,6 +104,19 @@ impl Mqtt {
                         // trigger reconnect
                     }
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
+                    EventPayload::Received { topic, data, .. } => {
+                        // Enqueue inbound messages so the main loop can drain them
+                        // via `try_receive()` (e.g. the remote command channel).
+                        if let Some(topic) = topic {
+                            if let Ok(mut queue) = message_queue_clone.lock() {
+                                queue.push_back((topic.to_string(), data.to_vec()));
+                            } else {
+                                warn!("Failed to lock MQTT queue for received message");
+                            }
+                        } else {
+                            warn!("MQTT received message without a topic");
+                        }
+                    }
                     EventPayload::Error(e) => error!("MQTT error: {:?}", e),
                     _ => {}
                 }
@@ -120,7 +140,10 @@ impl Mqtt {
         let start = std::time::Instant::now();
         while !self.connected.load(Ordering::SeqCst) {
             if start.elapsed().as_millis() > timeout_ms as u128 {
-                return Err(anyhow::anyhow!("MQTT connection timeout after {}ms", timeout_ms));
+                return Err(anyhow::anyhow!(
+                    "MQTT connection timeout after {}ms",
+                    timeout_ms
+                ));
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -132,7 +155,8 @@ impl Mqtt {
             return Err(anyhow::anyhow!("MQTT client not connected"));
         }
         info!("Attempting to publish message to topic...");
-        self.client.publish(topic, QoS::AtLeastOnce, false, payload)?;
+        self.client
+            .publish(topic, QoS::AtLeastOnce, false, payload)?;
         info!("Initial message published successfully!");
         Ok(())
     }

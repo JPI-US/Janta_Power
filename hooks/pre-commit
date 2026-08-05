@@ -1,0 +1,33 @@
+#!/bin/sh
+
+# Automatically check formatting and compilation of the staged changes
+# before allowing a commit.
+
+set -e
+
+# Stash unstaged changes while keeping the index intact.
+STASHED=0
+if ! git diff --quiet; then
+    git stash push --keep-index --quiet
+    STASHED=1
+fi
+
+cleanup() {
+    if [ "$STASHED" -eq 1 ]; then
+        git stash pop --quiet
+    fi
+}
+
+trap cleanup EXIT
+
+echo "Checking formatting..."
+cargo fmt --all --check
+
+echo "Checking compilation..."
+cargo build --workspace --all-targets --all-features
+
+echo "Checking Linting..."
+cargo clippy --workspace --all-targets --all-features
+
+echo "All checks passed."
+exit 0

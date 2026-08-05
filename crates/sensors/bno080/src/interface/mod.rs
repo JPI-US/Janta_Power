@@ -1,14 +1,8 @@
 pub mod i2c;
 
-#[cfg(test)]
-pub mod mock_i2c_port;
-
 use core::ops::Shl;
 
 use embedded_hal::delay::DelayNs;
-
-#[cfg(feature = "rttdebug")]
-use panic_rtt_core::rprintln;
 
 /// A method of communicating with the sensor
 pub trait SensorInterface {
@@ -16,20 +10,14 @@ pub trait SensorInterface {
     type SensorError;
 
     /// give the sensor interface a chance to set up
-    fn setup(
-        &mut self,
-        delay_source: &mut impl DelayNs,
-    ) -> Result<(), Self::SensorError>;
+    fn setup(&mut self, delay_source: &mut impl DelayNs) -> Result<(), Self::SensorError>;
 
     /// Write the whole packet provided
     fn write_packet(&mut self, packet: &[u8]) -> Result<(), Self::SensorError>;
 
     /// Read the next packet from the sensor
     /// Returns the size of the packet read (up to the size of the slice provided)
-    fn read_packet(
-        &mut self,
-        recv_buf: &mut [u8],
-    ) -> Result<usize, Self::SensorError>;
+    fn read_packet(&mut self, recv_buf: &mut [u8]) -> Result<usize, Self::SensorError>;
 
     /// Wait for sensor to indicate it has data available before reading
     /// - `max_ms` maximum number of milliseconds to wait for data
@@ -67,25 +55,13 @@ impl SensorCommon {
         }
         //Bits 14:0 are used to indicate the total number of bytes in the body plus header
         //maximum packet length is ... PACKET_HEADER_LENGTH
-        let raw_pack_len: u16 = (packet[0] as u16)
-            + ((packet[1] as u16) & CONTINUATION_FLAG_CLEAR).shl(8);
+        let raw_pack_len: u16 =
+            (packet[0] as u16) + ((packet[1] as u16) & CONTINUATION_FLAG_CLEAR).shl(8);
 
         let mut packet_len: usize = raw_pack_len as usize;
         if packet_len > MAX_CARGO_DATA_LENGTH {
             // we sometimes get garbage packets of [0xFF, 0xFF, 0xFF, 0xFF]
             packet_len = 0; //PACKET_HEADER_LENGTH;
-        }
-
-        if 0 == packet_len && 0 != raw_pack_len {
-            #[cfg(feature = "rttdebug")]
-            rprintln!(
-                "pph: {:?} {} -> {}",
-                &packet[..PACKET_HEADER_LENGTH],
-                raw_pack_len,
-                packet_len
-            );
-        } else {
-            // hprintln!("pph: {:?} {} ", &packet[..PACKET_HEADER_LENGTH], packet_len).unwrap();
         }
 
         packet_len
@@ -94,8 +70,9 @@ impl SensorCommon {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::ops::Shr;
+
+    use super::*;
 
     #[test]
     fn test_parse_packet_header() {

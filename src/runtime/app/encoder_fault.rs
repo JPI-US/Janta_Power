@@ -9,7 +9,7 @@ use wifi::wifi::{Wifi, WifiState};
 use crate::{infra, infra::SnapshotStore};
 
 // Local direction enum used by encoder fault recovery.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Direction {
     Cw,
     Ccw,
@@ -35,6 +35,7 @@ pub struct EncoderRecoverySwitches {
 
 impl EncoderRecoverySwitches {
     /// Fallback when not using switchboard (e.g. tests). Prefer building from sw.runtime.encoder_recovery.
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub const fn default() -> Self {
         Self {
             enabled: true,
@@ -64,11 +65,12 @@ impl EncoderFaultRecovery {
             mode_switched_daily: false,
         }
     }
-    
+
+    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
     pub fn mode_switched_daily(&self) -> bool {
         self.mode_switched_daily
     }
-    
+
     pub fn set_mode_switched_daily(&mut self, value: bool) {
         self.mode_switched_daily = value;
     }
@@ -89,7 +91,8 @@ impl EncoderFaultRecovery {
         if outcome == MoveOutcome::AbortedStall || outcome == MoveOutcome::AbortedOvershoot {
             log::warn!("Encoder fault detected, starting recovery probes");
             self.active = true;
-            self.next_probe_at = Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
+            self.next_probe_at =
+                Some(Instant::now() + Duration::from_secs(cfg.probe_interval_secs));
         }
         Ok(())
     }
@@ -97,17 +100,10 @@ impl EncoderFaultRecovery {
     /// Returns `Ok(true)` if the caller should `continue` the outer loop (fault still active).
     pub fn tick<T: NvsPartitionId>(
         &mut self,
-        cfg: &EncoderRecoverySwitches,
+        ctx: &mut EncoderTickContext<'_, '_, T>,
         motion: &mut Motion<'_>,
         motion_mode: MotionMode,
         actual_heading: &mut f32,
-        nvs: &mut EspNvs<T>,
-        mqtt: &mut Mqtt,
-        wifi: &mut Wifi<'_>,
-        current_version: &Version,
-        persist_nvs: bool,
-        device_id: &str,
-        home_heading_deg: f32,
     ) -> anyhow::Result<bool> {
         if self.mode_switched_daily {
             return Ok(false);
@@ -117,17 +113,17 @@ impl EncoderFaultRecovery {
             return Ok(false);
         }
 
-        if !cfg.enabled {
+        if !ctx.cfg.enabled {
             infra::error_loop(
-                device_id,
-                mqtt,
+                &ctx.device_id,
+                ctx.mqtt,
                 network::telemetry::Component::System,
                 "Encoder fault recovery disabled in switchboard",
                 "Switchboard disables encoder fault recovery; device cannot proceed when encoder has faulted.",
             );
         }
 
-        let probe_interval = Duration::from_secs(cfg.probe_interval_secs);
+        let probe_interval = Duration::from_secs(ctx.cfg.probe_interval_secs);
         let now_i = Instant::now();
         let should_probe = self.next_probe_at.map(|t| now_i >= t).unwrap_or(true);
 
@@ -136,35 +132,47 @@ impl EncoderFaultRecovery {
             let remaining = t.saturating_duration_since(now_i);
             log::info!("Encoder fault: waiting {:?} until next probe...", remaining);
 
-            self.housekeeping(wifi, mqtt, current_version, device_id)?;
+            self.housekeeping(ctx.wifi, ctx.mqtt, &ctx.current_version, &ctx.device_id)?;
             std::thread::sleep(Duration::from_secs(90));
             return Ok(true);
         }
 
         log::info!("Encoder fault: probing for recovery...");
-        let ok = motion.probe_encoder_motion(cfg.probe_steps);
+        let ok = motion.probe_encoder_motion(ctx.cfg.probe_steps);
         if !ok {
             self.probe_failure_count += 1;
-            log::warn!("Encoder probe failed (probe_failure_count={}/{})", self.probe_failure_count, MAX_PROBE_FAILURES);
+            log::warn!(
+                "Encoder probe failed (probe_failure_count={}/{})",
+                self.probe_failure_count,
+                MAX_PROBE_FAILURES
+            );
 
             if self.probe_failure_count >= MAX_PROBE_FAILURES {
                 log::error!("CRITICAL: Encoder probe failed {} consecutive times, switching to StepperOnly mode for the day", self.probe_failure_count);
-                self.switch_to_stepper_only_daily(motion, nvs, mqtt, persist_nvs, device_id)?;
+                self.switch_to_stepper_only_daily(
+                    motion,
+                    ctx.nvs,
+                    ctx.mqtt,
+                    ctx.persist_nvs,
+                    &ctx.device_id,
+                )?;
                 return Ok(false);
             }
 
             self.next_probe_at = Some(now_i + probe_interval);
-            self.housekeeping(wifi, mqtt, current_version, device_id)?;
+            self.housekeeping(ctx.wifi, ctx.mqtt, &ctx.current_version, &ctx.device_id)?;
             std::thread::sleep(Duration::from_secs(30));
             return Ok(true);
         }
 
-        log::info!("Encoder probe succeeded; recomputing heading from encoder and resuming tracking.");
+        log::info!(
+            "Encoder probe succeeded; recomputing heading from encoder and resuming tracking."
+        );
         self.active = false;
         self.next_probe_at = None;
         self.probe_failure_count = 0;
 
-        let candidate_heading = motion.heading_from_encoder_ticks(home_heading_deg);
+        let candidate_heading = motion.heading_from_encoder_ticks(ctx.home_heading_deg);
         let drift = angle_diff_deg(candidate_heading, *actual_heading);
         log::info!(
             "Encoder recovered: candidate_heading={} prev_heading={} drift_deg={}",
@@ -173,12 +181,12 @@ impl EncoderFaultRecovery {
             drift
         );
 
-        if drift <= cfg.max_drift_deg {
+        if drift <= ctx.cfg.max_drift_deg {
             *actual_heading = candidate_heading;
             motion.update_position(*actual_heading);
-            SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
+            SnapshotStore::new(ctx.nvs, ctx.persist_nvs).save_heading(*actual_heading);
             if motion_mode == MotionMode::EncoderGuarded {
-                SnapshotStore::new(nvs, persist_nvs)
+                SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
             return Ok(false);
@@ -187,27 +195,27 @@ impl EncoderFaultRecovery {
         log::warn!(
             "Encoder recovered but heading drift ({:.2}°) exceeds {:.2}°; re-homing to re-establish truth.",
             drift,
-            cfg.max_drift_deg
+            ctx.cfg.max_drift_deg
         );
-        let ok = match cfg.rehome_dir {
+        let ok = match ctx.cfg.rehome_dir {
             Direction::Cw => motion.find_limit_switch_cw(),
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         if !ok {
             infra::error_loop(
-                device_id,
-                mqtt,
+                &ctx.device_id,
+                ctx.mqtt,
                 network::telemetry::Component::LimitSwitch,
                 "Re-home failed after drift correction",
                 "Heading drift exceeded tolerance and the re-home sweep could not locate the limit switch.",
             );
         }
 
-        *actual_heading = home_heading_deg;
+        *actual_heading = ctx.home_heading_deg;
         motion.update_position(*actual_heading);
-        SnapshotStore::new(nvs, persist_nvs).save_heading(*actual_heading);
+        SnapshotStore::new(ctx.nvs, ctx.persist_nvs).save_heading(*actual_heading);
         if motion_mode == MotionMode::EncoderGuarded {
-            SnapshotStore::new(nvs, persist_nvs)
+            SnapshotStore::new(ctx.nvs, ctx.persist_nvs)
                 .save_encoder_snapshot(motion.encoder_ticks_adjusted());
         }
         Ok(false)
@@ -247,9 +255,7 @@ impl EncoderFaultRecovery {
     ) -> anyhow::Result<()> {
         motion.set_motion_mode(MotionMode::StepperOnly);
 
-        let current_date = rtc::timezone::local_time()
-            .format("%Y-%m-%d")
-            .to_string();
+        let current_date = rtc::timezone::local_time().format("%Y-%m-%d").to_string();
 
         if persist_nvs {
             SnapshotStore::new(nvs, persist_nvs).save_tracking_mode(MotionMode::StepperOnly);
@@ -292,3 +298,13 @@ fn angle_diff_deg(a: f32, b: f32) -> f32 {
     d.abs()
 }
 
+pub struct EncoderTickContext<'ctx, 'wifi, T: NvsPartitionId> {
+    pub nvs: &'ctx mut EspNvs<T>,
+    pub mqtt: &'ctx mut Mqtt,
+    pub wifi: &'ctx mut Wifi<'wifi>,
+    pub cfg: EncoderRecoverySwitches,
+    pub current_version: Version,
+    pub persist_nvs: bool,
+    pub device_id: String,
+    pub home_heading_deg: f32,
+}

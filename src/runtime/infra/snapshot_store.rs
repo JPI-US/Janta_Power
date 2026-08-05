@@ -1,6 +1,5 @@
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::{info, warn};
-
 use motion::MotionMode;
 
 // NVS keys used by runtime state.
@@ -26,7 +25,10 @@ pub struct SnapshotStore<'a, T: NvsPartitionId> {
 
 impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
     pub fn new(nvs: &'a mut EspNvs<T>, persist_enabled: bool) -> Self {
-        Self { nvs, persist_enabled }
+        Self {
+            nvs,
+            persist_enabled,
+        }
     }
 
     pub fn load_tracking_mode_or_init(&mut self, default: MotionMode) -> MotionMode {
@@ -47,7 +49,10 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                         },
                     );
                 } else {
-                    warn!("NVS persist disabled: skipping init write for {}", NVS_KEY_TRACKING_MODE);
+                    warn!(
+                        "NVS persist disabled: skipping init write for {}",
+                        NVS_KEY_TRACKING_MODE
+                    );
                 }
                 default
             }
@@ -59,7 +64,10 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
             Some(1) => true,
             Some(0) => false,
             Some(other) => {
-                warn!("Invalid {}={} in NVS; defaulting", NVS_KEY_LAST_RUN_NORMAL, other);
+                warn!(
+                    "Invalid {}={} in NVS; defaulting",
+                    NVS_KEY_LAST_RUN_NORMAL, other
+                );
                 default
             }
             None => {
@@ -106,7 +114,10 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                 if self.persist_enabled {
                     let _ = self.nvs.set_u32(NVS_KEY_HEADING, default_heading.to_bits());
                 } else {
-                    warn!("NVS persist disabled: skipping init write for {}", NVS_KEY_HEADING);
+                    warn!(
+                        "NVS persist disabled: skipping init write for {}",
+                        NVS_KEY_HEADING
+                    );
                 }
                 default_heading
             }
@@ -125,7 +136,11 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
     }
 
     pub fn load_encoder_snapshot(&mut self) -> Option<i32> {
-        let v = self.nvs.get_u32(NVS_KEY_ENC_SNAPSHOT_VERSION).ok().flatten()?;
+        let v = self
+            .nvs
+            .get_u32(NVS_KEY_ENC_SNAPSHOT_VERSION)
+            .ok()
+            .flatten()?;
         if v != ENC_SNAPSHOT_VERSION {
             warn!(
                 "Encoder snapshot version mismatch: stored={}, expected={}",
@@ -168,19 +183,31 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
     /// Load encoder mode reset date.
     pub fn load_encoder_mode_reset_date(&mut self) -> Option<String> {
         let mut buf = [0u8; 16];
-        self.nvs.get_str(NVS_KEY_ENCODER_MODE_RESET_DATE, &mut buf).ok().flatten()
+        self.nvs
+            .get_str(NVS_KEY_ENCODER_MODE_RESET_DATE, &mut buf)
+            .ok()
+            .flatten()
             .map(|s| s.to_string())
     }
 
     /// Save encoder mode reset date (`YYYY-MM-DD`).
     pub fn save_encoder_mode_reset_date(&mut self, date: &str) {
         if !self.persist_enabled {
-            warn!("NVS persist disabled: skipping save_encoder_mode_reset_date({})", date);
+            warn!(
+                "NVS persist disabled: skipping save_encoder_mode_reset_date({})",
+                date
+            );
             return;
         }
         match self.nvs.set_str(NVS_KEY_ENCODER_MODE_RESET_DATE, date) {
-            Ok(_) => info!("Stored {} in NVS: {}", NVS_KEY_ENCODER_MODE_RESET_DATE, date),
-            Err(e) => warn!("Failed to store {} in NVS: {:?}", NVS_KEY_ENCODER_MODE_RESET_DATE, e),
+            Ok(_) => info!(
+                "Stored {} in NVS: {}",
+                NVS_KEY_ENCODER_MODE_RESET_DATE, date
+            ),
+            Err(e) => warn!(
+                "Failed to store {} in NVS: {:?}",
+                NVS_KEY_ENCODER_MODE_RESET_DATE, e
+            ),
         }
     }
 
@@ -190,7 +217,10 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
             Some(1) => true,
             Some(0) => false,
             Some(other) => {
-                warn!("Invalid {}={} in NVS; defaulting to false", NVS_KEY_ENCODER_DAILY_MODE, other);
+                warn!(
+                    "Invalid {}={} in NVS; defaulting to false",
+                    NVS_KEY_ENCODER_DAILY_MODE, other
+                );
                 false
             }
             None => false,
@@ -200,12 +230,24 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
     /// Save encoder daily mode flag.
     pub fn save_encoder_daily_mode(&mut self, daily_mode: bool) {
         if !self.persist_enabled {
-            warn!("NVS persist disabled: skipping save_encoder_daily_mode({})", daily_mode);
+            warn!(
+                "NVS persist disabled: skipping save_encoder_daily_mode({})",
+                daily_mode
+            );
             return;
         }
-        match self.nvs.set_u8(NVS_KEY_ENCODER_DAILY_MODE, if daily_mode { 1 } else { 0 }) {
-            Ok(_) => info!("Stored {} in NVS: {}", NVS_KEY_ENCODER_DAILY_MODE, daily_mode),
-            Err(e) => warn!("Failed to store {} in NVS: {:?}", NVS_KEY_ENCODER_DAILY_MODE, e),
+        match self
+            .nvs
+            .set_u8(NVS_KEY_ENCODER_DAILY_MODE, if daily_mode { 1 } else { 0 })
+        {
+            Ok(_) => info!(
+                "Stored {} in NVS: {}",
+                NVS_KEY_ENCODER_DAILY_MODE, daily_mode
+            ),
+            Err(e) => warn!(
+                "Failed to store {} in NVS: {:?}",
+                NVS_KEY_ENCODER_DAILY_MODE, e
+            ),
         }
     }
 
@@ -216,7 +258,10 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                 MotionMode::StepperOnly => "StepperOnly",
                 MotionMode::EncoderGuarded => "EncoderGuarded",
             };
-            warn!("NVS persist disabled: skipping save_tracking_mode({})", mode_str);
+            warn!(
+                "NVS persist disabled: skipping save_tracking_mode({})",
+                mode_str
+            );
             return;
         }
         let mode_value = match mode {
@@ -233,4 +278,3 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
         }
     }
 }
-

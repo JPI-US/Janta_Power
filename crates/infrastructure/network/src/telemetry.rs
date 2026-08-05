@@ -54,10 +54,17 @@ pub mod topic {
     }
 
     pub fn component_status(device_id: &str, component: Component) -> String {
-        format!(
-            "tower/{device_id}/component/{}/status",
-            component.as_str()
-        )
+        format!("tower/{device_id}/component/{}/status", component.as_str())
+    }
+
+    /// Inbound topic the tower subscribes to for remote commands.
+    pub fn diagnostics_cmd(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics")
+    }
+
+    /// Outbound topic the tower replies on (acks + command results).
+    pub fn diagnostics_ack(device_id: &str) -> String {
+        format!("tower/{device_id}/cmd/diagnostics/ack")
     }
 }
 

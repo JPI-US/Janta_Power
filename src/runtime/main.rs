@@ -1,32 +1,16 @@
-use std::time::Duration;
+use core::{convert::Into, option::Option::None};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
 use chrono::{DateTime, Local};
 use clock::Clock;
-use log::{error, info, warn};
-use std::thread;
-
-#[path = "../config.rs"]
-mod config;
-#[path = "../constants.rs"]
-mod constants;
-#[path = "../switchboard.rs"]
-mod switchboard;
-mod infra;
-mod app;
-#[path = "../diagnostics/mod.rs"]
-mod diagnostics;
-
-// Provide __pender function for embassy_executor
-// This function is called by embassy_executor to wake tasks
-#[no_mangle]
-pub extern "C" fn __pender() {
-    // Intentionally empty.
-}
-
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
         delay::Ets,
-        gpio::PinDriver,
+        gpio::{Gpio4, Gpio5, Gpio6, Input, PinDriver},
         i2c::{I2cConfig, I2cDriver},
         prelude::*,
     },
@@ -35,19 +19,300 @@ use esp_idf_svc::{
     ota::EspOta,
 };
 use hdc1080::Hdc1080;
-use rtc::Rtc;
-use motion::{MoveOutcome, Motion, MotionMode};
-use rgb_led::Led;
+use log::{error, info, warn};
+use motion::{Motion, MotionMode, MoveOutcome};
 use network::mqtt::Mqtt;
 use ota::OtaUpdater;
+use rgb_led::Led;
+use rtc::Rtc;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
 
+use crate::{
+    app::{
+        encoder_fault::{Direction, EncoderRecoverySwitches, EncoderTickContext},
+        tracking_loop::TrackingTickContext,
+    },
+    infra::ResetReason,
+};
+
+mod app;
+#[path = "../constants.rs"]
+#[allow(dead_code)]
+mod constants;
+#[path = "../diagnostics/mod.rs"]
+mod diagnostics;
+mod infra;
+#[path = "../switchboard.rs"]
+mod switchboard;
+
+// Required by embassy_executor when esp-idf-svc embassy features are enabled.
+#[no_mangle]
+pub extern "C" fn __pender() {}
+
+/// Long-lived runtime state for the tower, owned across the main tracking loop.
+///
+/// Built once at the end of boot (in `main`) by gathering the initialized
+/// hardware/state locals, then driven by the loop. Generic over the shared-I2C
+/// proxy type `I2C` so the bus-backed devices (`calculation`, `temp_sensor`)
+/// can be stored without naming the verbose `shared_bus` proxy type.
+struct Tower<I2C> {
+    sw: switchboard::Switchboard,
+    nvs: EspNvs<esp_idf_svc::nvs::NvsDefault>,
+    motion: Motion<'static>,
+    mqtt: Box<Mqtt>,
+    wifi: Wifi<'static>,
+    calculation: Clock<I2C>,
+    temp_sensor: Option<Hdc1080<I2C, Ets>>,
+    encoder_fault: app::encoder_fault::EncoderFaultRecovery,
+    current_version: Version,
+    motion_mode: MotionMode,
+    actual_heading: f32,
+    allow_ota: bool,
+    /// Motion mode seen on the previous loop iteration; used to detect the
+    /// transition *into* `StepperOnly`, which forces a re-home.
+    previous_motion_mode: MotionMode,
+    /// Set when a `StepperOnly` switch needs a re-home before tracking resumes.
+    need_rehome: bool,
+}
+
+/// Main-loop steps, factored out of the loop body so the loop reads as a thin
+/// sequence of named operations. Each method owns one concern and mutates the
+/// shared state through `&mut self` (disjoint field borrows let one method touch
+/// `motion`, `nvs`, `mqtt`, ... at once). Bound to `I2C: I2c` because the
+/// tracking and temperature steps drive bus-backed devices.
+impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
+    /// Every loop step persists to NVS (mirrors the boot-phase `PERSIST_NVS`).
+    const PERSIST_NVS: bool = true;
+
+    /// Day-rollover reset of the daily encoder mode (see [`check_daily_encoder_reset`]).
+    fn daily_reset(&mut self, local_time: &DateTime<Local>) {
+        let reset_occurred =
+            check_daily_encoder_reset(&mut self.nvs, local_time, Self::PERSIST_NVS);
+        if reset_occurred {
+            self.motion_mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+                .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+            self.motion.set_motion_mode(self.motion_mode);
+            self.encoder_fault.set_mode_switched_daily(false);
+            let mode_str = match self.motion_mode {
+                MotionMode::StepperOnly => "StepperOnly",
+                MotionMode::EncoderGuarded => "EncoderGuarded",
+            };
+            info!("Daily reset: Motion mode updated to {}", mode_str);
+        }
+    }
+
+    /// Flag a re-home when the mode has just transitioned into `StepperOnly`.
+    fn detect_stepper_transition(&mut self) {
+        if self.motion_mode == MotionMode::StepperOnly
+            && self.previous_motion_mode != MotionMode::StepperOnly
+        {
+            info!("Motion mode switched to StepperOnly - re-homing required");
+            self.need_rehome = true;
+        }
+        self.previous_motion_mode = self.motion_mode;
+    }
+
+    /// Reload the motion mode from NVS in case another path switched it; if it
+    /// changed to `StepperOnly`, schedule a re-home. `stepper_switch_log` is the
+    /// message logged on that transition.
+    fn sync_motion_mode_from_nvs(&mut self, stepper_switch_log: &str) {
+        let mode = infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
+        if mode != self.motion_mode {
+            self.motion_mode = mode;
+            self.motion.set_motion_mode(self.motion_mode);
+            if self.motion_mode == MotionMode::StepperOnly {
+                info!("{}", stepper_switch_log);
+                self.need_rehome = true;
+            }
+        }
+    }
+
+    /// Re-home to the limit switch if a `StepperOnly` re-home is pending.
+    /// Returns `Ok(true)` when a re-home ran (caller should `continue` the loop).
+    /// `intro_log` is logged when the sweep starts.
+    fn rehome_if_pending(&mut self, intro_log: &str) -> anyhow::Result<bool> {
+        if !(self.need_rehome && self.motion_mode == MotionMode::StepperOnly) {
+            return Ok(false);
+        }
+        info!("{}", intro_log);
+        const HOMING_DIRECTION: Direction = Direction::Ccw;
+        let limit_sw_status = match HOMING_DIRECTION {
+            Direction::Cw => self.motion.find_limit_switch_cw(),
+            Direction::Ccw => self.motion.find_limit_switch_ccw(),
+        };
+        match limit_sw_status {
+            true => {
+                info!(
+                    "Re-homing OK (dir={}): limit switch found",
+                    HOMING_DIRECTION.as_str()
+                );
+                self.actual_heading = self.sw.home_heading_deg;
+                self.motion.update_position(self.actual_heading);
+                if Self::PERSIST_NVS {
+                    infra::SnapshotStore::new(&mut self.nvs, Self::PERSIST_NVS)
+                        .save_heading(self.actual_heading);
+                }
+                self.need_rehome = false;
+            }
+            false => {
+                error!(
+                    "Re-homing FAILED (dir={}): limit switch could not be found",
+                    HOMING_DIRECTION.as_str()
+                );
+                infra::error_loop(
+                    self.sw.device_id,
+                    &mut self.mqtt,
+                    network::telemetry::Component::LimitSwitch,
+                    "Re-home failed after encoder recovery",
+                    "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
+                );
+            }
+        }
+        thread::sleep(Duration::from_secs(2));
+        Ok(true)
+    }
+
+    /// Build the encoder-recovery config from the switchboard.
+    fn encoder_recovery_cfg(&self) -> EncoderRecoverySwitches {
+        EncoderRecoverySwitches {
+            enabled: self.sw.runtime.encoder_recovery.enabled,
+            probe_interval_secs: self.sw.runtime.encoder_recovery.probe_interval_secs,
+            probe_steps: self.sw.runtime.encoder_recovery.probe_steps,
+            max_drift_deg: self.sw.runtime.encoder_recovery.max_drift_deg,
+            rehome_dir: match self.sw.runtime.encoder_recovery.rehome_dir {
+                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
+                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
+            },
+        }
+    }
+
+    /// Run one encoder-fault probe/recovery tick. Returns `Ok(true)` when a fault
+    /// is active (caller should `continue` and skip tracking this iteration).
+    fn run_encoder_fault(&mut self) -> anyhow::Result<bool> {
+        let cfg = self.encoder_recovery_cfg();
+
+        let mut ctx = EncoderTickContext {
+            nvs: &mut self.nvs,
+            mqtt: &mut self.mqtt,
+            wifi: &mut self.wifi,
+            cfg,
+            current_version: self.current_version.clone(),
+            persist_nvs: Self::PERSIST_NVS,
+            device_id: self.sw.device_id.into(),
+            home_heading_deg: self.sw.home_heading_deg,
+        };
+
+        let fault_active = self.encoder_fault.tick(
+            &mut ctx,
+            &mut self.motion,
+            self.motion_mode,
+            &mut self.actual_heading,
+        )?;
+        Ok(fault_active)
+    }
+
+    /// Run one tracking tick (gated by the switchboard) and feed the move
+    /// outcome back into encoder-fault recovery.
+    fn run_tracking(&mut self, current_datetime: String) {
+        if !self.sw.runtime.tracking.enabled {
+            info!("Tracking disabled");
+            return;
+        }
+        let cfg = self.encoder_recovery_cfg();
+
+        let mut ctx = TrackingTickContext {
+            calculation: &mut self.calculation,
+            mqtt: &mut self.mqtt,
+            current_version: self.current_version.clone(),
+            nvs: &mut self.nvs,
+            wifi: &mut self.wifi,
+            current_datetime,
+            persist_nvs: Self::PERSIST_NVS,
+            allow_ota: self.allow_ota,
+            device_id: self.sw.device_id,
+        };
+
+        let outcome =
+            app::tracking_loop::tick(&mut self.motion, &mut ctx, &mut self.actual_heading);
+
+        if outcome != MoveOutcome::Completed {
+            warn!("Last move aborted: {:?}", outcome);
+        }
+        if let Err(e) = self.encoder_fault.on_move_outcome(
+            outcome,
+            &cfg,
+            &mut self.motion,
+            &mut self.nvs,
+            Self::PERSIST_NVS,
+        ) {
+            error!("Error in encoder fault recovery: {:?}", e);
+        }
+    }
+
+    /// Reconnect Wi-Fi if it has dropped.
+    fn maintain_wifi(&mut self) -> anyhow::Result<()> {
+        if self.wifi.state() == WifiState::Disconnected {
+            warn!("Wifi disconnected, attempting to reconnect...");
+            self.wifi.reconnect_if_disconnected()?;
+        }
+        Ok(())
+    }
+
+    /// Publish the periodic heartbeat (`tower/{id}/status`).
+    fn publish_heartbeat(&mut self, current_datetime: &str) {
+        let payload = network::telemetry::Heartbeat {
+            current_time: current_datetime,
+            firmware_version: &self.current_version.to_string(),
+        };
+        let topic = network::telemetry::topic::status(self.sw.device_id);
+        let _ = network::telemetry::publish_json(&mut self.mqtt, &topic, &payload);
+    }
+
+    /// Publish system temperature telemetry when the HDC1080 is present.
+    fn report_temperature(&mut self, current_datetime: &str) {
+        if let Some(ref mut sensor) = self.temp_sensor {
+            infra::temperature::report_system_temperature(
+                sensor,
+                &mut self.mqtt,
+                self.sw.device_id,
+                current_datetime,
+            );
+        }
+    }
+
+    /// Answer at most one queued remote command (gated by the switchboard).
+    fn process_commands(&mut self) {
+        if !self.sw.runtime.commands_enabled {
+            return;
+        }
+        let motion_mode_str = match self.motion_mode {
+            MotionMode::StepperOnly => "stepper_only",
+            MotionMode::EncoderGuarded => "encoder_guarded",
+        };
+        let firmware_version = self.current_version.to_string();
+        let ctx = diagnostics::commands::CmdCtx {
+            device_id: self.sw.device_id,
+            firmware_version: &firmware_version,
+            mqtt_connected: self.mqtt.is_connected(),
+            wifi_connected: matches!(self.wifi.state(), WifiState::Connected(_)),
+            motion_mode: motion_mode_str,
+            current_heading: self.actual_heading,
+        };
+        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx)
+        {
+            warn!("Command processing failed: {:?}", e);
+        }
+    }
+}
 use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
 use crate::infra::ResetReason;
 
 fn main() -> anyhow::Result<()> {
-    let sw = switchboard::normal();
+    let sw = switchboard::active(switchboard::Profile::from_env_str(
+        crate::constants::ACTIVE_PROFILE_STR,
+    ));
 
     // PHASE 1: INITIALIZATION --------------------------------------------------
     esp_idf_svc::sys::link_patches();
@@ -70,7 +335,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Hardware and persistent storage
-    let peripherals = Peripherals::take().unwrap();
     let nvs_default = EspDefaultNvsPartition::take()?;
 
     let mut nvs = match EspNvs::new(nvs_default.clone(), "storage", true) {
@@ -81,13 +345,15 @@ fn main() -> anyhow::Result<()> {
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
 
-    let last_run_normal = infra::SnapshotStore::new(&mut nvs, true)
-        .load_last_run_normal_or_init(true);
+    let last_run_normal =
+        infra::SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
     let trust_nvs_state = last_run_normal;
     info!(
         "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
         last_run_normal, trust_nvs_state
     );
+
+    let peripherals = Peripherals::take().unwrap();
 
     // Encoder pins
     let encoder_a = peripherals.pins.gpio10;
@@ -99,6 +365,50 @@ fn main() -> anyhow::Result<()> {
     let config = I2cConfig::new().baudrate(10_u32.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
     let bus: &'static _ = shared_bus::new_std!(I2cDriver = i2c).unwrap();
+
+    // LED status
+    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
+    led.display_none()?;
+
+    // Button inputs (reserved for manual control)
+    let maintenance_button = PinDriver::input(peripherals.pins.gpio5).unwrap();
+    let ccw_button = PinDriver::input(peripherals.pins.gpio4).unwrap();
+    let cw_button = PinDriver::input(peripherals.pins.gpio6).unwrap();
+
+    // PHASE 1.5: MAINTENANCE MODE ----------------------------------------------
+
+    // Init motion early so that maintenance mode can use it
+    // Motion (motor, encoder, relay, limit switch)
+    let mut motion = Motion::new(
+        peripherals.pins.gpio15,
+        peripherals.pins.gpio16,
+        peripherals.pins.gpio17,
+        peripherals.pins.gpio14,
+        encoder_a,
+        encoder_b,
+        sw.runtime.relay_polarity,
+        sw.runtime.limit_switch_polarity,
+    );
+
+    motion.init();
+    let _ = motion.run();
+
+    // Runtime guardrails from switchboard
+    motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
+    motion.set_soft_limits(
+        sw.runtime.guardrails.soft_limits_enabled,
+        sw.runtime.guardrails.soft_limit_min_deg,
+        sw.runtime.guardrails.soft_limit_max_deg,
+    );
+
+    // Capture maintenance mode
+    capture_maintenance_mode(
+        &mut motion,
+        &mut led,
+        maintenance_button,
+        ccw_button,
+        cw_button,
+    )?;
 
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
@@ -138,7 +448,8 @@ fn main() -> anyhow::Result<()> {
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
     log::info!("Waiting for 20 seconds before connecting to wifi");
     thread::sleep(Duration::from_secs(20));
-    wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
+    wifi.connect(&real_wifi_ssid, &real_wifi_pass)
+        .expect("Wi-Fi connection failed");
     info!("Current wifi state: {:?}", wifi.state());
     if wifi.state() == WifiState::Disconnected {
         wifi.reconnect_if_disconnected()?;
@@ -177,9 +488,9 @@ fn main() -> anyhow::Result<()> {
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.1.4";
+    const DEFAULT_VERSION: &str = "1.1.5";
     if PERSIST_NVS {
-        nvs.set_str("version", "1.1.4")?;
+        nvs.set_str("version", "1.1.5")?;
     }
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
@@ -236,9 +547,11 @@ fn main() -> anyhow::Result<()> {
                                 current_version: &current_version.to_string(),
                                 notes: "No errors during update",
                             };
-                            let topic = network::telemetry::topic::logs_firmware_update(sw.device_id);
+                            let topic =
+                                network::telemetry::topic::logs_firmware_update(sw.device_id);
                             let published =
-                                network::telemetry::publish_json(&mut mqtt, &topic, &payload).is_ok();
+                                network::telemetry::publish_json(&mut mqtt, &topic, &payload)
+                                    .is_ok();
                             if published {
                                 let _ = nvs.remove("prev_version");
                             }
@@ -261,11 +574,19 @@ fn main() -> anyhow::Result<()> {
         info!("Normal boot firmware already validated");
     }
 
+    // Subscribe to the remote command channel (tower/{id}/cmd/diagnostics).
+    // Non-fatal: a subscribe hiccup must not block boot. Gated by the profile.
+    if sw.runtime.commands_enabled {
+        if let Err(e) = diagnostics::transport::subscribe(&mut mqtt, sw.device_id) {
+            warn!("Failed to subscribe to command channel: {:?}", e);
+        }
+    }
+
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
     // boot-log publish could include `firmware_version`.)
 
-    const ALLOW_OTA: bool = true;
+    let allow_ota = sw.effects.allow_ota;
 
     {
         let payload = network::telemetry::Heartbeat {
@@ -282,9 +603,10 @@ fn main() -> anyhow::Result<()> {
         sw.device_id,
         Some(sw.default_ota_updater),
         Some(sw.default_ota_password),
-    ).expect("Failed to create OTA updater instance");
+    )
+    .expect("Failed to create OTA updater instance");
 
-    if ALLOW_OTA {
+    if allow_ota {
         info!("Checking for new OTA update in 3 seconds...");
         thread::sleep(Duration::from_secs(3));
         if let Err(e) = updater.run_version_compare(&mut nvs) {
@@ -308,7 +630,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         info!("OTA disabled: skipping version compare");
     }
-    
+
     // PHASE 5: MOTION INITIALIZATION ------------------------------------------
     // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
     // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
@@ -343,13 +665,19 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(0.0);
     let altitude: f64 = 0.0;
 
-    info!("Retrieved latitude: {}, and longitude: {}", latitude, longitude);
-    info!("Device: {}, Lat: {}, Lon: {}, Alt: {}", sw.device_id, latitude, longitude, altitude);
+    info!(
+        "Retrieved latitude: {}, and longitude: {}",
+        latitude, longitude
+    );
+    info!(
+        "Device: {}, Lat: {}, Lon: {}, Alt: {}",
+        sw.device_id, latitude, longitude, altitude
+    );
 
     // Hardware initialization
-    let mut calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
+    let calculation = Clock::new(bus.acquire_i2c(), latitude, longitude, altitude);
 
-    let mut temp_sensor = match Hdc1080::new(bus.acquire_i2c(), Ets) {
+    let temp_sensor = match Hdc1080::new(bus.acquire_i2c(), Ets) {
         Ok(mut sensor) => {
             let _ = sensor.init();
             if sensor.get_device_id().unwrap_or(0) == 0x1050 {
@@ -366,22 +694,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    // LED status
-    let mut led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0).unwrap();
-
-    // Motion (motor, encoder, relay, limit switch)
-    let mut motion = Motion::new(
-        peripherals.pins.gpio15,
-        peripherals.pins.gpio16,
-        peripherals.pins.gpio17,
-        peripherals.pins.gpio14,
-        encoder_a,
-        encoder_b,
-    );
-
-    motion.init();
-    led.display_healthy();
-    let _ = motion.run();
+    led.display_healthy()?;
 
     // Runtime guardrails from switchboard
     motion.set_stall_detection_enabled(sw.runtime.guardrails.stall_detection_enabled);
@@ -397,7 +710,7 @@ fn main() -> anyhow::Result<()> {
     check_daily_encoder_reset(&mut nvs, &rtc::timezone::local_time(), PERSIST_NVS);
 
     // Motion mode from NVS, default EncoderGuarded
-    let mut motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
+    let motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
         .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
     motion.set_motion_mode(motion_mode);
     motion.set_motor_power_on(POWER_ON);
@@ -424,13 +737,15 @@ fn main() -> anyhow::Result<()> {
     let mut restored_from_snapshot = false;
     if trust_nvs_state && motion_mode == MotionMode::EncoderGuarded {
         if let Some(enc_ticks_adj) =
-            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-                .load_encoder_snapshot()
+            infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_snapshot()
         {
             // Restore zero offset so adjusted ticks equal saved snapshot.
             let raw = motion.encoder_ticks_raw();
             motion.set_encoder_zero_offset(raw - enc_ticks_adj);
-            info!("Restored encoder snapshot ticks from NVS: {}", enc_ticks_adj);
+            info!(
+                "Restored encoder snapshot ticks from NVS: {}",
+                enc_ticks_adj
+            );
             restored_from_snapshot = true;
         } else {
             info!("No valid encoder snapshot found in NVS; will home normally.");
@@ -450,32 +765,25 @@ fn main() -> anyhow::Result<()> {
 
     // Encoder fault recovery
     let mut encoder_fault = app::encoder_fault::EncoderFaultRecovery::new();
-    let encoder_daily_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
+    let encoder_daily_mode =
+        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
     encoder_fault.set_mode_switched_daily(encoder_daily_mode);
-
-    // Button inputs (reserved for manual control)
-    let _mb = PinDriver::input(peripherals.pins.gpio5).unwrap(); // Maintenance
-    let _eb = PinDriver::input(peripherals.pins.gpio4).unwrap(); // East Button
-    let _wb = PinDriver::input(peripherals.pins.gpio6).unwrap(); // West Button
 
     // Homing policy:
     // - StepperOnly: always home
     // - EncoderGuarded: home when snapshot restore is unavailable/untrusted
     // - EncoderGuarded: if NVS claims mechanical home (≈ home_heading_deg), require limit
     //   switch active before skipping homing; otherwise re-home like snapshot miss
-    const HOMING_ENABLED: bool = true;
     const HOMING_DIRECTION: Direction = Direction::Ccw;
     /// Same tolerance as motion sunset home check (`location` vs `HOME_HEADING_DEG`).
     const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
 
-    let would_skip_homing_on_snapshot = motion_mode == MotionMode::EncoderGuarded
-        && restored_from_snapshot
-        && trust_nvs_state;
+    let would_skip_homing_on_snapshot =
+        motion_mode == MotionMode::EncoderGuarded && restored_from_snapshot && trust_nvs_state;
     let restored_claims_mechanical_home =
         (actual_heading - sw.home_heading_deg).abs() < HOME_HEADING_VERIFY_EPS_DEG;
-    let home_claim_needs_limit_verify = would_skip_homing_on_snapshot
-        && restored_claims_mechanical_home
-        && !motion.switch_pressed();
+    let home_claim_needs_limit_verify =
+        would_skip_homing_on_snapshot && restored_claims_mechanical_home && !motion.lmsw_active();
     if home_claim_needs_limit_verify {
         log::info!(
             "Restored heading matches home ({}) but limit switch not pressed; homing to verify",
@@ -487,7 +795,7 @@ fn main() -> anyhow::Result<()> {
         || !restored_from_snapshot
         || !trust_nvs_state
         || home_claim_needs_limit_verify;
-    if should_home_by_mode && HOMING_ENABLED {
+    if should_home_by_mode && sw.boot.homing.enabled {
         let limit_sw_status = match HOMING_DIRECTION {
             Direction::Cw => motion.find_limit_switch_cw(),
             Direction::Ccw => motion.find_limit_switch_ccw(),
@@ -540,209 +848,76 @@ fn main() -> anyhow::Result<()> {
     infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
 
     // PHASE 8: MAIN TRACKING LOOP ---------------------------------------------
-    let mut previous_motion_mode = motion_mode;
-    let mut need_rehome_stepper_only = false;
+    // Gather the long-lived state into the Tower context; the loop drives it.
+    let mut tower = Tower {
+        sw,
+        nvs,
+        motion,
+        mqtt,
+        wifi,
+        calculation,
+        temp_sensor,
+        encoder_fault,
+        current_version,
+        motion_mode,
+        actual_heading,
+        allow_ota,
+        previous_motion_mode: motion_mode,
+        need_rehome: false,
+    };
 
     loop {
         let local_time = rtc::timezone::local_time();
         let current_datetime = format!("{}", local_time.format("%d/%m/%Y %H:%M:%S"));
 
-        // Daily encoder mode reset
-        let reset_occurred = check_daily_encoder_reset(&mut nvs, &local_time, PERSIST_NVS);
-        if reset_occurred {
-            motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-                .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-            motion.set_motion_mode(motion_mode);
-            encoder_fault.set_mode_switched_daily(false);
-            let mode_str = match motion_mode {
-                MotionMode::StepperOnly => "StepperOnly",
-                MotionMode::EncoderGuarded => "EncoderGuarded",
-            };
-            info!("Daily reset: Motion mode updated to {}", mode_str);
-        }
-        
+        // Daily encoder-mode reset at day rollover.
+        tower.daily_reset(&local_time);
+
         // Re-home once when transitioning into StepperOnly.
-        if motion_mode == MotionMode::StepperOnly && previous_motion_mode != MotionMode::StepperOnly {
-            info!("Motion mode switched to StepperOnly - re-homing required");
-            need_rehome_stepper_only = true;
-        }
-        previous_motion_mode = motion_mode;
-        
-        if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
-            info!("StepperOnly mode detected - re-homing to establish known position");
-            const HOMING_DIRECTION: Direction = Direction::Ccw;
-            let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => motion.find_limit_switch_cw(),
-                Direction::Ccw => motion.find_limit_switch_ccw(),
-            };
-            match limit_sw_status {
-                true => {
-                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
-                    actual_heading = sw.home_heading_deg;
-                    motion.update_position(actual_heading);
-                    if PERSIST_NVS {
-                        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
-                    }
-                    need_rehome_stepper_only = false;
-                }
-                false => {
-                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::error_loop(
-                        sw.device_id,
-                        &mut mqtt,
-                        network::telemetry::Component::LimitSwitch,
-                        "Re-home failed after encoder recovery",
-                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
-                    );
-                }
-            }
-            thread::sleep(Duration::from_secs(2));
+        tower.detect_stepper_transition();
+        if tower.rehome_if_pending(
+            "StepperOnly mode detected - re-homing to establish known position",
+        )? {
             continue;
         }
 
-        info!("Actual Heading: {}", motion.location());
+        info!("Actual Heading: {}", tower.motion.location());
         info!("Current datetime: {}", current_datetime.clone());
 
         let now = std::time::Instant::now();
 
         // Reload mode in case another path switched to StepperOnly.
-        let current_motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-        if current_motion_mode != motion_mode {
-            motion_mode = current_motion_mode;
-            motion.set_motion_mode(motion_mode);
-            if motion_mode == MotionMode::StepperOnly {
-                info!("Motion mode changed to StepperOnly - will re-home on next iteration");
-                need_rehome_stepper_only = true;
-            }
+        tower.sync_motion_mode_from_nvs(
+            "Motion mode changed to StepperOnly - will re-home on next iteration",
+        );
+
+        if tower.run_encoder_fault()? {
+            continue; // Fault active, skip tracking this iteration
         }
-        
-        let encoder_recovery_cfg = EncoderRecoverySwitches {
-            enabled: sw.runtime.encoder_recovery.enabled,
-            probe_interval_secs: sw.runtime.encoder_recovery.probe_interval_secs,
-            probe_steps: sw.runtime.encoder_recovery.probe_steps,
-            max_drift_deg: sw.runtime.encoder_recovery.max_drift_deg,
-            rehome_dir: match sw.runtime.encoder_recovery.rehome_dir {
-                switchboard::Direction::Cw => crate::app::encoder_fault::Direction::Cw,
-                switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
-            },
-        };
-        if encoder_fault.tick(
-            &encoder_recovery_cfg,
-            &mut motion,
-            motion_mode,
-            &mut actual_heading,
-            &mut nvs,
-            &mut mqtt,
-            &mut wifi,
-            &current_version,
-            PERSIST_NVS,
-            sw.device_id,
-            sw.home_heading_deg,
-        )? {
-            continue;  // Fault active, skip tracking this iteration
-        }
-        
-        // Re-check mode after encoder_fault.tick() in case it changed during recovery.
-        let updated_motion_mode = infra::SnapshotStore::new(&mut nvs, PERSIST_NVS)
-            .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
-        if updated_motion_mode != motion_mode {
-            motion_mode = updated_motion_mode;
-            motion.set_motion_mode(motion_mode);
-            if motion_mode == MotionMode::StepperOnly {
-                info!("Motion mode switched to StepperOnly during encoder fault recovery - will re-home");
-                need_rehome_stepper_only = true;
-            }
-        }
-        
+
+        // Re-check mode after recovery in case it changed during the probe.
+        tower.sync_motion_mode_from_nvs(
+            "Motion mode switched to StepperOnly during encoder fault recovery - will re-home",
+        );
+
         // Re-home before tracking if StepperOnly was activated during recovery.
-        if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
-            info!("StepperOnly mode detected - re-homing to establish known position (CCW)");
-            const HOMING_DIRECTION: Direction = Direction::Ccw;
-            let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => motion.find_limit_switch_cw(),
-                Direction::Ccw => motion.find_limit_switch_ccw(),
-            };
-            match limit_sw_status {
-                true => {
-                    info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
-                    actual_heading = sw.home_heading_deg;
-                    motion.update_position(actual_heading);
-                    if PERSIST_NVS {
-                        infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).save_heading(actual_heading);
-                    }
-                    need_rehome_stepper_only = false;
-                }
-                false => {
-                    error!("Re-homing FAILED (dir={}): limit switch could not be found", HOMING_DIRECTION.as_str());
-                    infra::error_loop(
-                        sw.device_id,
-                        &mut mqtt,
-                        network::telemetry::Component::LimitSwitch,
-                        "Re-home failed after encoder recovery",
-                        "Encoder recovery completed but subsequent re-home could not locate the limit switch.",
-                    );
-                }
-            }
-            thread::sleep(Duration::from_secs(2));
+        if tower.rehome_if_pending(
+            "StepperOnly mode detected - re-homing to establish known position (CCW)",
+        )? {
             continue;
         }
 
-        const TRACKING_ENABLED: bool = true;
-        if TRACKING_ENABLED {
-            let outcome = app::tracking_loop::tick(
-                &mut motion,
-                &mut calculation,
-                &mut actual_heading,
-                &mut mqtt,
-                &current_version,
-                &mut nvs,
-                &mut wifi,
-                current_datetime.clone(),
-                PERSIST_NVS,
-                ALLOW_OTA,
-                sw.device_id,
-            );
+        tower.run_tracking(current_datetime.clone());
 
-            if outcome != MoveOutcome::Completed {
-                warn!("Last move aborted: {:?}", outcome);
-            }
-            if let Err(e) = encoder_fault.on_move_outcome(outcome, &encoder_recovery_cfg, &mut motion, &mut nvs, PERSIST_NVS) {
-                error!("Error in encoder fault recovery: {:?}", e);
-            }
-        } else {
-            info!("Tracking disabled");
-        }
+        info!("Tracking loop duration (v1.1.5): {:?}", now.elapsed());
 
-        info!("Tracking loop duration (v1.1.4): {:?}", now.elapsed());
-        
-        // Housekeeping
-        if wifi.state() == WifiState::Disconnected {
-            warn!("Wifi disconnected, attempting to reconnect...");
-            wifi.reconnect_if_disconnected()?;
-        }
-        // Heartbeat ping: see `network::telemetry::topic::status` for the topic string.
-        {
-            let payload = network::telemetry::Heartbeat {
-                current_time: &current_datetime,
-                firmware_version: &current_version.to_string(),
-            };
-            let topic = network::telemetry::topic::status(sw.device_id);
-            let _ = network::telemetry::publish_json(&mut mqtt, &topic, &payload);
-        }
-
-        if let Some(ref mut sensor) = temp_sensor {
-            infra::temperature::report_system_temperature(
-                sensor,
-                &mut mqtt,
-                sw.device_id,
-                &current_datetime,
-            );
-        }
+        tower.maintain_wifi()?;
+        tower.publish_heartbeat(&current_datetime);
+        tower.report_temperature(&current_datetime);
+        tower.process_commands();
 
         const LOOP_SLEEP_SECS: u64 = 300;
         std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
-
     }
 }
 
@@ -820,7 +995,7 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
     persist_nvs: bool,
 ) -> bool {
     let mut snapshot_store = infra::SnapshotStore::new(nvs, persist_nvs);
-    
+
     let encoder_daily_mode = snapshot_store.load_encoder_daily_mode();
     if !encoder_daily_mode {
         return false;
@@ -845,4 +1020,76 @@ fn check_daily_encoder_reset<T: esp_idf_svc::nvs::NvsPartitionId>(
             false
         }
     }
+}
+
+/// Enters maintenance mode if the maintenance button is held down on startup.
+fn capture_maintenance_mode(
+    motion: &mut Motion,
+    led: &mut Led,
+    maintenance_button: PinDriver<Gpio5, Input>,
+    ccw_button: PinDriver<Gpio4, Input>,
+    cw_button: PinDriver<Gpio6, Input>,
+) -> anyhow::Result<()> {
+    if maintenance_button.is_low() {
+        return Ok(());
+    }
+
+    log::info!("[Maintenance Mode] Begin");
+    led.display_maintenance()?;
+
+    let mut move_direction = None;
+    let mut last_maintenance = maintenance_button.is_high();
+    let mut last_click_time: Option<Instant> = None;
+    const DOUBLE_CLICK_MS: Duration = Duration::from_millis(250);
+
+    loop {
+        let ccw = ccw_button.is_high();
+        let cw = cw_button.is_high();
+        let maintenance = maintenance_button.is_high();
+        let maintenance_pressed = maintenance && !last_maintenance;
+        last_maintenance = maintenance;
+
+        let now = Instant::now();
+
+        // Don't move if CCW and CW are both pressed
+        if ccw && cw {
+            move_direction = None
+        }
+        // Stop moving if maintenance button is single clicked,
+        // or exit mainenance mode if double clicked
+        else if maintenance_pressed {
+            if let Some(last) = last_click_time {
+                if now.duration_since(last) <= DOUBLE_CLICK_MS {
+                    break;
+                }
+            }
+
+            last_click_time = Some(now);
+            move_direction = None;
+            log::info!("[Maintenance Mode] Not moving");
+        } else if ccw && !cw {
+            move_direction = Some(Direction::Ccw);
+            log::info!("[Maintenance Mode] Moving CCW");
+        } else if cw && !ccw {
+            move_direction = Some(Direction::Cw);
+            log::info!("[Maintenance Mode] Moving CW");
+        }
+
+        if let Some(direction) = move_direction {
+            match direction {
+                Direction::Ccw => {
+                    led.display_maintenance_moving_ccw()?;
+                    motion.move_by(-30_000);
+                }
+                Direction::Cw => {
+                    led.display_maintenance_moving_cw()?;
+                    motion.move_by(30_000);
+                }
+            }
+            led.display_maintenance()?;
+        }
+    }
+
+    log::info!("[Maintenance Mode] Exit, continuing normal boot");
+    led.display_none()
 }

@@ -1,9 +1,9 @@
 pub mod sensors {
-    use esp_idf_svc::hal::adc::{
-        AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated, EmptyAdcChannels, ADC1,
+    use esp_idf_svc::hal::{
+        adc::{AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated, EmptyAdcChannels, ADC1},
+        delay::Ets,
+        gpio::{Gpio2, Gpio3},
     };
-    use esp_idf_svc::hal::delay::Ets;
-    use esp_idf_svc::hal::gpio::{Gpio2, Gpio3};
     use hdc1080::Hdc1080;
 
     pub struct Sensors<'a, I2C> {
@@ -42,7 +42,7 @@ pub mod sensors {
 
         pub fn east_ldr(&mut self) -> i32 {
             let mut samples: [AdcMeasurement; 128] = [Default::default(); 128];
-            if let Ok(_) = self.light_sensor.read(&mut samples, 128) {
+            if self.light_sensor.read(&mut samples, 128).is_ok() {
                 return samples[0].data() as i32;
             }
             -1
@@ -50,7 +50,7 @@ pub mod sensors {
 
         pub fn west_ldr(&mut self) -> i32 {
             let mut samples: [AdcMeasurement; 128] = [Default::default(); 128];
-            if let Ok(_) = self.light_sensor.read(&mut samples, 128) {
+            if self.light_sensor.read(&mut samples, 128).is_ok() {
                 return samples[1].data() as i32;
             }
             -1
@@ -58,8 +58,8 @@ pub mod sensors {
 
         pub fn balance_gap(&mut self) -> i32 {
             let mut samples: [AdcMeasurement; 128] = [Default::default(); 128];
-            if let Ok(_) = self.light_sensor.read(&mut samples, 128) {
-                return (samples[0].data() as i32 - samples[1].data() as i32) as i32;
+            if self.light_sensor.read(&mut samples, 128).is_ok() {
+                return samples[0].data() as i32 - samples[1].data() as i32;
             }
             -10000
         }
