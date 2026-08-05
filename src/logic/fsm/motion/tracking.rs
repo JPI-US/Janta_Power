@@ -302,7 +302,7 @@ pub(crate) fn set_tower_position(
         // Sunset Operation
         if (location - HOME_HEADING_DEG).abs() < 0.01 {
             // Verify home physically when heading says home.
-            if ctx.motion.lmsw.is_high() {
+            if !ctx.motion.lmsw_active() {
                 log::warn!(
                     "Heading near home but limit switch not pressed; verifying home by homing CCW"
                 );

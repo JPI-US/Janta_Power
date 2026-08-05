@@ -73,7 +73,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
             || home_claim_needs_limit_verify;
 
         if should_home_by_mode && ctx.switchboard.boot.homing.enabled {
-            if ctx.motion.lmsw.is_low() {
+            if ctx.motion.lmsw_active() {
                 log::info!("Limit switch already pressed - skipping homing");
                 ctx.motion.update_position(ctx.switchboard.home_heading_deg);
                 ctx.motion.force_zero_if_limit_switch_pressed();
@@ -137,7 +137,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
             return Ok(StateResult::Running(state));
         }
 
-        if self.steps_left < 0 && ctx.motion.lmsw.is_high() {
+        if self.steps_left < 0 && !ctx.motion.lmsw_active() {
             let steps = calculate_steps(-1.0);
 
             return Ok(StateResult::Running(Box::new(MotionMoving { steps })));
@@ -147,7 +147,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         ctx.motion.is_homing = false;
         ctx.motion.need_rehome = false;
 
-        if ctx.motion.lmsw.is_low() {
+        if ctx.motion.lmsw_active() {
             log::info!(
                 "Homing OK (dir={}): limit switch found",
                 HOMING_DIRECTION.as_str()
