@@ -1,4 +1,5 @@
 pub mod sensors {
+    use anyhow::anyhow;
     use esp_idf_svc::hal::{
         adc::{AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated, EmptyAdcChannels, ADC1},
         delay::Ets,
@@ -15,7 +16,12 @@ pub mod sensors {
     where
         I2C: embedded_hal::i2c::I2c,
     {
-        pub fn new<'a>(bus: I2C, adc: ADC1, ldr_e: Gpio2, ldr_w: Gpio3) -> Sensors<'a, I2C> {
+        pub fn new<'a>(
+            bus: I2C,
+            adc: ADC1,
+            ldr_e: Gpio2,
+            ldr_w: Gpio3,
+        ) -> anyhow::Result<Sensors<'a, I2C>> {
             let att_e = Attenuated::db11(ldr_e);
             let att_w = Attenuated::db11(ldr_w);
 
@@ -23,13 +29,13 @@ pub mod sensors {
             let adc_channels = temp_channel.chain(att_w);
 
             let adc_config = AdcContConfig::default();
-            let mut driver = AdcContDriver::new(adc, &adc_config, adc_channels).unwrap();
-            driver.start().unwrap();
+            let mut driver = AdcContDriver::new(adc, &adc_config, adc_channels)?;
+            driver.start()?;
 
-            Sensors {
-                humidity_sensor: Hdc1080::new(bus, Ets).unwrap(),
+            Ok(Sensors {
+                humidity_sensor: Hdc1080::new(bus, Ets).map_err(|e| anyhow!("{:?}", e))?,
                 light_sensor: driver,
-            }
+            })
         }
 
         pub fn temperature(&mut self) -> f32 {

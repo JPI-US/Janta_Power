@@ -5,7 +5,7 @@ pub mod wifi {
         time::Duration,
     };
 
-    use anyhow;
+    use anyhow::anyhow;
     use esp_idf_svc::wifi::{
         AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, PmfConfiguration,
         ScanMethod,
@@ -28,38 +28,43 @@ pub mod wifi {
     }
 
     impl<'a> Wifi<'a> {
-        /// Create a new Wi-Fi manager
+        /// Create and configure a new Wi-Fi manager
         pub fn new(
             modem: esp_idf_svc::hal::modem::Modem,
             sysloop: EspSystemEventLoop,
             nvs: EspDefaultNvsPartition,
+            ssid: &str,
+            pass: &str,
         ) -> anyhow::Result<Self> {
             let esp_wifi = EspWifi::new(modem, sysloop.clone(), Some(nvs))?;
-            let blocking = BlockingWifi::wrap(esp_wifi, sysloop)?;
+            let mut blocking = BlockingWifi::wrap(esp_wifi, sysloop)?;
+
+            blocking.set_configuration(&Configuration::Client(ClientConfiguration {
+                ssid: {
+                    let mut s = heapless::String::<32>::new();
+                    s.push_str(ssid)
+                        .map_err(|_| anyhow!("Wifi SSID expected 32 bytes"))?;
+                    s
+                },
+                password: {
+                    let mut p = heapless::String::<64>::new();
+                    p.push_str(pass)
+                        .map_err(|_| anyhow!("Wifi password expected 64 bytes"))?;
+                    p
+                },
+                auth_method: AuthMethod::WPA2Personal,
+                scan_method: ScanMethod::FastScan,
+                pmf_cfg: PmfConfiguration::NotCapable,
+                ..Default::default()
+            }))?;
+
+            blocking.start()?;
+
             Ok(Wifi { inner: blocking })
         }
 
         /// Configure and connect to a Wi-Fi network
-        pub fn connect(&mut self, ssid: &str, pass: &str) -> anyhow::Result<()> {
-            self.inner
-                .set_configuration(&Configuration::Client(ClientConfiguration {
-                    ssid: {
-                        let mut s = heapless::String::<32>::new();
-                        s.push_str(ssid).unwrap();
-                        s
-                    },
-                    password: {
-                        let mut p = heapless::String::<64>::new();
-                        p.push_str(pass).unwrap();
-                        p
-                    },
-                    auth_method: AuthMethod::WPA2Personal,
-                    scan_method: ScanMethod::FastScan,
-                    pmf_cfg: PmfConfiguration::NotCapable,
-                    ..Default::default()
-                }))?;
-
-            self.inner.start()?;
+        pub fn connect(&mut self) -> anyhow::Result<()> {
             self.inner.connect()?;
             self.inner.wait_netif_up()?;
 

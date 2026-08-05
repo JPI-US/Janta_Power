@@ -7,7 +7,7 @@ authors = [
 ]
 edition = "2021"
 resolver = "2"
-rust-version = "1.77"
+rust-version = "1.91"
 
 [package.metadata.esp-idf]
 partition_table = "partitions.csv"
@@ -22,15 +22,44 @@ members = [
     "crates/infrastructure/rtc",
     "crates/infrastructure/wifi",
     "crates/motion",
-    "crates/sensors/bno080",
     "crates/sensors/ds323x",
     "crates/sensors/hdc1080",
     "crates/sensors/sensors",
 ]
 
+[workspace.dependencies]
+accel-stepper = { path = "crates/drivers/accel-stepper" }
+anyhow = "1.0.86"
+crossbeam-channel = "0.5.16"
+base64 = "0.22.1"
+chrono = "0.4.40"
+clock = { path = "crates/infrastructure/clock" }
+dotenv = "0.15"
+ds323x = { path = "crates/sensors/ds323x" }
+embedded-hal = "1.0.0"
+embedded-svc = "0.28.0"
+esp-idf-svc = "0.51"
+esp-idf-sys = "0.36.1"
+fsm = { path = "crates/infrastructure/fsm" }
+hdc1080 = { path = "crates/sensors/hdc1080" }
+heapless = "0.8.0"
+libc = "0.2"
+log = "0.4.22"
+motion = { path = "crates/motion" }
+network = { path = "crates/infrastructure/network" }
+ota = { path = "crates/infrastructure/ota" }
+rgb = "0.8.29"
+rgb_led = { path = "crates/drivers/rgb_led" }
+rtc = { path = "crates/infrastructure/rtc" }
+semver = "1.0.26"
+sensors = { path = "crates/sensors/sensors" }
+serde = "1"
+serde_json = "1.0.143"
+shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0" }
+wifi = { path = "crates/infrastructure/wifi" }
+
 [[bin]]
 name = "tower"
-path = "src/runtime/main.rs"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [features]
@@ -38,42 +67,44 @@ default = []
 experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
-anyhow = "1.0"
-chrono = { version = "0.4.40", features = ["clock"] }
-clock = { path = "crates/infrastructure/clock" }
-embedded-hal = "1.0.0"
-embedded-svc = "0.28.0"
+anyhow.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+clock.workspace = true
+ds323x.workspace = true
+embedded-hal.workspace = true
+embedded-svc.workspace = true
 esp-idf-hal = { version = "0.45", default-features = false, features = [
     "rmt-legacy",
 ] }
-esp-idf-svc = { version = "0.51", features = [
+esp-idf-svc = { workspace = true, features = [
     "critical-section",
     "embassy-time-driver",
     "embassy-sync",
 ] }
-hdc1080 = { path = "crates/sensors/hdc1080" }
-heapless = "0.8.0"
-log = "0.4"
-motion = { path = "crates/motion" }
-network = { path = "crates/infrastructure/network" }
-ota = { path = "crates/infrastructure/ota" }
+hdc1080.workspace = true
+heapless.workspace = true
+log.workspace = true
+motion.workspace = true
+network.workspace = true
+fsm.workspace = true
+ota.workspace = true
 pid = "4.0.0"
-rgb = "0.8.50"
-rgb_led = { path = "crates/drivers/rgb_led" }
-rtc = { path = "crates/infrastructure/rtc" }
-semver = "1.0.26"
-sensors = { path = "crates/sensors/sensors" }
-
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0", features = [
+rgb.workspace = true
+rgb_led.workspace = true
+rtc.workspace = true
+semver.workspace = true
+sensors.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+shared-bus = { workspace = true, features = [
     "std",
 ] }
 toml = "0.8"
-wifi = { path = "crates/infrastructure/wifi" }
+wifi.workspace = true
+crossbeam-channel.workspace = true
 
 [build-dependencies]
-dotenv = "0.15"
+dotenv.workspace = true
 embuild = "0.33.0"
 
 [profile.release]

@@ -1,6 +1,7 @@
 //use std::io::{Read, Write};
 use std::{result::Result::Ok, thread, time::Duration};
 
+use anyhow::Context;
 // use ota::OtaPartition; // hypothetical struct from ota crate
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
@@ -20,13 +21,13 @@ use sha2::{Digest, Sha256};
 
 pub struct OtaUpdater<'a> {
     current_version: Version,
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     mqtt_client: &'a mut Mqtt,
     device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
     username: Option<String>,
     password: Option<String>,
-    #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
+    #[allow(dead_code)]
     default_headers: Vec<(&'static str, &'static str)>,
 }
 
@@ -44,7 +45,8 @@ impl<'a> OtaUpdater<'a> {
             crt_bundle_attach: Some(esp_crt_bundle_attach),
             use_global_ca_store: true,
             ..Default::default()
-        })?;
+        })
+        .context("Failed to create OTA Updater")?;
 
         let client = HttpClient::wrap(config);
 
@@ -279,7 +281,6 @@ impl<'a> OtaUpdater<'a> {
             remote_version
         );
 
-        //let mut response = self.get_firmware(&remote_url)?;
         // Stream firmware directly using existing client
         let mut headers = vec![("accept", "application/octet-stream")];
         if let Some((key, value)) = self.build_auth_header() {
@@ -298,7 +299,7 @@ impl<'a> OtaUpdater<'a> {
         }
 
         // Gets an instance of OTA
-        let mut ota = EspOta::new().expect("Failed to obtain OTA instance!");
+        let mut ota = EspOta::new()?;
         info!("Obtained OTA instance");
         let mut hasher = Sha256::new(); // Create SHA256 hasher
 
@@ -314,10 +315,7 @@ impl<'a> OtaUpdater<'a> {
         // Initialise ota update
         info!("Waiting for 5 seconds before initiating OTA update");
         thread::sleep(Duration::from_secs(5));
-        let mut update = Some(
-            ota.initiate_update()
-                .expect("Failed to initiate OTA update!"),
-        );
+        let mut update = Some(ota.initiate_update()?);
         info!("OTA update has been initialised");
 
         // Read and write chunks to flash
@@ -377,7 +375,6 @@ impl<'a> OtaUpdater<'a> {
             u.complete()?; // mark valid
         }
 
-        //update.complete()?; // Mark firmware as valid         GPT SUGGEST1
         Ok(())
     }
 }
