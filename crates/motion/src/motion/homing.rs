@@ -26,7 +26,7 @@ impl Motion<'_> {
     // drift metric is silently destroyed. The same invariant applies to
     // `poll_limit_switch_zeroing` below.
     pub fn force_zero_if_limit_switch_pressed(&mut self) {
-        if self.lmsw.is_low() {
+        if self.lmsw_active() {
             // 1. Read drift relative to the previous zero reference.
             let home_error = self.encoder_ticks_adjusted();
             // 2. Stash it for the publish site to consume later.
