@@ -306,6 +306,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
         }
     }
 }
+use crate::app::encoder_fault::{Direction, EncoderRecoverySwitches};
+use crate::infra::ResetReason;
 
 fn main() -> anyhow::Result<()> {
     let sw = switchboard::active(switchboard::Profile::from_env_str(

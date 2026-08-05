@@ -50,6 +50,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reorganized `Cargo.toml`.
 - Removed `Cargo.lock` from `.gitignore`. This is required for the CI checks to work and is good practice for binaries.
 
+## [1.1.4a] - 2026-07-29
+
+Stable 1.1.4 + ESP restart reason.
+
+Tagged `v1.1.4a`. The `a` suffix distinguishes the git tag only — the firmware
+version string, the NVS `version` key, and the OTA version compare in
+`OtaUpdater::run_version_compare` all still read `1.1.4`, so towers already on
+1.1.4 will not see this as an update. Flash it directly if you want the boot
+reason on a given tower.
+
+### Added
+
+- **Reset reason reporting.** `infra::ResetReason` reads the ESP32 reset cause
+  register at the top of `main`, logs it to serial before anything can fail,
+  and `logs/boot` now carries a `reset_reason` field plus a cause-specific
+  `message` / `notes` instead of the fixed "Tower rebooted successfully".
+  A tower that comes back from a brownout, panic, or watchdog timeout now says
+  so; `software` (our own OTA restart) is treated as expected. Ported from the
+  `testing` branch.
+
+### Changed
+
+- **`logs/boot` payload shape.** `BootLog` gains a `reset_reason` field, and
+  `message` / `notes` are now cause-specific strings rather than the constants
+  "Tower rebooted successfully" / "Scheduled reboot completed without errors".
+  Any dashboard or alert matching on those literals needs updating.
+- `.gitignore` now excludes `certs/` wholesale instead of relying on the
+  per-file `*.pem.crt` / `*.pem.key` globs.
+
+## [1.1.4] - 2026-07-04
+
+WiFi reconnect reliability fix and onboard temperature monitoring via HDC1080.
+
+### Added
+
+- **HDC1080 temperature sensor** — I2C bring-up crate (`crates/sensors/hdc1080`),
+  `bringup/hdc1080-test` firmware, and runtime polling in `infra::temperature`
+  with MQTT telemetry on `tower/{device_id}/data/temperature`.
+
+### Fixed
+
+- **WiFi reconnect no longer reboots the device.** Reconnect path no longer
+  calls `start()` on an already-running driver (which returned
+  `ESP_ERR_INVALID_STATE` and short-circuited before `connect()`), errors are
+  swallowed so a flaky AP cannot exit `app_main` via `?`, and the reconnect
+  timeout is raised from 10 s to 30 s for AWS IoT DNS + mTLS latency.
+
 ## [1.1.3] - 2026-04-23
 
 Stable release of Encoder + RTC + AWS with fleet-safe tower identity.
