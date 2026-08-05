@@ -25,7 +25,7 @@ impl Motion<'_> {
     // If step 3 runs before step 1/2, the stashed value becomes ~0 and the
     // drift metric is silently destroyed. The same invariant applies to
     // `poll_limit_switch_zeroing` below.
-    pub(crate) fn force_zero_if_limit_switch_pressed(&mut self) {
+    pub fn force_zero_if_limit_switch_pressed(&mut self) {
         if self.lmsw_active() {
             // 1. Read drift relative to the previous zero reference.
             let home_error = self.encoder_ticks_adjusted();

@@ -145,16 +145,17 @@ pub mod motion {
             // Relay is active-low: boot with relay OFF.
             let mut relay = PinDriver::output(relay_pin).unwrap();
             relay.set_high().unwrap_or_default();
-            let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
-            let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
-            let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
 
+            let encoder_a = PinDriver::input(encoder_a_pin)?;
+            let encoder_b = PinDriver::input(encoder_b_pin)?;
+
+            let mut lmsw = PinDriver::input(limit_switch_pin)?;
             match limit_switch_active_level {
                 ActiveLevel::ActiveHigh => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
                     .unwrap_or_default(),
                 ActiveLevel::ActiveLow => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
+                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
                     .unwrap_or_default(),
             }
 
