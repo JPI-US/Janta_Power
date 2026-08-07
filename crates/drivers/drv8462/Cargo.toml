@@ -1,0 +1,12 @@
+[package]
+name = "drv8462"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+esp-idf-svc = { version = "0.51", features = [
+    "critical-section",
+    "embassy-time-driver",
+    "embassy-sync",
+] }

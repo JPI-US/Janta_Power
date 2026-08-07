@@ -15,6 +15,7 @@ partition_table = "partitions.csv"
 [workspace]
 members = [
     "crates/drivers/accel-stepper",
+    "crates/drivers/drv8462",
     "crates/drivers/rgb_led",
     "crates/infrastructure/clock",
     "crates/infrastructure/network",
@@ -41,6 +42,7 @@ experimental = ["esp-idf-svc/experimental"]
 anyhow = "1.0"
 chrono = { version = "0.4.40", features = ["clock"] }
 clock = { path = "crates/infrastructure/clock" }
+drv8462 = { path = "crates/drivers/drv8462" }
 embedded-hal = "1.0.0"
 embedded-svc = "0.28.0"
 esp-idf-hal = { version = "0.45", default-features = false, features = [
