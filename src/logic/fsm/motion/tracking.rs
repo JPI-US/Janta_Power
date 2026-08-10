@@ -431,6 +431,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             outcome,
         } = run_tracking(ctx, mailbox)?;
 
+        ctx.motion.need_rehome = should_rehome;
         if should_rehome {
             return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
         }

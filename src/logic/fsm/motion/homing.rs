@@ -70,7 +70,8 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
         let should_home_by_mode = ctx.motion.motion_mode == MotionMode::StepperOnly
             || !ctx.restored_from_snapshot
             || !ctx.trust_nvs_state
-            || home_claim_needs_limit_verify;
+            || home_claim_needs_limit_verify
+            || ctx.motion.need_rehome;
 
         if should_home_by_mode && ctx.switchboard.boot.homing.enabled {
             if ctx.motion.lmsw_active() {
