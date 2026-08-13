@@ -26,9 +26,11 @@ pub enum Register {
     Ctrl2 = 0x05,
     Ctrl3 = 0x06,
     Ctrl4 = 0x07,
-
+    Ctrl6 = 0x09,
     Ctrl9 = 0x0C,
+    Ctrl10 = 0x0D,
     Ctrl11 = 0x0E,
+    Ctrl12 = 0x0F,
     Ctrl13 = 0x10,
 }
 
@@ -47,6 +49,7 @@ where
     step: PinDriver<'d, STP, Output>,
     dir: PinDriver<'d, DIR, Output>,
     config: Drv8462Config,
+    enabled: bool,
 }
 
 pub struct Drv8462Hardware<SPI, SCLK, MOSI, MISO, CS, EN, SLP, STP, DIR>
@@ -137,6 +140,7 @@ where
             step,
             dir,
             config,
+            enabled: false,
         };
 
         driver.apply_config()?;
@@ -162,7 +166,9 @@ where
     pub fn write_register(&mut self, reg: Register, value: u8) -> Result<u8> {
         let frame = ((reg as u16) << 8) | value as u16;
 
+        self.unlock()?;
         let response = self.transfer16(frame)?;
+        self.lock()?;
 
         Ok((response & 0xff) as u8)
     }
@@ -251,17 +257,23 @@ where
         self.dump_all()?;
         self.clear_faults()?;
 
-        self.write_ctrl2()?;
-        self.write_ctrl9()?;
-        self.write_ctrl11()?;
-        self.write_ctrl13()?;
+        self.write_register(Register::Ctrl1, self.config.as_ctrl1())?;
+        self.write_register(Register::Ctrl2, self.config.as_ctrl2())?;
+        self.write_register(Register::Ctrl3, self.config.as_ctrl3())?;
+        self.write_register(Register::Ctrl4, self.config.as_ctrl4())?;
+        self.write_register(Register::Ctrl6, self.config.as_ctrl6())?;
+        self.write_register(Register::Ctrl9, self.config.as_ctrl9())?;
+        self.write_register(Register::Ctrl10, self.config.as_ctrl10())?;
+        self.write_register(Register::Ctrl11, self.config.as_ctrl11())?;
+        self.write_register(Register::Ctrl12, self.config.as_ctrl12())?;
+        self.write_register(Register::Ctrl1, self.config.as_ctrl13())?;
 
         self.lock()?;
 
         Ok(())
     }
 
-    fn spi_enable(&mut self, enable: bool) -> Result<()> {
+    pub fn set_enabled(&mut self, enable: bool) -> Result<()> {
         let mut ctrl1 = self.read_register(Register::Ctrl1)?;
 
         ctrl1 &= !(0b_1 << 7);
@@ -269,56 +281,13 @@ where
 
         self.write_register(Register::Ctrl1, ctrl1)?;
 
-        Ok(())
-    }
-
-    fn pin_enable(&mut self, enable: bool) -> Result<()> {
         if enable {
             self.enable.set_high()?;
         } else {
             self.enable.set_low()?;
         }
 
-        Ok(())
-    }
-
-    fn write_ctrl2(&mut self) -> Result<()> {
-        let mut ctrl2 = self.read_register(Register::Ctrl2)?;
-
-        ctrl2 &= !0b_1111;
-        ctrl2 |= self.config.microstep_mode as u8;
-
-        self.write_register(Register::Ctrl2, ctrl2)?;
-
-        Ok(())
-    }
-
-    fn write_ctrl9(&mut self) -> Result<()> {
-        let mut ctrl9 = self.read_register(Register::Ctrl9)?;
-
-        ctrl9 &= !(0b11 << 1);
-        ctrl9 |= (self.config.auto_microstepping_resolution as u8) << 1;
-
-        ctrl9 |= 1 << 0;
-
-        self.write_register(Register::Ctrl9, ctrl9)?;
-
-        Ok(())
-    }
-
-    fn write_ctrl11(&mut self) -> Result<()> {
-        self.write_register(Register::Ctrl11, self.config.run_current)?;
-
-        Ok(())
-    }
-
-    fn write_ctrl13(&mut self) -> Result<()> {
-        let mut ctrl13 = self.read_register(Register::Ctrl13)?;
-
-        ctrl13 &= !(0b_1 << 1);
-        ctrl13 |= (self.config.enable_internal_voltage_reference as u8) << 1;
-
-        self.write_register(Register::Ctrl13, ctrl13)?;
+        self.enabled = enable;
 
         Ok(())
     }
@@ -353,17 +322,6 @@ where
 
         self.write_register(Register::Ctrl3, ctrl3)?;
         self.clear_faults()?;
-
-        Ok(())
-    }
-
-    pub fn set_enabled(&mut self, enable: bool) -> Result<()> {
-        self.unlock()?;
-
-        self.spi_enable(true)?;
-        self.pin_enable(enable)?;
-
-        self.lock()?;
 
         Ok(())
     }

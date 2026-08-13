@@ -48,12 +48,12 @@ pub struct Drv8462Config {
     /// Enables/disables stall detection.
     ///
     /// Corresponds to the CTRL4 `STL_LRN` field.
-    pub enable_stall_detection: bool,
+    // pub enable_stall_detection: bool,
 
     /// Controls whether stall detection os reported on `nFAULT`.
     ///
     /// Corresponds to the CTRL4 `STL_REP` field.
-    pub report_stall_detection: bool,
+    // pub report_stall_detection: bool,
 
     /// Enables or disables STEP input filtering as per `[step_frequency_tolerance]`.
     /// Corresponds to the CTRL4 `FRQ_CHG` field.
@@ -68,7 +68,7 @@ pub struct Drv8462Config {
     /// Stall threshold count. Values are clamped between 0 and 4095 because the hardware field is 12 bits.
     ///
     /// Corresponds to the CTRL5 `STALL_TH` and CTRL6 `STALL_TH` fields.
-    pub stall_threshold: u16,
+    // pub stall_threshold: u16,
 
     /// Controls the current ripple in smart tune ripple control decay mode.
     ///
@@ -197,11 +197,11 @@ impl Default for Drv8462Config {
             overtemperature_condition_auto_retry: bool::default(),
             report_temperature_warning: bool::default(),
             current_sense_blanking_time: TblankTime::default(),
-            enable_stall_detection: bool::default(),
-            report_stall_detection: bool::default(),
+            // enable_stall_detection: bool::default(),
+            // report_stall_detection: bool::default(),
             enable_step_input_filtering: bool::default(),
             step_frequency_tolerance: StepFrqTol::default(),
-            stall_threshold: 0b_000000000011,
+            // stall_threshold: 0b_000000000011,
             current_ripple: RcRipple::default(),
             enable_spread_spectrum: bool::default(),
             enable_torque_scaling: bool::default(),
@@ -218,6 +218,60 @@ impl Default for Drv8462Config {
             standstill_delay: 0b_000100,
             enable_internal_voltage_reference: bool::default(),
         }
+    }
+}
+
+impl Drv8462Config {
+    pub fn as_ctrl1(&self) -> u8 {
+        (self.output_rise_fall_time as u8) << 6 | (self.time_off as u8) << 3 | self.decay as u8
+    }
+
+    pub fn as_ctrl2(&self) -> u8 {
+        self.microstep_mode as u8
+    }
+
+    pub fn as_ctrl3(&self) -> u8 {
+        (self.overcurrent_protection_deglitch_time as u8) << 3
+            | (self.overcurrent_condition_auto_retry as u8) << 2
+            | (self.overtemperature_condition_auto_retry as u8) << 1
+            | self.report_temperature_warning as u8
+    }
+
+    pub fn as_ctrl4(&self) -> u8 {
+        (self.current_sense_blanking_time as u8) << 6
+            | (self.enable_step_input_filtering as u8) << 2
+            | self.step_frequency_tolerance as u8
+    }
+
+    pub fn as_ctrl6(&self) -> u8 {
+        (self.current_ripple as u8) << 6
+            | (self.enable_spread_spectrum as u8) << 5
+            | (self.enable_torque_scaling as u8) << 4
+    }
+
+    pub fn as_ctrl9(&self) -> u8 {
+        (self.enable_open_load_detection as u8) << 7
+            | (self.open_load_immediate_release as u8) << 6
+            | (self.open_load_detection_time as u8) << 4
+            | (self.dual_step_edge as u8) << 3
+            | (self.auto_microstepping_resolution as u8) << 1
+            | self.enable_auto_microstepping as u8
+    }
+
+    pub fn as_ctrl10(&self) -> u8 {
+        self.holding_current as u8
+    }
+
+    pub fn as_ctrl11(&self) -> u8 {
+        self.run_current as u8
+    }
+
+    pub fn as_ctrl12(&self) -> u8 {
+        (self.standstill_power_saving_mode as u8) << 7 | (self.standstill_fall_time as u8) << 3
+    }
+
+    pub fn as_ctrl13(&self) -> u8 {
+        (self.standstill_delay as u8) << 2 | (self.enable_internal_voltage_reference as u8) << 1
     }
 }
 
