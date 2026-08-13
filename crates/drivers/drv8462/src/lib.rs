@@ -316,7 +316,7 @@ where
         let mut ctrl13 = self.read_register(Register::Ctrl13)?;
 
         ctrl13 &= !(0b_1 << 1);
-        ctrl13 |= (self.config.internal_voltage_reference as u8) << 1;
+        ctrl13 |= (self.config.enable_internal_voltage_reference as u8) << 1;
 
         self.write_register(Register::Ctrl13, ctrl13)?;
 
