@@ -62,14 +62,15 @@ impl MultiDriver {
             return;
         }
 
-        // first find the stepper that will take the longest time to move
-        let longest_time = self
+        let Some(longest_time) = self
             .drivers
             .iter()
             .zip(positions)
             .map(|(d, p)| time_to_move(d, *p))
             .max()
-            .expect("There is always a least one time");
+        else {
+            unreachable!("drivers is known to be non-empty");
+        };
 
         if longest_time == Duration::new(0, 0) {
             // nothing else needs to be done

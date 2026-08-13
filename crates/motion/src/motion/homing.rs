@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{calculate_steps, Motion, MoveOutcome};
+use super::Motion;
 
 impl Motion<'_> {
     // Retrieve and clear the most recent home error.
@@ -83,64 +83,5 @@ impl Motion<'_> {
                 self.encoder_zero_offset
             );
         }
-    }
-
-    pub fn find_limit_switch_cw(&mut self) -> bool {
-        // Firmware is currently CCW-only for homing.
-        log::warn!(
-            "Homing requested CW, but firmware is configured for CCW-only homing; using CCW search"
-        );
-        self.find_limit_switch_ccw()
-    }
-
-    pub fn find_limit_switch_ccw(&mut self) -> bool {
-        use super::HOME_HEADING_DEG;
-
-        // Disable overshoot checks while homing.
-        self.is_homing = true;
-
-        // Keep searching until switch is found or travel budget is exhausted.
-        // Stall detection is temporarily disabled to avoid abort cascades.
-        let stall_prev = self.stall_detection_enabled();
-        self.set_stall_detection_enabled(false);
-
-        if self.lmsw_active() {
-            log::info!("Limit switch already pressed - skipping homing");
-            self.update_position(HOME_HEADING_DEG);
-            self.force_zero_if_limit_switch_pressed();
-            self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;
-            return true;
-        }
-
-        self.relay_on();
-        // Current wiring convention: negative step command moves CCW.
-        log::info!("Looking for the limit switch (CCW search, max 350)");
-
-        let mut max_steps = calculate_steps(-350.0);
-        while max_steps < 0 && !self.lmsw_active() {
-            let step_movement = calculate_steps(-1.0);
-            if self.move_by(step_movement) != MoveOutcome::Completed {
-                self.relay_off();
-                self.set_stall_detection_enabled(stall_prev);
-                self.is_homing = false;
-                return false;
-            }
-            max_steps -= step_movement;
-        }
-
-        self.relay_off();
-
-        if max_steps < 0 {
-            self.update_position(HOME_HEADING_DEG);
-            self.relay_off();
-            self.force_zero_if_limit_switch_pressed();
-            self.set_stall_detection_enabled(stall_prev);
-            self.is_homing = false;
-            return true;
-        }
-        self.set_stall_detection_enabled(stall_prev);
-        self.is_homing = false;
-        false
     }
 }

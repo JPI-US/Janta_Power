@@ -1,5 +1,7 @@
 // Encoder helpers for Motion.
 
+use anyhow::{Context, Result};
+
 use super::{
     Motion, MoveOutcome, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
     ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS, ENC_TICKS_PER_REV,
@@ -39,13 +41,15 @@ impl Motion<'_> {
     }
 
     /// Diagnostic probe: move and verify encoder ticks changed.
-    pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> bool {
+    pub fn probe_encoder_motion(&mut self, probe_steps: i64) -> Result<bool> {
         let start_ticks = self.encoder_ticks_adjusted();
-        let outcome = self.move_by(probe_steps);
+        let outcome = self
+            .move_by(probe_steps)
+            .context("Failed to move motor while probing encoder")?;
 
         if outcome != MoveOutcome::Completed {
             log::warn!("Encoder probe aborted: {:?}", outcome);
-            return false;
+            return Ok(false);
         }
 
         let end_ticks = self.encoder_ticks_adjusted();
@@ -69,6 +73,6 @@ impl Motion<'_> {
             min_expected_ticks,
             moved
         );
-        moved
+        Ok(moved)
     }
 }

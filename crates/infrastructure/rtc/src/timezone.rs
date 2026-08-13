@@ -1,5 +1,6 @@
-use std::ffi::CString;
+use std::ffi::{CString, NulError};
 
+use anyhow::{anyhow, Result};
 use log::info;
 
 // US Timezones
@@ -14,13 +15,15 @@ pub const TZ_UK: &str = "GMT0BST,M3.5.0/1,M10.5.0";
 pub const TZ_CENTRAL_EU: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
 pub const TZ_EASTERN_EU: &str = "EET-2EEST,M3.5.0/3,M10.5.0/4";
 
-pub fn set_timezone(tz: &str) {
-    let tz_cstr = CString::new(tz).unwrap();
+pub fn set_timezone(tz: &str) -> Result<(), NulError> {
+    let tz_cstr = CString::new(tz)?;
     unsafe {
         libc::setenv(c"TZ".as_ptr().cast(), tz_cstr.as_ptr(), 1);
         esp_idf_svc::sys::tzset();
     }
     info!("Timezone set to: {tz}");
+
+    Ok(())
 }
 
 pub fn local_time() -> chrono::DateTime<chrono::Local> {
@@ -29,12 +32,13 @@ pub fn local_time() -> chrono::DateTime<chrono::Local> {
     dt_utc.with_timezone(&chrono::Local)
 }
 
-pub fn utc_now() -> chrono::NaiveDateTime {
+pub fn utc_now() -> Result<chrono::NaiveDateTime> {
     unsafe {
         let mut t: libc::time_t = 0;
         libc::time(&mut t);
-        chrono::DateTime::from_timestamp(t as i64, 0)
-            .expect("Invalid timestamp from libc::time")
-            .naive_utc()
+
+        Ok(chrono::DateTime::from_timestamp(t as i64, 0)
+            .ok_or_else(|| anyhow!("invalid timestamp from libc::time"))?
+            .naive_utc())
     }
 }

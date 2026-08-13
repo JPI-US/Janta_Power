@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Added
+- Added `PeripheralMap` to provide a central place for managing which devices are connected to which pins.
+- Added basic FSM structure.
+
+## Removed
+- Removed unused `fullchain.pem`.
+- Removed `bno080` and various dead code.
+
+## Changed
+- Replaced unsafe `.unwrap()` `.expect()`, and `panic!()` with `?`.
+- Used `anyhow::Context` to give `?` errors extra context.
+- Replaced duplicate dependencies in crates with workspace dependencies to unify versions and file paths.
+- Reorganzized `src/` folder.
+
+## [1.1.5] - 2026-07-04
+
 ## Removed
 - Removed extraneous non-code files from certain crates.
 - Removed `rttdebug` code that was causing errors.
@@ -30,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `cargo clippy` to pre-commit hook.
 - Added flags in the pre-commit hook to ensure every file gets checked.
 - Added Github Workflows for automated checks.
+- Added basic Watchdog setup
 
 ## Fixed
 - Fixed broken motor and sensor tests that were causing errors.
