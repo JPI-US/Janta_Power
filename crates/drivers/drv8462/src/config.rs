@@ -1,4 +1,6 @@
 #[derive(Copy, Clone)]
+/// Abstraction over the raw DRv8462 config registers. Each struct field maps to a register field on the chip.
+/// For more information on the specifics of each field, see Page 74 of the [datasheet](https://www.ti.com/lit/ds/symlink/drv8452.pdf).
 pub struct Drv8462Config {
     /// Controls the how quickly the output transitions between high and low, resulting in faster or slower edges.
     ///
@@ -45,17 +47,17 @@ pub struct Drv8462Config {
     /// Corresponds to the CTRL4 `TBLANK_TIME` field.
     pub current_sense_blanking_time: TblankTime,
 
-    /// Enables/disables stall detection.
-    ///
-    /// Corresponds to the CTRL4 `STL_LRN` field.
+    // /// Enables/disables stall detection.
+    // ///
+    // /// Corresponds to the CTRL4 `STL_LRN` field.
     // pub enable_stall_detection: bool,
 
-    /// Controls whether stall detection os reported on `nFAULT`.
-    ///
-    /// Corresponds to the CTRL4 `STL_REP` field.
+    // /// Controls whether stall detection os reported on `nFAULT`.
+    // ///
+    // /// Corresponds to the CTRL4 `STL_REP` field.
     // pub report_stall_detection: bool,
-
-    /// Enables or disables STEP input filtering as per `[step_frequency_tolerance]`.
+    /// Enables or disables STEP input filtering as per [`Self::step_frequency_tolerance`].
+    ///
     /// Corresponds to the CTRL4 `FRQ_CHG` field.
     pub enable_step_input_filtering: bool,
 
@@ -123,10 +125,15 @@ pub struct Drv8462Config {
     /// Determines the current when the motor is idle.
     ///
     /// 255 = 256/256 x 100%
+    ///
     /// 254 = 255/256 x 100%
+    ///
     /// 253 = 254/256 x 100%
+    ///
     /// 252 = 253/256 x 100%
+    ///
     /// ....................
+    ///
     /// 0 = 1/256 x 100%
     ///
     /// Corresponds to the CTRL10 `ISTSL` field.
@@ -135,10 +142,15 @@ pub struct Drv8462Config {
     /// Determines the current when the motor is running.
     ///
     /// 255 = 256/256 x 100%
+    ///
     /// 254 = 255/256 x 100%
+    ///
     /// 253 = 254/256 x 100%
+    ///
     /// 252 = 253/256 x 100%
+    ///
     /// ....................
+    ///
     /// 0 = 1/256 x 100%
     ///
     /// Corresponds to the CTRL11 `TRQ_DAC` field.
@@ -155,23 +167,33 @@ pub struct Drv8462Config {
     /// The hardware register is only 4 bits wide. Values >= 15 are effectively the same.
     ///
     /// 0b_000: fall time = 0
-    /// • 0b_0001: fall time for each current step = 1 ms
-    /// • ............
-    /// • 0b_0100: fall time for each current step = 4 ms
-    /// • ............
-    /// • 0b_1111: fall time for each current step = 15 ms
+    ///
+    /// 0b_0001: fall time for each current step = 1 ms
+    ///
+    /// ............
+    ///
+    /// 0b_0100: fall time for each current step = 4 ms
+    ///
+    /// ............
+    ///
+    /// 0b_1111: fall time for each current step = 15 ms
     ///
     /// Corresponds to the CTRL12 `TSTSL_FALL` field.
     pub standstill_fall_time: u8,
 
     /// Controls the delay between last STEP pulse and activation of standstill power saving mode.
     ///
-    /// • 0b_000000: Reserved
-    /// • 0b_000001: Delay = 1 x 16 ms = 16 ms
-    /// • ............
-    /// • 0b_000100: Delay = 4 x 16 ms = 64 ms
-    /// • ............
-    /// • 0b_111111: Delay = 63 x 16 ms = 1.008 s
+    /// 0b_000000: Reserved
+    ///
+    /// 0b_000001: Delay = 1 x 16 ms = 16 ms
+    ///
+    /// ............
+    ///
+    /// 0b_000100: Delay = 4 x 16 ms = 64 ms
+    ///
+    /// ............
+    ///
+    /// 0b_111111: Delay = 63 x 16 ms = 1.008 s
     ///
     /// The hardware register is only 6 bits. Values >= 63 are effectively the same.
     ///
@@ -222,14 +244,24 @@ impl Default for Drv8462Config {
 }
 
 impl Drv8462Config {
+    /// Serializes the CTRL1 fields to be written to the register.
+    ///
+    /// # Note:
+    ///
+    /// This always set the `EN_OUT` value in bit index 7 to 0, which will
+    /// disable output when written. If you don't want to disable output,
+    /// Re-enable the chip output after writing (recommended) or set this bit
+    /// set this bit high yourself before writing.
     pub fn as_ctrl1(&self) -> u8 {
         (self.output_rise_fall_time as u8) << 6 | (self.time_off as u8) << 3 | self.decay as u8
     }
 
+    /// Serializes the CTRL2 fields to be written to the register.
     pub fn as_ctrl2(&self) -> u8 {
         self.microstep_mode as u8
     }
 
+    /// Serializes the CTRL3 fields to be written to the register.
     pub fn as_ctrl3(&self) -> u8 {
         (self.overcurrent_protection_deglitch_time as u8) << 3
             | (self.overcurrent_condition_auto_retry as u8) << 2
@@ -237,18 +269,21 @@ impl Drv8462Config {
             | self.report_temperature_warning as u8
     }
 
+    /// Serializes the CTRL4 fields to be written to the register.
     pub fn as_ctrl4(&self) -> u8 {
         (self.current_sense_blanking_time as u8) << 6
             | (self.enable_step_input_filtering as u8) << 2
             | self.step_frequency_tolerance as u8
     }
 
+    /// Serializes the CTRL6 fields to be written to the register.
     pub fn as_ctrl6(&self) -> u8 {
         (self.current_ripple as u8) << 6
             | (self.enable_spread_spectrum as u8) << 5
             | (self.enable_torque_scaling as u8) << 4
     }
 
+    /// Serializes the CTRL9 fields to be written to the register.
     pub fn as_ctrl9(&self) -> u8 {
         (self.enable_open_load_detection as u8) << 7
             | (self.open_load_immediate_release as u8) << 6
@@ -258,18 +293,22 @@ impl Drv8462Config {
             | self.enable_auto_microstepping as u8
     }
 
+    /// Serializes the CTRL10 fields to be written to the register.
     pub fn as_ctrl10(&self) -> u8 {
         self.holding_current as u8
     }
 
+    /// Serializes the CTRL11 fields to be written to the register.
     pub fn as_ctrl11(&self) -> u8 {
         self.run_current as u8
     }
 
+    /// Serializes the CTRL12 fields to be written to the register.
     pub fn as_ctrl12(&self) -> u8 {
         (self.standstill_power_saving_mode as u8) << 7 | (self.standstill_fall_time as u8) << 3
     }
 
+    /// Serializes the CTRL13 fields to be written to the register.
     pub fn as_ctrl13(&self) -> u8 {
         (self.standstill_delay as u8) << 2 | (self.enable_internal_voltage_reference as u8) << 1
     }
@@ -303,6 +342,7 @@ pub enum TOff {
 
 #[repr(u8)]
 #[derive(Default, Copy, Clone)]
+/// Current regulation decay.
 pub enum Decay {
     /// Slow decay mode. Generally results in smooth, quiet operation at lower speeds.
     SlowDecay = 0b_000,
@@ -331,6 +371,7 @@ pub enum Decay {
 
 #[repr(u8)]
 #[derive(Default, Copy, Clone)]
+/// Microstep mode.
 pub enum MicrostepMode {
     /// Full-step operation with 100% current on the active phase.
     ///
