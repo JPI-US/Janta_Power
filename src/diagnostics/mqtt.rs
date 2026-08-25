@@ -87,7 +87,11 @@ pub enum ControlCommand {
 }
 
 #[derive(Debug)]
-struct CommandState {
+/// Public because `SharedCommandState` already exposes it through a `pub type`
+/// alias. The fields stay private, so this widens nothing that callers could not
+/// already name — it just stops newer rustc rejecting the alias as
+/// private-in-public.
+pub struct CommandState {
     recent_request_ids: VecDeque<String>,
     inflight_control: Option<InflightControl>,
     rate_limit_window_started_at: Option<Instant>,
@@ -141,6 +145,9 @@ pub fn update_snapshot(shared_snapshot: &SharedStatusSnapshot, next: OwnedStatus
     *snapshot = next;
 }
 
+/// Stack for the diagnostics listener thread. See `MQTT_EVENT_THREAD_STACK`.
+const DIAGNOSTICS_THREAD_STACK: usize = 8192;
+
 pub fn spawn_listener(
     broker_url: &str,
     client_id: &str,
@@ -155,16 +162,21 @@ pub fn spawn_listener(
     let device_id = device_id.to_string();
     let client_id = client_id.to_string();
 
-    thread::spawn(move || {
-        diagnostics_loop(
-            mqtt,
-            device_id,
-            client_id,
-            shared_snapshot,
-            command_state,
-            control_tx,
-        )
-    });
+    // Explicit stack size, for the same reason as the MQTT event thread: ESP-IDF's
+    // 3 KB pthread default does not cover JSON serialisation and transcript
+    // formatting in Rust.
+    thread::Builder::new()
+        .stack_size(DIAGNOSTICS_THREAD_STACK)
+        .spawn(move || {
+            diagnostics_loop(
+                mqtt,
+                device_id,
+                client_id,
+                shared_snapshot,
+                command_state,
+                control_tx,
+            )
+        })?;
     Ok(())
 }
 
@@ -308,6 +320,8 @@ pub fn process_one(
                 status: "completed",
                 message: format!("{} reported successfully", &command.cmd),
                 lines: direct_lines.unwrap_or_default(),
+                reboot_requested: false,
+                details: Vec::new(),
             },
         )
         .map(|_| mark_read_only_request_complete(shared_command_state, request_id))?,

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
-use motion::{Motion, MotionMode, MoveOutcome};
+use motion::{Motion, MotionMode, MoveOutcome, MoveWatcher};
 use network::mqtt::Mqtt;
 use semver::Version;
 use wifi::wifi::{Wifi, WifiState};
@@ -95,10 +95,13 @@ impl EncoderFaultRecovery {
     }
 
     /// Returns `Ok(true)` if the caller should `continue` the outer loop (fault still active).
+    /// `on_tick` is handed to the re-home this may perform, which blocks for as
+    /// long as the search takes.
     pub fn tick<T: NvsPartitionId>(
         &mut self,
         cfg: &EncoderRecoverySwitches,
         motion: &mut Motion<'_>,
+        on_tick: MoveWatcher<'_>,
         motion_mode: MotionMode,
         actual_heading: &mut f32,
         nvs: &mut EspNvs<T>,
@@ -190,8 +193,8 @@ impl EncoderFaultRecovery {
             cfg.max_drift_deg
         );
         let ok = match cfg.rehome_dir {
-            Direction::Cw => motion.find_limit_switch_cw(),
-            Direction::Ccw => motion.find_limit_switch_ccw(),
+            Direction::Cw => motion.find_limit_switch_cw_watched(on_tick),
+            Direction::Ccw => motion.find_limit_switch_ccw_watched(on_tick),
         };
         if !ok {
             infra::error_loop(

@@ -15,6 +15,13 @@ mod app;
 #[path = "../diagnostics/mod.rs"]
 mod diagnostics;
 
+/// Firmware version reported by `FIRMWARE_VERSION` and compared against by OTA.
+///
+/// At module scope because the boot waits answer `FIRMWARE_VERSION` before NVS
+/// has been read; PHASE 3 writes this same value into NVS on every boot, so the
+/// early answer and the later one are the same string.
+const DEFAULT_VERSION: &str = "1.1.3";
+
 // Provide __pender function for embassy_executor
 // This function is called by embassy_executor to wake tasks
 #[no_mangle]
@@ -52,6 +59,16 @@ fn main() -> anyhow::Result<()> {
 
     // Logger and event loop
     EspLogger::initialize_default();
+
+    // Serial diagnostics uses the USB/JTAG console but stays on the main loop so
+    // the runtime keeps single ownership of motion, NVS, and shared I2C.
+    //
+    // Constructed here, ahead of everything that can block: installing the driver
+    // depends on nothing, and leaving it until after Wi-Fi, SNTP, MQTT, and homing
+    // meant the peripheral did not exist for the first minutes of boot. The waits
+    // in that stretch now pump it through `sleep_answering_boot_diagnostics`.
+    let mut serial_diagnostics = diagnostics::serial::SerialDiagnosticsRuntime::new()?;
+
     let sysloop = EspSystemEventLoop::take()?;
 
     // Hardware and persistent storage
@@ -85,24 +102,51 @@ fn main() -> anyhow::Result<()> {
     let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
     let bus: &'static _ = shared_bus::new_std!(I2cDriver = i2c).unwrap();
 
+    // Declared here, alongside the bus and NVS, because the boot waits below can
+    // already serve sensor and configuration commands and need both.
+    //
+    // SET_ENV stages into this buffer and SAVE_CONFIG commits it, so it has to
+    // outlive any single command — the installer sends fifteen SET_ENVs before the
+    // save.
+    let mut config_staging = board_diagnostics::ConfigStaging::new();
+    let diagnostics_command_state = diagnostics::mqtt::new_shared_command_state();
+
     // PHASE 2: NETWORK SETUP ---------------------------------------------------
 
     const PERSIST_NVS: bool = true;
 
-    if PERSIST_NVS {
+    // A tower that SAVE_CONFIG has provisioned keeps its site configuration. Until
+    // then the switchboard defaults are rewritten on every boot, so editing `.env`
+    // and reflashing — or shipping an OTA — still updates an unprovisioned tower.
+    //
+    // Without this gate the next power cycle silently discards everything a
+    // technician just wrote over serial, which made the whole Customer Data panel
+    // theatre.
+    let provisioned = nvs
+        .get_u8(board_diagnostics::NVS_KEY_PROVISIONED)
+        .ok()
+        .flatten()
+        .unwrap_or(0)
+        == 1;
+    let seed_defaults = PERSIST_NVS && !provisioned;
+    if provisioned {
+        info!("Tower is provisioned: leaving site configuration in NVS untouched");
+    }
+
+    if seed_defaults {
         match nvs.set_str("wifi_ssid", sw.default_wifi_ssid) {
             Ok(_) => info!("Wifi ssid updated"),
             Err(e) => error!("Wifi ssid not updated {:?}", e),
         };
     }
-    if PERSIST_NVS {
+    if seed_defaults {
         match nvs.set_str("wifi_pass", sw.default_wifi_pass) {
             Ok(_) => info!("Wifi password updated"),
             Err(e) => error!("Wifi password not updated {:?}", e),
         };
     }
 
-    if PERSIST_NVS {
+    if seed_defaults {
         match nvs.set_str("tz_posix", sw.default_tz_posix) {
             Ok(_) => info!("POSIX TZ string has been updated"),
             Err(e) => error!("tz_posix was not updated {:?}", e),
@@ -121,12 +165,59 @@ fn main() -> anyhow::Result<()> {
         .to_string();
 
     let mut wifi = Wifi::new(peripherals.modem, sysloop.clone(), nvs_default)?;
-    log::info!("Waiting for 20 seconds before connecting to wifi");
-    thread::sleep(Duration::from_secs(20));
-    wifi.connect(&real_wifi_ssid, &real_wifi_pass).expect("Wi-Fi connection failed");
+    // Read from the switchboard rather than hardcoded: on a board that cannot get
+    // past `Rtc::init` — no clock and no network — this wait is the only stretch
+    // that serves diagnostics, so being able to widen it without editing the boot
+    // path is worth something.
+    log::info!(
+        "Waiting for {} seconds before connecting to wifi",
+        sw.wifi_connect_delay_secs
+    );
+    sleep_answering_boot_diagnostics(
+        Duration::from_secs(sw.wifi_connect_delay_secs),
+        &mut BootServices {
+            serial: &mut serial_diagnostics,
+            command_state: &diagnostics_command_state,
+            nvs: &mut nvs,
+            staging: &mut config_staging,
+            bus,
+            firmware_version: DEFAULT_VERSION,
+            led: None,
+        },
+        "waiting to connect Wi-Fi",
+    );
+    // Wi-Fi is not required to track the sun. Time comes from the DS3231 first
+    // (see `Rtc::init`); only telemetry and OTA need a network. So failing to
+    // associate must not take the tower down with it.
+    //
+    // This used to `.expect(...)`, which meant a board with no reachable network
+    // panicked and rebooted roughly every twenty-five seconds — and that made the
+    // tower impossible to provision over serial, because the credentials a
+    // technician is trying to write are the very ones it is failing to use.
+    //
+    // Losing the clock is still fatal, deliberately: `Rtc::init` panics when the
+    // RTC is unreadable *and* Wi-Fi is down, because a tracker that cannot tell
+    // the time would drive the tower to the wrong place.
+    // Announced before the call, not during it: association blocks inside the
+    // driver, so the serial link genuinely cannot be serviced while it runs. The
+    // phase at least tells a connected host why it has gone quiet.
+    serial_diagnostics.announce_phase("connecting Wi-Fi");
+    let associated = match wifi.connect(&real_wifi_ssid, &real_wifi_pass) {
+        Ok(()) => true,
+        Err(err) => {
+            error!("Wi-Fi connection failed: {:?}. Continuing without a network.", err);
+            false
+        }
+    };
     info!("Current wifi state: {:?}", wifi.state());
-    if wifi.state() == WifiState::Disconnected {
-        wifi.reconnect_if_disconnected()?;
+
+    // Only worth retrying if the first attempt got somewhere. `reconnect_if_disconnected`
+    // blocks for another ten seconds, and on a board with no reachable network that is
+    // ten more seconds of silence on the serial link for no possible gain.
+    if associated && wifi.state() == WifiState::Disconnected {
+        if let Err(err) = wifi.reconnect_if_disconnected() {
+            error!("Wi-Fi reconnect failed: {:?}. Continuing without a network.", err);
+        }
     }
 
     // Time: RTC-first, SNTP fallback (see `rtc::Rtc::init`).
@@ -136,6 +227,7 @@ fn main() -> anyhow::Result<()> {
     let tz_posix_str = nvs
         .get_str("tz_posix", &mut tz_buf)?
         .unwrap_or(sw.default_tz_posix);
+    serial_diagnostics.announce_phase("setting the clock");
     {
         let mut rtc = Rtc::new(bus);
         rtc.init(&wifi, tz_posix_str, FORCE_NTP_SKIP_RTC);
@@ -149,6 +241,7 @@ fn main() -> anyhow::Result<()> {
     // authentication; no username/password plumbing is required at runtime.
     // Broker URL is still hardcoded here; client ID is derived from DEVICE_ID so
     // fleet identity stays in `.env` with the MQTT topic/cert identity.
+    serial_diagnostics.announce_phase("starting MQTT");
     let mqtt_client_id = "esp32_thing_001";
     let mut mqtt = Box::new(Mqtt::new_mqtt(MQTT_BROKER_URL, mqtt_client_id)?);
 
@@ -159,9 +252,8 @@ fn main() -> anyhow::Result<()> {
 
     // Load firmware version early so the boot-log publish can include it.
     let mut version_buf = [0u8; 32];
-    const DEFAULT_VERSION: &str = "1.1.3";
     if PERSIST_NVS {
-        nvs.set_str("version", "1.1.3")?;
+        nvs.set_str("version", DEFAULT_VERSION)?;
     }
     let current_version: Version = nvs
         .get_str("version", &mut version_buf)?
@@ -191,16 +283,26 @@ fn main() -> anyhow::Result<()> {
     );
     // Phase 2 adds a bounded handoff queue for diagnostics commands that must
     // execute on the main loop because they mutate live control state.
-    let diagnostics_command_state = diagnostics::mqtt::new_shared_command_state();
     let (diagnostics_control_tx, diagnostics_control_rx) =
         diagnostics::mqtt::new_control_channel(8);
-    // Serial diagnostics uses the USB/JTAG console but stays on the main loop
-    // so the runtime keeps single ownership of motion, NVS, and shared I2C.
-    let mut serial_diagnostics = diagnostics::serial::SerialDiagnosticsRuntime::new()?;
 
     // Boot diagnostics: Wi-Fi + MQTT
     let boot_diagnostic_result = if ALLOW_BOOT_VALIDATION {
-        boot_diagnostic(sw.device_id, &mut wifi, &mut mqtt, &current_version)
+        boot_diagnostic(
+            sw.device_id,
+            &mut wifi,
+            &mut mqtt,
+            &current_version,
+            &mut BootServices {
+            serial: &mut serial_diagnostics,
+            command_state: &diagnostics_command_state,
+            nvs: &mut nvs,
+            staging: &mut config_staging,
+            bus,
+            firmware_version: &current_version_string,
+            led: None,
+        },
+        )
     } else {
         info!("Boot validation disabled");
         true
@@ -270,20 +372,33 @@ fn main() -> anyhow::Result<()> {
     // behind the long tracking loop sleep. This thread reads the shared snapshot
     // directly and enqueues any hardware-affecting command back to the main loop.
     let diagnostics_mqtt_client_id = format!("{}_diagnostics", mqtt_client_id);
-    diagnostics::mqtt::spawn_listener(
+    // Remote diagnostics are optional. With no network there is nothing to listen
+    // to, and serial diagnostics are unaffected — so a listener that will not start
+    // must not stop the tower from tracking. The control queue's receiver reports
+    // the closed channel once and carries on.
+    if let Err(err) = diagnostics::mqtt::spawn_listener(
         MQTT_BROKER_URL,
         &diagnostics_mqtt_client_id,
         sw.device_id,
         diagnostics_snapshot.clone(),
         diagnostics_command_state.clone(),
         diagnostics_control_tx,
-    )?;
+    ) {
+        error!(
+            "Diagnostics MQTT listener not started: {:?}. Serial diagnostics remain available.",
+            err
+        );
+    }
 
     // PHASE 4: FIRMWARE VERSION AND OTA ---------------------------------------
     // (current_version was loaded earlier, before boot_diagnostic, so the
     // boot-log publish could include `firmware_version`.)
 
-    const ALLOW_OTA: bool = true;
+    // Read from the switchboard rather than hardcoded. `sw.effects.allow_ota` has
+    // existed all along and was never wired up, so there was no way to turn OTA off
+    // for bench work short of editing this line — and with OTA on, a board that can
+    // reach the network replaces whatever was just flashed onto it.
+    let allow_ota = sw.effects.allow_ota;
 
     {
         let payload = network::telemetry::Heartbeat {
@@ -302,9 +417,21 @@ fn main() -> anyhow::Result<()> {
         Some(sw.default_ota_password),
     ).expect("Failed to create OTA updater instance");
 
-    if ALLOW_OTA {
+    if allow_ota {
         info!("Checking for new OTA update in 3 seconds...");
-        thread::sleep(Duration::from_secs(3));
+        sleep_answering_boot_diagnostics(
+            Duration::from_secs(3),
+            &mut BootServices {
+            serial: &mut serial_diagnostics,
+            command_state: &diagnostics_command_state,
+            nvs: &mut nvs,
+            staging: &mut config_staging,
+            bus,
+            firmware_version: &current_version_string,
+            led: None,
+        },
+            "checking for OTA update",
+        );
         if let Err(e) = updater.run_version_compare(&mut nvs) {
             let current_time = rtc::timezone::local_time()
                 .format(network::telemetry::TIME_FORMAT)
@@ -328,12 +455,13 @@ fn main() -> anyhow::Result<()> {
     }
     
     // PHASE 5: MOTION INITIALIZATION ------------------------------------------
-    // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
-    // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
-    // defaults are (re)written into NVS on every boot, so updating `.env` and
-    // reflashing updates the tower coordinates on the next boot.
+    // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in `.env`
+    // via `Switchboard`, but only until the tower is provisioned. On an
+    // unprovisioned tower, editing `.env` and reflashing still updates the
+    // coordinates; once an installer has written them over serial, these are left
+    // alone.
     let tower_latitude: f64 = sw.default_tower_latitude;
-    if PERSIST_NVS {
+    if seed_defaults {
         match nvs.set_str("tower_latitude", &tower_latitude.to_string()) {
             Ok(_) => info!("Tower latitude has been updated"),
             Err(e) => error!("Tower latitude was not updated {:?}", e),
@@ -341,7 +469,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let tower_longitude: f64 = sw.default_tower_longitude;
-    if PERSIST_NVS {
+    if seed_defaults {
         match nvs.set_str("tower_longitude", &tower_longitude.to_string()) {
             Ok(_) => info!("Tower longitude has been updated"),
             Err(e) => error!("Tower longitude was not updated {:?}", e),
@@ -489,10 +617,17 @@ fn main() -> anyhow::Result<()> {
         || !trust_nvs_state
         || home_claim_needs_limit_verify;
     if should_home_by_mode && HOMING_ENABLED {
+        let mut on_tick = pump_serial_during_move(
+            &mut serial_diagnostics,
+            "homing",
+            &current_version_string,
+            &mut led,
+        );
         let limit_sw_status = match HOMING_DIRECTION {
-            Direction::Cw => motion.find_limit_switch_cw(),
-            Direction::Ccw => motion.find_limit_switch_ccw(),
+            Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
+            Direction::Ccw => motion.find_limit_switch_ccw_watched(&mut on_tick),
         };
+        drop(on_tick);
         match limit_sw_status {
             true => log::info!(
                 "Homing OK (dir={}): limit switch found",
@@ -521,7 +656,19 @@ fn main() -> anyhow::Result<()> {
                     .save_encoder_snapshot(motion.encoder_ticks_adjusted());
             }
         }
-        thread::sleep(Duration::from_secs(5));
+        sleep_answering_boot_diagnostics(
+            Duration::from_secs(5),
+            &mut BootServices {
+            serial: &mut serial_diagnostics,
+            command_state: &diagnostics_command_state,
+            nvs: &mut nvs,
+            staging: &mut config_staging,
+            bus,
+            firmware_version: &current_version_string,
+            led: Some(&mut led),
+        },
+            "settling after homing",
+        );
     } else if should_home_by_mode {
         log::warn!("Homing skipped: HOMING_ENABLED=false");
         if !trust_nvs_state {
@@ -594,10 +741,17 @@ fn main() -> anyhow::Result<()> {
         if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
             info!("StepperOnly mode detected - re-homing to establish known position");
             const HOMING_DIRECTION: Direction = Direction::Ccw;
+            let mut on_tick = pump_serial_during_move(
+                &mut serial_diagnostics,
+                "re-homing",
+                &current_version_string,
+                &mut led,
+            );
             let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => motion.find_limit_switch_cw(),
-                Direction::Ccw => motion.find_limit_switch_ccw(),
+                Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
+                Direction::Ccw => motion.find_limit_switch_ccw_watched(&mut on_tick),
             };
+            drop(on_tick);
             match limit_sw_status {
                 true => {
                     info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
@@ -650,9 +804,16 @@ fn main() -> anyhow::Result<()> {
                 switchboard::Direction::Ccw => crate::app::encoder_fault::Direction::Ccw,
             },
         };
-        if encoder_fault.tick(
+        let mut on_tick = pump_serial_during_move(
+            &mut serial_diagnostics,
+            "encoder recovery",
+            &current_version_string,
+            &mut led,
+        );
+        let encoder_fault_active = encoder_fault.tick(
             &encoder_recovery_cfg,
             &mut motion,
+            &mut on_tick,
             motion_mode,
             &mut actual_heading,
             &mut nvs,
@@ -662,7 +823,10 @@ fn main() -> anyhow::Result<()> {
             PERSIST_NVS,
             sw.device_id,
             sw.home_heading_deg,
-        )? {
+        )?;
+        drop(on_tick);
+
+        if encoder_fault_active {
             continue;  // Fault active, skip tracking this iteration
         }
         
@@ -682,10 +846,17 @@ fn main() -> anyhow::Result<()> {
         if need_rehome_stepper_only && motion_mode == MotionMode::StepperOnly {
             info!("StepperOnly mode detected - re-homing to establish known position (CCW)");
             const HOMING_DIRECTION: Direction = Direction::Ccw;
+            let mut on_tick = pump_serial_during_move(
+                &mut serial_diagnostics,
+                "re-homing",
+                &current_version_string,
+                &mut led,
+            );
             let limit_sw_status = match HOMING_DIRECTION {
-                Direction::Cw => motion.find_limit_switch_cw(),
-                Direction::Ccw => motion.find_limit_switch_ccw(),
+                Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
+                Direction::Ccw => motion.find_limit_switch_ccw_watched(&mut on_tick),
             };
+            drop(on_tick);
             match limit_sw_status {
                 true => {
                     info!("Re-homing OK (dir={}): limit switch found", HOMING_DIRECTION.as_str());
@@ -726,8 +897,17 @@ fn main() -> anyhow::Result<()> {
                 "Tracking enabled in {}; tower heading is {:.2} degrees",
                 motion_mode_str, actual_heading
             );
+            // A tracking pass blocks this thread, and a sunset homing run inside it
+            // can block for minutes. Keep answering read-only serial throughout.
+            let mut on_tick = pump_serial_during_move(
+                &mut serial_diagnostics,
+                "tracking move",
+                &current_version_string,
+                &mut led,
+            );
             let tick_result = app::tracking_loop::tick(
                 &mut motion,
+                &mut on_tick,
                 &mut calculation,
                 &mut actual_heading,
                 &mut mqtt,
@@ -736,9 +916,11 @@ fn main() -> anyhow::Result<()> {
                 &mut wifi,
                 current_datetime.clone(),
                 PERSIST_NVS,
-                ALLOW_OTA,
+                allow_ota,
                 sw.device_id,
             );
+            drop(on_tick);
+
             let outcome = tick_result.outcome;
             let (last_sun_angle, last_target_heading, last_angle_offset) = match tick_result.snapshot {
                 Some(snapshot) => (
@@ -833,7 +1015,9 @@ fn main() -> anyhow::Result<()> {
             &mut serial_diagnostics,
             &current_version_string,
             &mut motion,
+            &mut led,
             &mut nvs,
+            &mut config_staging,
             bus,
             &mut mqtt,
             &wifi,
@@ -848,14 +1032,107 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn boot_diagnostic(
+/// A [`motion::MoveWatcher`] that services read-only serial diagnostics.
+///
+/// Homing and tracking moves block this thread for as long as they take — a
+/// worst-case homing search runs for tens of minutes — and without this the board
+/// is silent for all of it. The commands this can answer need no hardware, so
+/// running them from inside the stepping loop does not break the rule that the
+/// main loop is the single owner of motion, NVS, and the I2C bus: see
+/// `SerialDiagnosticsRuntime::poll_readonly`, which refuses everything else.
+///
+/// Motion calls this from the same 100 ms block as its existing position log, so
+/// the added work on the stepping loop is comparable to what it already does.
+fn pump_serial_during_move<'a>(
+    serial_diagnostics: &'a mut diagnostics::serial::SerialDiagnosticsRuntime,
+    phase: &'a str,
+    firmware_version: &'a str,
+    // `Led<'static>` rather than a second lifetime parameter: the LED is built from
+    // owned peripherals and lives for the whole program, and a borrowed inner
+    // lifetime would have to appear in the return type's bounds to be captured.
+    led: &'a mut Led<'static>,
+) -> impl FnMut(motion::MoveTick) + 'a {
+    serial_diagnostics.announce_phase(phase);
+    move |_tick| {
+        if let Err(err) = serial_diagnostics.poll_minimal(phase, firmware_version, Some(led)) {
+            warn!("Serial diagnostics unavailable during {}: {:?}", phase, err);
+        }
+    }
+}
+
+/// What the runtime can lend to diagnostics during a boot wait.
+///
+/// Bundled because the list grew: the bus and NVS exist long before the motion
+/// stack does, so a wait can serve the sensors and the whole configuration set,
+/// not merely the three commands that need nothing at all.
+struct BootServices<'a, T: esp_idf_svc::nvs::NvsPartitionId> {
+    serial: &'a mut diagnostics::serial::SerialDiagnosticsRuntime,
+    command_state: &'a diagnostics::mqtt::SharedCommandState,
+    nvs: &'a mut esp_idf_svc::nvs::EspNvs<T>,
+    staging: &'a mut board_diagnostics::ConfigStaging,
+    bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    firmware_version: &'a str,
+    /// `None` for the waits that happen before the LED is built. Saying it is not
+    /// initialised when it is would be exactly the sort of misleading answer these
+    /// diagnostics exist to avoid.
+    led: Option<&'a mut Led<'static>>,
+}
+
+/// Sleep for `duration`, answering serial diagnostics while waiting.
+///
+/// Every blocking wait in the boot path used to be dead air on the serial link.
+/// The installer opens the port and queries `FIRMWARE_VERSION` one second later,
+/// which landed in that silence and timed out — so the first thing the app did
+/// always failed. `phase` names what the tower is doing, and goes out verbatim on
+/// commands that cannot be served yet.
+///
+/// Motion is the one thing withheld: it does not exist yet at these points, so
+/// `GO_HOME` is refused — by name, saying the motion stack is not up, rather than
+/// blaming whatever the tower happens to be waiting for.
+fn sleep_answering_boot_diagnostics<T: esp_idf_svc::nvs::NvsPartitionId>(
+    duration: Duration,
+    services: &mut BootServices<'_, T>,
+    phase: &str,
+) {
+    const SLICE_MS: u64 = 50;
+
+    services.serial.announce_phase(phase);
+
+    let deadline = std::time::Instant::now() + duration;
+    loop {
+        if let Err(err) = services.serial.poll(
+            services.command_state,
+            services.firmware_version,
+            None,
+            services.led.as_deref_mut(),
+            services.nvs,
+            services.staging,
+            services.bus,
+        ) {
+            warn!("Serial diagnostics unavailable during {}: {:?}", phase, err);
+        }
+
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return;
+        }
+        thread::sleep(
+            deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(SLICE_MS)),
+        );
+    }
+}
+
+fn boot_diagnostic<T: esp_idf_svc::nvs::NvsPartitionId>(
     device_id: &str,
     wifi: &mut Wifi,
     mqtt: &mut Mqtt,
     current_version: &Version,
+    services: &mut BootServices<'_, T>,
 ) -> bool {
     info!("Starting boot validation in 5 seconds...");
-    thread::sleep(Duration::from_secs(5));
+    sleep_answering_boot_diagnostics(Duration::from_secs(5), services, "boot validation");
 
     // Wi-Fi check
     match wifi.state() {
@@ -879,7 +1156,11 @@ fn boot_diagnostic(
 
         let mut waited = 0;
         while !mqtt.is_connected() && waited < 12000 {
-            thread::sleep(Duration::from_millis(3000));
+            sleep_answering_boot_diagnostics(
+                Duration::from_millis(3000),
+                services,
+                "waiting for MQTT",
+            );
             waited += 3000;
         }
 
@@ -907,7 +1188,11 @@ fn boot_diagnostic(
             error!("All MQTT boot diagnostic attempts failed...");
             return false;
         }
-        thread::sleep(Duration::from_millis(1000));
+        sleep_answering_boot_diagnostics(
+            Duration::from_millis(1000),
+            services,
+            "retrying MQTT boot validation",
+        );
         continue;
     }
     false
@@ -955,7 +1240,9 @@ fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
     serial_diagnostics: &mut diagnostics::serial::SerialDiagnosticsRuntime,
     firmware_version: &str,
     motion: &mut Motion<'_>,
+    led: &mut Led<'_>,
     nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
+    config_staging: &mut board_diagnostics::ConfigStaging,
     bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
     mqtt: &mut Mqtt,
     wifi: &Wifi<'_>,
@@ -967,6 +1254,14 @@ fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
     need_rehome_stepper_only: &mut bool,
 ) -> anyhow::Result<()> {
     const SLEEP_SLICE_MS: u64 = 100;
+    // Time allowed for a diagnostics response to clear the USB Serial/JTAG FIFO
+    // before a requested reset tears the peripheral down.
+    const REBOOT_FLUSH_DELAY_MS: u64 = 250;
+
+    // Reaching the idle window is the one moment the whole command set is
+    // available, so it is worth saying out loud — the phases announced everywhere
+    // else all mean "not yet".
+    serial_diagnostics.announce_phase("ready");
 
     while std::time::Instant::now() < deadline {
         // Service any queued diagnostics commands during the idle window
@@ -977,7 +1272,9 @@ fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
             diagnostics_command_state,
             firmware_version,
             motion,
+            led,
             nvs,
+            config_staging,
             bus,
             mqtt,
             wifi,
@@ -989,18 +1286,24 @@ fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
             need_rehome_stepper_only,
         )?;
 
-        if serial_diagnostics.poll(
+        let serial_poll = serial_diagnostics.poll(
             diagnostics_command_state,
             firmware_version,
-            motion,
+            Some(&mut diagnostics::executor::MotionContext {
+                motion,
+                home_heading_deg,
+                motion_mode,
+                actual_heading,
+                persist_nvs,
+                need_rehome_stepper_only,
+            }),
+            Some(led),
             nvs,
+            config_staging,
             bus,
-            home_heading_deg,
-            motion_mode,
-            actual_heading,
-            persist_nvs,
-            need_rehome_stepper_only,
-        )? {
+        )?;
+
+        if serial_poll != diagnostics::serial::SerialDiagnosticsPoll::Idle {
             diagnostics::mqtt::update_snapshot(
                 diagnostics_snapshot,
                 diagnostics::mqtt::OwnedStatusSnapshot {
@@ -1025,6 +1328,16 @@ fn sleep_with_diagnostics_control_until<T: esp_idf_svc::nvs::NvsPartitionId>(
             );
         }
 
+        // REBOOT is answered here rather than in the transport: resetting is the
+        // main loop's call, and `OK Rebooting` is still sitting in the USB
+        // Serial/JTAG FIFO. The reset drops the CDC device with it, so give the
+        // host time to read the line before the port disappears.
+        if serial_poll == diagnostics::serial::SerialDiagnosticsPoll::RebootRequested {
+            info!("Serial diagnostics requested a reboot");
+            thread::sleep(Duration::from_millis(REBOOT_FLUSH_DELAY_MS));
+            esp_idf_svc::hal::reset::restart();
+        }
+
         let now = std::time::Instant::now();
         if now >= deadline {
             break;
@@ -1043,7 +1356,9 @@ fn service_diagnostics_control_commands<T: esp_idf_svc::nvs::NvsPartitionId>(
     diagnostics_command_state: &diagnostics::mqtt::SharedCommandState,
     firmware_version: &str,
     motion: &mut Motion<'_>,
+    led: &mut Led<'_>,
     nvs: &mut esp_idf_svc::nvs::EspNvs<T>,
+    config_staging: &mut board_diagnostics::ConfigStaging,
     bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
     mqtt: &mut Mqtt,
     wifi: &Wifi<'_>,
@@ -1074,18 +1389,29 @@ fn service_diagnostics_control_commands<T: esp_idf_svc::nvs::NvsPartitionId>(
             } => {
                 // This path runs on the main loop, not the diagnostics thread,
                 // so motor/NVS access stays serialized in one place.
-                let transcript = diagnostics::executor::execute_first_wave_command(
+                //
+                // MQTT publishes one message when the command finishes, so unlike
+                // the serial path it collects the output rather than streaming it.
+                let mut io = diagnostics::executor::TranscriptIo::default();
+                let mut transcript = diagnostics::executor::execute_first_wave_command(
+                    &mut io,
                     command,
                     firmware_version,
-                    motion,
+                    Some(&mut diagnostics::executor::MotionContext {
+                        motion,
+                        home_heading_deg,
+                        motion_mode,
+                        actual_heading,
+                        persist_nvs,
+                        need_rehome_stepper_only,
+                    }),
+                    Some(led),
                     nvs,
+                    config_staging,
                     bus,
-                    home_heading_deg,
-                    motion_mode,
-                    actual_heading,
-                    persist_nvs,
-                    need_rehome_stepper_only,
                 );
+                transcript.lines = io.into_lines();
+
                 let completion = diagnostics::mqtt::complete_control_command(
                     diagnostics_command_state,
                     &request_id,

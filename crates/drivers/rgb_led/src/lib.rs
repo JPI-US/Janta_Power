@@ -23,13 +23,39 @@ impl<'d> Led<'d> {
         Ok(Self { tx_rtm_driver: tx })
     }
 
+    /// Number of times each frame is sent.
+    ///
+    /// Worth being precise about what this buys, because the obvious reasoning is
+    /// wrong: the LED displays whatever the *last* frame it latched said, and the
+    /// last frame is no likelier to be correct than any other. Repetition therefore
+    /// does **not** reduce the odds of a wrong colour from a corrupted-but-latched
+    /// frame.
+    ///
+    /// It helps only in the other failure mode — a frame mangled badly enough that
+    /// the part does not latch it at all, where another attempt is another chance.
+    /// Kept for that, and because three frames cost about a millisecond.
+    const FRAME_REPEATS: usize = 3;
+
     pub fn set_color(&mut self, rgb: RGB8) -> Result<()> {
         let color: u32 = ((rgb.g as u32) << 16) | ((rgb.r as u32) << 8) | rgb.b as u32;
         let ticks_hz = self.tx_rtm_driver.counter_clock()?;
-        let t0h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(350))?;
-        let t0l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(800))?;
-        let t1h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(700))?;
-        let t1l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(600))?;
+
+        // Chosen to maximise the gap either side of the ~500 ns the part uses to
+        // tell a 1 from a 0, rather than to sit on the datasheet's nominal figures.
+        // T0H is at the short end of its 250-550 ns window and T1H near the long end
+        // of its 650-950 ns one, so a pulse has to be distorted much further before
+        // it is misread.
+        //
+        // The direction matters: a 0 misread as a 1 is what shows up as a faint
+        // glow when the LED is asked to go dark, and shortening T0H is what buys
+        // margin against it. (Originally T0H 350 / T1H 700, which left a 1 bit only
+        // just above the threshold; then 400/800, which helped the 1s and cost the
+        // 0s.)
+        let t0h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(300))?;
+        let t0l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(850))?;
+        let t1h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(850))?;
+        let t1l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(450))?;
+
         let mut signal = FixedLengthSignal::<24>::new();
         for i in (0..24).rev() {
             let p = 2_u32.pow(i);
@@ -37,7 +63,15 @@ impl<'d> Led<'d> {
             let (high_pulse, low_pulse) = if bit { (t1h, t1l) } else { (t0h, t0l) };
             signal.set(23 - i as usize, &(high_pulse, low_pulse))?;
         }
-        self.tx_rtm_driver.start_blocking(&signal)?;
+
+        for repeat in 0..Self::FRAME_REPEATS {
+            self.tx_rtm_driver.start_blocking(&signal)?;
+            // The part latches on a low of >50 us. The RMT line idles low, so this
+            // only has to separate one frame from the next.
+            if repeat + 1 < Self::FRAME_REPEATS {
+                std::thread::sleep(core::time::Duration::from_micros(300));
+            }
+        }
 
         Ok(())
     }

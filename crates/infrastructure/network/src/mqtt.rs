@@ -54,6 +54,13 @@ const PRIVATE_KEY: &CStr = unsafe {
 };
 impl Mqtt {
     /// Create a new TLS-secured MQTT client
+    /// Stack for the MQTT event thread.
+    ///
+    /// 3 KB — ESP-IDF's pthread default — is not enough for this loop's logging and
+    /// JSON work. Raise it here rather than globally so the cost lands on the thread
+    /// that needs it.
+    const MQTT_EVENT_THREAD_STACK: usize = 8192;
+
     pub fn new_mqtt(broker_url: &str, client_id: &str) -> Result<Self> {
         let mqtt_config = MqttClientConfiguration {
             client_id: Some(client_id),
@@ -82,7 +89,15 @@ impl Mqtt {
         )?;
         info!("MQTT client created successfully!");
 
-        thread::spawn(move || {
+        // Explicit stack size. ESP-IDF gives every pthread 3 KB by default, which
+        // this loop overruns: it formats log lines and serialises JSON, and Rust is
+        // hungrier with stack than the C the default was chosen for. `sdkconfig.defaults`
+        // already raises the *main* task to 20 KB for exactly that reason — spawned
+        // threads were simply never given the same treatment, and the overflow only
+        // showed once a board got far enough to publish anything.
+        thread::Builder::new()
+            .stack_size(Self::MQTT_EVENT_THREAD_STACK)
+            .spawn(move || {
             while let Ok(event) = connection.next() {
                 match event.payload() {
                     EventPayload::Connected(_) => {
@@ -114,7 +129,7 @@ impl Mqtt {
                     _ => {}
                 }
             }
-        });
+            })?;
 
         Ok(Self {
             client,

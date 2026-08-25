@@ -45,22 +45,65 @@ first.
 
 ### 1. Toolchain
 
-`rust-toolchain.toml` pins the `esp` channel. Install it with
-[`espup`](https://github.com/esp-rs/espup):
+Install in this order, and **run steps 2 and 3 from a directory outside this
+repository**. `rust-toolchain.toml` pins the `esp` channel, which does not exist
+until step 3 — until then every `cargo` command run inside this repository fails
+with `custom toolchain 'esp' ... is not installed`, including the `cargo install`
+that would have fixed it.
 
-```powershell
-espup install
-```
+1. **Rust.** Install rustup and cargo from [rustup.rs](https://rustup.rs).
+   Check it with `cargo --version` in a *new* shell: rustup edits your shell
+   profile, so a terminal that was already open will not see it. If a new shell
+   still cannot find it, something later in your profile is overwriting `PATH`
+   with an absolute assignment instead of appending to it.
 
-Also required on `PATH`: `ldproxy`, `espflash`, `cargo-espflash`, and Python 3.
-The target (`xtensa-esp32s3-espidf`) and linker are already set in
+2. **Helper tools.**
+
+   ```powershell
+   cargo install espup ldproxy espflash cargo-espflash
+   ```
+
+3. **The `esp` toolchain**, via [`espup`](https://github.com/esp-rs/espup):
+
+   ```powershell
+   espup install
+   ```
+
+   `espup` prints what to do when it finishes. On Unix that means sourcing the
+   export file it writes (`~/export-esp.sh`) in every shell you build from; it
+   carries environment the build needs beyond `PATH`.
+
+4. **Python 3** on `PATH`.
+
+Confirm with `rustup toolchain list` — `esp` should appear alongside your default
+toolchain. The target (`xtensa-esp32s3-espidf`) and linker are already set in
 [`.cargo/config.toml`](.cargo/config.toml).
+
+The Janta Installer's **Check Tools** button probes for all of the above and names
+the command that fixes each missing piece.
 
 ### 2. ESP-IDF
 
 `embuild` installs ESP-IDF v5.2.2 automatically into `.embuild/` on first build.
 Expect a multi-gigabyte download and a long first build. `.embuild/` is
 gitignored.
+
+**macOS: certificate verification.** ESP-IDF downloads its tools with a bundled
+Python. A Python installed from python.org does not use the system trust store, so
+the download fails with:
+
+```text
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate
+ERROR: Failed to download, and retry count has expired
+```
+
+The message names neither Python nor certificates as the thing to fix. Either run
+the installer's own one-time fix — `/Applications/Python 3.x/Install
+Certificates.command` — or point the build at a CA bundle for that invocation:
+
+```bash
+export SSL_CERT_FILE="$(python3 -c 'import certifi; print(certifi.where())')"
+```
 
 ### 3. AWS IoT credentials
 
@@ -118,8 +161,39 @@ is a MinGW binary without a `longPathAware` manifest, and CMake enforces its own
 cargo build --release
 ```
 
+If `DEVICE_ID` is not set in `.env`, it defaults to `1A` and the build looks for
+`tower_1A-*` credential files. Pass it explicitly when the cert pair is named for a
+different tower:
+
+```powershell
+$env:DEVICE_ID = "1"; cargo check
+```
+
 `cargo run --release` flashes and opens a monitor, using the runner configured in
 `.cargo/config.toml` (`espflash flash --monitor --partition-table=partitions.csv`).
+
+### Reconnecting to a board that is already running this firmware
+
+espflash's default reset drives DTR and RTS, which only reaches the ROM while the
+USB Serial/JTAG peripheral is unclaimed. This firmware installs that driver in the
+first milliseconds of boot, so on a board already running it the default sequence
+fails with:
+
+```text
+Error while connecting to device
+╰─▶ Failed to connect to the device
+```
+
+Pass the sequence meant for this peripheral instead — the runner above and the
+Janta Installer both do:
+
+```powershell
+espflash flash --before usb-reset ...
+```
+
+If a board still refuses, put it in download mode by hand: hold **BOOT**, tap
+**RESET**, release **BOOT**, then flash. That path goes through the ROM and does
+not depend on what the application is doing.
 
 To erase a board:
 
@@ -155,9 +229,16 @@ Three layers, in increasing order of runtime authority:
 3. **NVS** — runtime state and provisioned values: heading, encoder snapshot,
    tracking mode, Wi-Fi credentials, tower location.
 
-Be aware that the boot sequence currently rewrites several NVS keys from
-switchboard defaults on **every** boot, so values provisioned over serial do not
-survive a power cycle. See the roadmap below.
+`SAVE_CONFIG` sets a `provisioned` flag in NVS. While it is clear, boot seeds the
+site keys from switchboard defaults on every boot, so editing `.env` and
+reflashing — or shipping an OTA — updates an unprovisioned tower. Once an
+installer has written a configuration over serial, boot leaves those keys alone.
+`crates/diagnostics`'s `CONFIG_KEYS` is the single table of which protocol key maps
+to which NVS key and how its value is validated.
+
+Passwords are never read back: `GET_CONFIG` reports `<set>` or `<unset>`, so a
+technician can confirm a password is configured without a USB cable being able to
+read it.
 
 ## Serial diagnostics
 
@@ -167,8 +248,61 @@ verification. The contract lives with the installer, in its
 `docs/serial-protocol.md`; the firmware side is `src/diagnostics/serial.rs` and
 `src/diagnostics/executor.rs`.
 
-Only five commands are implemented so far. The rest are rejected with an explicit
-`ERROR ... not enabled in first-wave diagnostics`.
+Implemented so far: `PING`, `FIRMWARE_VERSION`, `GET_CAPABILITIES`, `RTC_CHECK`,
+`HDC1080_READ`, `GO_HOME`, `REBOOT`, and the configuration set — `SET_ENV`,
+`GET_ENV`, `SAVE_CONFIG`, `GET_CONFIG`. The actuator and display commands are
+still rejected with an explicit `ERROR ... not enabled in first-wave diagnostics`.
+
+The console is installed at the top of `main`, and both the blocking waits in the
+boot path and the long moves pump it, so the board answers throughout boot,
+homing, and tracking rather than only from the idle window.
+
+During boot the sensors and the whole configuration set are answered normally —
+NVS and the I2C bus exist long before the motion stack. Only `GO_HOME` is refused,
+and it says the motion stack is not up rather than blaming Wi-Fi. Mid-move nothing
+can be lent out, so only `PING`, `FIRMWARE_VERSION` and `GET_CAPABILITIES` are
+served and the rest are refused with `ERROR BUSY <phase>`.
+
+The board also announces `PHASE <name>` whenever what it is doing changes, so the
+host can tell a busy board from a wedged one before sending anything, and
+`GO_HOME` reports progress every five seconds while searching.
+
+Every command ends in a structured `RESULT <NAME> PASS|FAIL <key=value ...>` line,
+and `FIRMWARE_VERSION` announces `PROTOCOL_VERSION 1` so a host knows which dialect
+it is talking to. Legacy response lines are still sent alongside, so an installer
+that predates this protocol keeps working.
+
+## Behaviour without a network
+
+The tower tracks the sun without Wi-Fi. Time comes from the DS3231 first, and only
+telemetry, OTA and MQTT diagnostics need a network — so a failed association is
+logged and boot continues. Serial diagnostics are unaffected, which is what makes
+it possible to provision a board before the network it will use exists.
+
+The one network-independent thing the tower cannot do without is the clock:
+`Rtc::init` panics when the RTC is unreadable *and* Wi-Fi is down, because a
+tracker that cannot tell the time would drive the tower to the wrong place. A dead
+RTC battery therefore still stops the tower, on purpose.
+
+## Thread stacks
+
+ESP-IDF gives every pthread 3 KB by default, which Rust code doing logging, JSON or
+TLS work overruns. `sdkconfig.defaults` raises the main task to 20 KB; the two
+threads this firmware spawns — the MQTT event loop and the diagnostics listener —
+set their own size through `thread::Builder`. Anything new that spawns a thread and
+does more than arithmetic should do the same, or it will fail as a stack overflow
+under load rather than at the point of the mistake.
+
+## OTA is currently off
+
+`switchboard::normal().effects.allow_ota` is `false`. With it on, a board that can
+reach the network downloads whatever `firmware.jantaus.com` advertises for its
+`DEVICE_ID` and reboots into it — which silently replaces anything flashed over USB,
+and makes locally built firmware impossible to test once a tower has Wi-Fi
+credentials.
+
+**Turn it back on before deploying a tower**, or that tower can never be updated
+remotely.
 
 ## Known rough edges
 

@@ -10,8 +10,12 @@ pub struct TrackingTickResult {
 }
 
 /// Run one tracking tick and persist stable state.
+///
+/// `on_tick` is handed to the move itself, so the caller stays responsive across a
+/// tracking pass or a sunset homing run — both of which block this thread.
 pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     motion: &mut motion::Motion,
+    on_tick: motion::MoveWatcher<'_>,
     calculation: &mut clock::Clock<I2C>,
     actual_heading: &mut f32,
     mqtt: &mut network::mqtt::Mqtt,
@@ -24,6 +28,7 @@ pub fn tick<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
     device_id: &str,
 ) -> TrackingTickResult {
     let tracking_done = motion.set_tower_position(
+        on_tick,
         calculation,
         *actual_heading,
         0,

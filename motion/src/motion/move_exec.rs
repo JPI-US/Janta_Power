@@ -1,6 +1,6 @@
 // Stepper movement execution and safety checks.
 
-use super::{Motion, MotionMode, MoveOutcome, TrackingSnapshot, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
+use super::{Motion, MotionMode, MoveOutcome, MoveTick, MoveWatcher, TrackingSnapshot, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, ENCODER_STALL_MIN_TICKS, ENCODER_STALL_CHECK_INTERVAL_STEPS};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -20,6 +20,15 @@ impl Motion<'_> {
     }
 
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {
+        self.move_by_watched(location, &mut |_: MoveTick| {})
+    }
+
+    /// `move_by`, reporting progress periodically while the move runs.
+    ///
+    /// For callers that must stay responsive across a move lasting minutes — a
+    /// homing search, a tracking pass — without handing hardware ownership to a
+    /// second thread. See [`MoveTick`] for what the callback may safely do.
+    pub fn move_by_watched(&mut self, location: i64, on_tick: MoveWatcher<'_>) -> MoveOutcome {
         // Start move.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement");
@@ -52,7 +61,7 @@ impl Motion<'_> {
 
         let signed_steps = if INVERT_MOTOR_DIRECTION { -location } else { location };
         self.motor.move_by(signed_steps);
-        let outcome = self.run();
+        let outcome = self.run_watched(on_tick);
         
         // End move.
         self.relay_off();
@@ -103,6 +112,11 @@ impl Motion<'_> {
     }
 
     pub fn run(&mut self) -> MoveOutcome {
+        self.run_watched(&mut |_: MoveTick| {})
+    }
+
+    /// The stepping loop, reporting progress to `on_tick` about ten times a second.
+    pub fn run_watched(&mut self, on_tick: MoveWatcher<'_>) -> MoveOutcome {
         let mut t0 = Instant::now();
         loop {
             if self.motor.is_running() {
@@ -248,6 +262,12 @@ impl Motion<'_> {
                         step_pos,
                         step_rem
                     );
+                    // Same cadence as the log above, and on the same peripheral.
+                    on_tick(MoveTick {
+                        encoder_ticks: position,
+                        step_position: step_pos,
+                        steps_remaining: step_rem,
+                    });
                     t0 = Instant::now();
                 }
             } else {

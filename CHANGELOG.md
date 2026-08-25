@@ -7,7 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- **`LED_TEST <colour>`.** Drives the status LED to one named colour and returns,
+  so the host can step through `RED`/`GREEN`/`BLUE`/`WHITE`/`OFF` and ask an
+  operator about each. `RESTORE` returns it to the runtime's colour, so a test never
+  leaves the board dark.
+
+  Works during homing and tracking moves. The status LED is the one piece of
+  hardware that stays lendable while the tower moves — the move holds the motor, the
+  caller holds NVS, but nothing holds the LED — so it is passed separately from
+  `MotionContext` rather than bundled with it. Bundling was what made `LED_TEST`
+  answer `BUSY homing`.
+
+  Deliberately operator-judged. A WS2812 has no readback, so the result reports that
+  the colour was written and nothing more. The installer shows a modal with the
+  colour under test and a ten-second countdown that records a failure if nobody
+  answers — an unattended run must not bank a pass for something no one looked at.
+
+  Also of note: `display_healthy` at main.rs:505 is still the only LED call in the
+  runtime, so the LED remains a one-shot "boot got this far" marker. `display_error`,
+  `display_warning` and `display_maintenance` are written and unused.
+
+- **`I2C_SCAN`.** Reports which addresses acknowledge on the shared bus, naming the
+  expected devices and listing any that are silent. A sensor read failing with
+  `NoAcknowledge` says one address did not answer; it cannot say whether the bus is
+  alive, which is the first thing worth knowing.
+
+### Changed
+
+- **OTA is disabled for bench work** (`switchboard::normal().effects.allow_ota`),
+  and `main.rs` now reads that flag instead of a hardcoded `const ALLOW_OTA = true`
+  that made it unreachable.
+
+  With OTA on, a board that can reach the network downloads whatever
+  `firmware.jantaus.com` advertises for its `DEVICE_ID` and reboots into it. That
+  silently replaced USB-flashed firmware the moment a tower was given Wi-Fi
+  credentials, so locally built images could not be tested at all — the board kept
+  reverting to the published build.
+
+  **Turn this back on before deploying.** A tower shipped with it false can never be
+  updated remotely.
+
+  Related and still open: `main.rs` rewrites NVS `version` to the compiled
+  `DEFAULT_VERSION` on every boot, discarding what OTA recorded. If a published
+  image's own compiled version is not above the version its metadata advertises,
+  that re-downloads the same firmware on every boot.
+
+### Fixed
+
+- **Status LED frames were marginal.** `rgb_led` sent T0H 350 ns / T1H 700 ns. A
+  WS2812 distinguishes a 1 from a 0 at roughly 500 ns of high time, so 700 ns left
+  little margin on a line that is already marginal for another reason: the part
+  wants about 3.5 V for a logic high at 5 V supply, and an ESP32 GPIO gives 3.3 V.
+  The symptom was colours that were usually right and occasionally scrambled in
+  varying ways — a misread bit lands wherever it lands.
+
+  Timings are now chosen to maximise margin either side of that threshold rather
+  than to match the datasheet's nominal figures: T0H 300, T0L 850, T1H 850, T1L 450.
+  Both are well inside their permitted windows, but a pulse now has to be distorted
+  much further before it is misread.
+
+  The direction matters. A 0 misread as a 1 is what makes an LED asked to go dark
+  glow faintly instead, and only a *shorter* T0H buys margin against that — an
+  interim change to the nominal 400 ns helped the 1 bits and cost the 0s.
+
+  `OFF` is the sensitive case for the same reason: with all 24 bits zero, one
+  flipped bit is visible against black, where on any lit colour it is lost among the
+  bits already set. A faint tint on `OFF` therefore means roughly one bit error per
+  frame, and the remaining fix is electrical — a level shifter, or a series resistor
+  on the data line — not firmware.
+
+- **Refusals were invisible to a strict host.** `serial.rs` wrote `ERROR ...` and
+  returned for a command that is not enabled, and for one refused because another
+  control command is in flight — with no `RESULT` line. A host running the
+  structured protocol resolves on `RESULT` and nothing else, so a refusal the board
+  issued in microseconds reached it as an eight-second timeout: the failure that
+  explains nothing. Both paths now terminate.
+
+- **Spawned threads had 3 KB of stack.** `sdkconfig.defaults` raises the main task
+  to 20 KB with the comment "Rust often needs a bit of an extra main task stack size
+  compared to C" — but nothing was ever set for pthread, so both the MQTT event
+  thread and the diagnostics listener ran on ESP-IDF's 3 KB default while doing
+  logging and JSON work.
+
+  The result was `A stack overflow in task pthread` on the first boot after a flash,
+  where `first_boot == 1` adds OTA slot validation and two extra publishes on top of
+  the usual traffic. Later boots skip that work, stay under the limit, and look
+  fine — which is why it presented as a one-time crash that "fixed itself".
+
+  Both threads now spawn through `thread::Builder` with 8 KB. Sized at the spawn
+  site rather than raising `CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT`, so the cost
+  lands on the two threads that need it instead of every thread in the system.
+  Long-standing; it only surfaced once a board got far enough to publish anything.
+
+- **`RTC_CHECK` never read the RTC.** It reported `Local::now()` — the ESP32 system
+  clock — so it tested chrono rather than the DS3231, and passed on a board whose
+  RTC had lost its time. That is the fault it most needs to catch: an unreadable or
+  implausible RTC with no network is what stops the tower booting at all.
+
+  It now reads the DS3231 directly, reports its time as `rtc_utc` alongside the
+  system clock, and fails when the read fails or the year falls outside 2024–2100.
+  The sanity check runs *before* the legacy `TIME:` line is written, since a host
+  predating the structured protocol resolves on that line and would otherwise
+  record a pass for a clock about to be called invalid.
+
+- **`HDC1080_READ` could not fail.** Every I2C call in the vendored `hdc1080`
+  driver ended in `.unwrap_or_default()`, which discarded the error and left the
+  read buffer zeroed. An absent or unwired sensor therefore returned `Ok(0)` for
+  its identity registers and `Ok((-40.00, 0.00))` for its measurements — the exact
+  values zero raw counts convert to — and the diagnostic reported PASS.
+
+  Errors now propagate. The diagnostic also verifies the identity registers
+  (`0x1050` / `0x5449`) and fails by name when they do not match, because a device
+  answering something else is not the sensor we think we are reading. And it now
+  calls `init()`, which writes the configuration the four-byte sequential read
+  path assumes; without it the device stays in its power-on mode where that read
+  is not valid.
+
+- **A tower with no reachable Wi-Fi rebooted forever.** `main.rs` ended the
+  association step with `.expect("Wi-Fi connection failed")`, and the line after
+  it propagated a failed reconnect out of `main`. Either one aborts, and ESP-IDF's
+  default panic behaviour is to reboot — so a board on a bench, or on site before
+  the network exists, cycled roughly every twenty-five seconds.
+
+  This also made the tower impossible to provision over serial, which is circular:
+  the credentials a technician writes with `SET_ENV` are the very ones the board is
+  failing to use. Both paths now log and continue, as does a diagnostics MQTT
+  listener that will not start.
+
+  Losing the clock is still fatal, deliberately. `Rtc::init` panics when the RTC is
+  unreadable *and* Wi-Fi is down, because a tracker that cannot tell the time would
+  drive the tower to the wrong place. Wi-Fi alone is not needed to follow the sun:
+  time comes from the DS3231 first, and only telemetry and OTA need a network.
+
+- **`CommandState` was private behind a public alias.** `SharedCommandState` is
+  `pub type ... = Arc<Mutex<CommandState>>`, but `CommandState` itself was
+  private. Older toolchains accepted this; the current `esp` channel
+  (rustc 1.97.0-nightly) rejects it as private-in-public and the `tower` binary
+  fails to build with 17 errors. The struct is now `pub`; its fields stay
+  private, so nothing is exposed that the alias did not already expose.
+
+  Worth knowing before the next toolchain bump on any machine, not just the one
+  that hit it.
 
 ## [1.1.3] - 2026-04-23
 

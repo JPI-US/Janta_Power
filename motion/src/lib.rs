@@ -58,6 +58,30 @@ pub mod motion {
         pub angle_offset: f64,
     }
 
+    /// A periodic report from inside a move, emitted about ten times a second.
+    ///
+    /// This crate knows nothing about diagnostics or serial; it only offers the
+    /// beat. Consumers decide what to do with it — report progress to a connected
+    /// installer, service read-only requests — and must throttle themselves, since
+    /// a move lasting minutes produces thousands of these.
+    ///
+    /// The callback runs on the stepping loop, so slow work here stretches the
+    /// step profile. It fires from the same 100 ms block as the existing position
+    /// log, which already writes to the USB peripheral, so comparable work costs
+    /// no more than what the loop already does.
+    #[derive(Debug, Clone, Copy)]
+    pub struct MoveTick {
+        pub encoder_ticks: i32,
+        pub step_position: i64,
+        pub steps_remaining: i64,
+    }
+
+    /// A [`MoveTick`] consumer.
+    ///
+    /// `&mut dyn` rather than a generic parameter so that adding the hook does not
+    /// ripple a type parameter through every motion entry point.
+    pub type MoveWatcher<'a> = &'a mut dyn FnMut(MoveTick);
+
     pub fn calculate_steps(offset_deg: f32) -> i64 {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
@@ -489,8 +513,12 @@ pub mod motion {
             }
         }
 
+        /// `on_tick` is invoked periodically during any move this performs, so the
+        /// caller can stay responsive across a tracking move or a sunset homing
+        /// run without giving up single-threaded ownership of the hardware.
         pub fn set_tower_position<I2C: embedded_hal::i2c::I2c, T: NvsPartitionId>(
             &mut self,
+            on_tick: MoveWatcher<'_>,
             clock: &mut Clock<I2C>,
             location: f32,
             _balance: i32,
@@ -594,7 +622,7 @@ pub mod motion {
                 log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
                 let steps = (angle_offset / 360.0) * STEPS_PER_REV;
                         log::info!("Steps Needed: {}", steps as i64);
-                let move_outcome = self.move_by(steps as i64);
+                let move_outcome = self.move_by_watched(steps as i64, on_tick);
                 if move_outcome != MoveOutcome::Completed {
                     self.relay_off();
                     log::warn!("Tracking move aborted: {:?}", move_outcome);
@@ -620,7 +648,7 @@ pub mod motion {
                         log::warn!(
                             "Heading near home but limit switch not pressed; verifying home by homing CCW"
                         );
-                        let ok = self.find_limit_switch_ccw();
+                        let ok = self.find_limit_switch_ccw_watched(on_tick);
                         if ok {
                             log::info!("Home verification homing succeeded");
                             self.report_home_error_ticks(mqtt, nvs, device_id, persist_nvs);
@@ -691,7 +719,7 @@ pub mod motion {
                     return true;
                 } else {
                     log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_ccw();
+                    let limit_sw_status = self.find_limit_switch_ccw_watched(on_tick);
                     match limit_sw_status{
                         true => {
                             log::info!("Limit switch has returned true");
@@ -723,4 +751,6 @@ pub mod motion {
     }
 }
 
-pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome, TrackingSnapshot};
+pub use motion::{
+    calculate_steps, Motion, MotionMode, MoveOutcome, MoveTick, MoveWatcher, TrackingSnapshot,
+};

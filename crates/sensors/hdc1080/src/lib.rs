@@ -1,3 +1,9 @@
+// Local change from the published crate: every I2C call used to end in
+// `.unwrap_or_default()`, which discarded the error and left the read buffer
+// zeroed. An absent or unwired sensor therefore returned `Ok(0)`, which converts
+// to a perfectly plausible -40.00 C / 0.00 %RH — so a diagnostic built on this
+// driver could not fail. Errors now propagate.
+
 #![deny(unsafe_code)]
 #![no_std]
 use embedded_hal::delay::DelayNs;
@@ -91,7 +97,7 @@ where
 
     /// Init with default config
     pub fn init(&mut self) -> Result<(), I2C::Error> {
-        self.set_config(self.config).unwrap_or_default();
+        self.set_config(self.config)?;
         Ok(())
     }
 
@@ -101,7 +107,7 @@ where
         let bytes: [u8; 2] = ConfigBitFlags::RST.to_be_bytes();
         self.i2c
             .write(I2C_ADDRESS, &[Register::CONFIGURATION, bytes[0]])
-            .unwrap_or_default();
+            ?;
 
         self.delay.delay_ms(10);
 
@@ -113,10 +119,10 @@ where
         match resolution {
             TResolution::_11 => self
                 .set_config(self.config | ConfigBitFlags::T_MODE)
-                .unwrap_or_default(),
+                ?,
             TResolution::_14 => self
                 .set_config(self.config & !ConfigBitFlags::T_MODE)
-                .unwrap_or_default(),
+                ?,
         }
         Ok(())
     }
@@ -126,13 +132,13 @@ where
         match resolution {
             HResolution::_8 => self
                 .set_config(self.config & !ConfigBitFlags::H_MODE8 | ConfigBitFlags::H_MODE9)
-                .unwrap_or_default(),
+                ?,
             HResolution::_11 => self
                 .set_config(self.config | ConfigBitFlags::H_MODE8 & !ConfigBitFlags::H_MODE9)
-                .unwrap_or_default(),
+                ?,
             HResolution::_14 => self
                 .set_config(self.config & !ConfigBitFlags::H_MODE8 & !ConfigBitFlags::H_MODE9)
-                .unwrap_or_default(),
+                ?,
         }
         Ok(())
     }
@@ -143,7 +149,7 @@ where
         let _result = self
             .i2c
             .write_read(I2C_ADDRESS, &[Register::CONFIGURATION], &mut current_config)
-            .unwrap_or_default();
+            ?;
 
         Ok(u16::from_be_bytes(current_config))
     }
@@ -154,7 +160,7 @@ where
         let conf_u8: [u8; 2] = self.config.to_be_bytes();
         self.i2c
             .write(I2C_ADDRESS, &[Register::CONFIGURATION, conf_u8[0]])
-            .unwrap_or_default();
+            ?;
         self.delay.delay_ms(10);
         Ok(())
     }
@@ -169,9 +175,9 @@ where
 
         self.i2c
             .write(I2C_ADDRESS, &[Register::TEMPERATURE])
-            .unwrap_or_default();
+            ?;
         self.delay.delay_ms(20);
-        self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
+        self.i2c.read(I2C_ADDRESS, &mut buf)?;
         t_raw_u16 = u16::from_be_bytes([buf[0], buf[1]]);
         temper = f32::from(t_raw_u16) / 65536.0 * 165.0 - 40.0;
 
@@ -179,7 +185,7 @@ where
             h_raw_u16 = u16::from_be_bytes([buf[2], buf[3]]);
             humm = f32::from(h_raw_u16) / 65536.0 * 100.0;
         } else {
-            humm = self.humidity().unwrap_or_default();
+            humm = self.humidity()?;
         }
 
         Ok((temper, humm))
@@ -193,9 +199,9 @@ where
 
         self.i2c
             .write(I2C_ADDRESS, &[Register::TEMPERATURE])
-            .unwrap_or_default();
+            ?;
         self.delay.delay_ms(20);
-        self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
+        self.i2c.read(I2C_ADDRESS, &mut buf)?;
 
         result = u16::from_be_bytes(buf);
         temper = f32::from(result) / 65536.0 * 165.0 - 40.0;
@@ -210,9 +216,9 @@ where
 
         self.i2c
             .write(I2C_ADDRESS, &[Register::HUMIDITY])
-            .unwrap_or_default();
+            ?;
         self.delay.delay_ms(20);
-        self.i2c.read(I2C_ADDRESS, &mut buf).unwrap_or_default();
+        self.i2c.read(I2C_ADDRESS, &mut buf)?;
 
         result = u16::from_be_bytes(buf);
         humid = f32::from(result) / 65536.0 * 100.0;
@@ -225,7 +231,7 @@ where
         let result: u16;
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::DEVICE_ID], &mut buf)
-            .unwrap_or_default();
+            ?;
         result = ((buf[0] as u16) << 8) | (buf[1] as u16);
         Ok(result)
     }
@@ -236,7 +242,7 @@ where
         let result: u16;
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::MANUFACTURER], &mut buf)
-            .unwrap_or_default();
+            ?;
         result = ((buf[0] as u16) << 8) | (buf[1] as u16);
         Ok(result)
     }
@@ -249,13 +255,13 @@ where
         let mut result: [u16; 3] = [0, 0, 0];
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::SERIAL_ID1], &mut buf1)
-            .unwrap_or_default();
+            ?;
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::SERIAL_ID2], &mut buf2)
-            .unwrap_or_default();
+            ?;
         self.i2c
             .write_read(I2C_ADDRESS, &[Register::SERIAL_ID3], &mut buf3)
-            .unwrap_or_default();
+            ?;
         result[0] = u16::from_be_bytes(buf1);
         result[1] = u16::from_be_bytes(buf2);
         result[2] = u16::from_be_bytes(buf3);
@@ -264,7 +270,7 @@ where
 
     /// Returns true if battery voltage is under 2.8v
     pub fn battery_low(&mut self) -> Result<bool, I2C::Error> {
-        let config = self.read_config().unwrap_or_default();
+        let config = self.read_config()?;
         Ok((config & ConfigBitFlags::BTST) == ConfigBitFlags::BTST)
     }
 }

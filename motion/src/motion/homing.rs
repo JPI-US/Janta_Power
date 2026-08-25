@@ -1,6 +1,6 @@
 // Limit-switch and homing helpers.
 
-use super::{calculate_steps, Motion, MoveOutcome};
+use super::{calculate_steps, Motion, MoveOutcome, MoveTick, MoveWatcher};
 use std::time::{Duration, Instant};
 
 impl Motion<'_> {
@@ -89,12 +89,25 @@ impl Motion<'_> {
     }
 
     pub fn find_limit_switch_cw(&mut self) -> bool {
+        self.find_limit_switch_cw_watched(&mut |_: MoveTick| {})
+    }
+
+    pub fn find_limit_switch_cw_watched(&mut self, on_tick: MoveWatcher<'_>) -> bool {
         // Firmware is currently CCW-only for homing.
         log::warn!("Homing requested CW, but firmware is configured for CCW-only homing; using CCW search");
-        self.find_limit_switch_ccw()
+        self.find_limit_switch_ccw_watched(on_tick)
     }
 
     pub fn find_limit_switch_ccw(&mut self) -> bool {
+        self.find_limit_switch_ccw_watched(&mut |_: MoveTick| {})
+    }
+
+    /// The homing search, reporting progress while it runs.
+    ///
+    /// The search covers up to 350 degrees one degree at a time, and each degree
+    /// is a full accelerate/decelerate cycle, so a worst-case run lasts tens of
+    /// minutes. Without `on_tick` that is silence for the whole run.
+    pub fn find_limit_switch_ccw_watched(&mut self, on_tick: MoveWatcher<'_>) -> bool {
         use super::HOME_HEADING_DEG;
         
         // Disable overshoot checks while homing.
@@ -121,7 +134,7 @@ impl Motion<'_> {
         let mut max_steps = calculate_steps(-350.0);
         while max_steps < 0 && self.lmsw.is_high() {
             let step_movement = calculate_steps(-1.0);
-            if self.move_by(step_movement) != MoveOutcome::Completed {
+            if self.move_by_watched(step_movement, on_tick) != MoveOutcome::Completed {
                 self.relay_off();
                 self.set_stall_detection_enabled(stall_prev);
                 self.is_homing = false;

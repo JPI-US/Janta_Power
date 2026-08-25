@@ -270,7 +270,18 @@ pub const fn normal() -> Switchboard {
         },
         effects: EffectsSwitches {
             persist_nvs: true,
-            allow_ota: true,
+            // ┌──────────────────────────────────────────────────────────────────┐
+            // │ OTA IS OFF. TURN IT BACK ON BEFORE DEPLOYING A TOWER.            │
+            // └──────────────────────────────────────────────────────────────────┘
+            //
+            // Off for bench work. With OTA on, a board that can reach the network
+            // downloads whatever `firmware.jantaus.com` advertises for its
+            // DEVICE_ID and reboots into it — which silently replaces anything
+            // flashed over USB, and made locally built firmware impossible to test
+            // as soon as the tower had Wi-Fi credentials.
+            //
+            // A tower shipped with this false can never be updated remotely.
+            allow_ota: false,
             allow_boot_validation: true,
         },
         admin: AdminSwitches {
