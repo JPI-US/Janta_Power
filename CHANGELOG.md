@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`OLED_TEST [pattern]`** and a `ssd1306` driver. The display is an HS96L03W2C03
+  (LCSC C5248080) — 128x64 over I²C at `0x3C`, SSD1306-compatible. Its datasheet
+  never names a controller, but the `0x00`/`0x40` control bytes and the
+  initialisation sequence identify it beyond doubt.
+
+  No argument walks `ALL_ON`, `CHECKERBOARD`, `STRIPES`, `BORDER`, `OFF`; an
+  argument sets one pattern and holds it. Each is chosen for what it can reveal:
+  `ALL_ON` finds dead pixels, `OFF` finds one stuck on, `CHECKERBOARD` finds
+  addressing faults, `BORDER` proves the edges are reachable.
+
+  The panel acknowledges its address, so a missing display is caught before
+  anything is drawn — unlike the status LED, this test is not purely
+  operator-judged. Its pattern geometry is host-tested; the crate depends on
+  `embedded-hal` alone.
+
+  Works during homing and tracking moves. The I²C bus is a `&'static` manager that
+  locks per transaction and motion never touches it, so the display is reachable
+  mid-move just as the status LED is — with one restriction: a pattern must be
+  named *during a tracking move*. At 10 kHz a full-screen write is about a second
+  and the walk is five of them, and the stall and overshoot detectors only run
+  between `motor.poll()` calls — so the walk is five seconds of a moving tower going
+  unwatched, and is refused with that reason. A homing search allows it, because
+  homing switches both detectors off anyway. `init` also stopped clearing, which
+  halved the cost of every command.
+
+  The installer walks the patterns one at a time and asks an operator about each,
+  with a ten-second countdown per pattern and a skip. The deny option reads "No
+  pattern, or damaged" rather than "no pattern": a panel with dead rows or a
+  misaligned grid draws *something*, and an operator needs somewhere to put that.
+
+  Note the module's VCC is rated 2.8-3.3 V absolute maximum and the board supplies
+  5 V. It responds, which is not the same as being within spec.
+
 - **`LED_TEST <colour>`.** Drives the status LED to one named colour and returns,
   so the host can step through `RED`/`GREEN`/`BLUE`/`WHITE`/`OFF` and ask an
   operator about each. `RESTORE` returns it to the runtime's colour, so a test never
@@ -34,7 +67,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoAcknowledge` says one address did not answer; it cannot say whether the bus is
   alive, which is the first thing worth knowing.
 
+- **`CONFIG_MODE`**, which until now was parsed and then refused as "not enabled in
+  first-wave diagnostics" — so the installer's Config Mode test could never pass.
+
+  There is no mode to enter: `SET_ENV` and `SAVE_CONFIG` are accepted whenever NVS
+  is lendable. A command that only replied `OK` would therefore be asserting that
+  rather than showing it — another diagnostic that cannot fail, which this firmware
+  has already produced twice. It instead reads NVS and reports
+  `provisioned=yes|no stored=<n> staged=<n> keys=<n>`, so it fails when the
+  namespace cannot be opened: the fault that otherwise stays hidden until a
+  `SAVE_CONFIG` fifteen commands later reports success and loses the lot. `stored`
+  against `staged` also tells a technician whether what they see in the app is
+  committed or still waiting on a save.
+
 ### Changed
+
+- **Homing no longer blocks the diagnostics that have nothing to do with the
+  motor.** `I2C_SCAN`, `HDC1080_READ`, `RTC_CHECK`, `CONFIG_MODE` and the whole
+  `SET_ENV`/`SAVE_CONFIG`/`GET_CONFIG` set answered `ERROR BUSY homing` for the
+  length of a homing search — which can be tens of minutes, and which happens
+  precisely when a technician is stood beside the tower wanting to run them.
+
+  A move holds the motor and only the motor. The I²C bus is a `&'static` manager
+  locking per transaction; the status LED belongs to nothing; and NVS is free during
+  a homing search, which borrows the motor alone. So the mid-move path now runs the
+  same `execute_first_wave_command` the idle path runs, with `motion: None`, instead
+  of serving a hand-picked pair of commands.
+
+  What is still refused is refused for a reason: `GO_HOME`, `MOTOR_MOVE` and
+  `RELAY_MOTOR` want the motor or its power, and `REBOOT` belongs to the main loop —
+  honouring it here would mean resetting from inside the stepping loop with the
+  motor relay still closed, or holding the request until a homing sweep ends twenty
+  minutes later. Those four still answer `ERROR BUSY <phase>`, so nothing on the
+  wire changed; the set that receives it shrank.
+
+  The classification lives in `board_diagnostics::requires_exclusive_runtime` as an
+  exhaustive `match` with no wildcard arm, so a command added later stops the crate
+  compiling until somebody classifies it. Getting it wrong is otherwise invisible: a
+  command that could have run is refused as `BUSY`, which on the wire is
+  indistinguishable from a refusal that was meant.
+
+  Two things vary with what the move can spare. A tracking pass and encoder recovery
+  hold NVS for their own bookkeeping, so configuration commands refuse there with
+  `configuration storage is not lendable during a tracking move` — never `BUSY`,
+  which would invite waiting for a move that is followed by another. And a homing
+  search may be held for seconds where a tracking move may not — but not for the
+  reason it looks like. The tower is far too slow for a pause to cost steps: 25,600
+  microsteps per motor revolution behind an 85:1 slew at 200 steps/s² makes a
+  one-degree homing move eleven seconds long and never gets past about 3 rpm at the
+  motor. What a pause costs is supervision — the stall and overshoot detectors run
+  only inside the stepping loop — and homing switches both off for its whole
+  duration. Only the full `OLED_TEST` walk is expensive enough to matter:
+  `HDC1080_READ` is about 60 ms, `RTC_CHECK` about 10 ms and `I2C_SCAN` about 3 ms,
+  against a stall detector that samples every 250 ms.
 
 - **OTA is disabled for bench work** (`switchboard::normal().effects.allow_ota`),
   and `main.rs` now reads that flag instead of a hardcoded `const ALLOW_OTA = true`
@@ -77,6 +162,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bits already set. A faint tint on `OFF` therefore means roughly one bit error per
   frame, and the remaining fix is electrical — a level shifter, or a series resistor
   on the data line — not firmware.
+
+- **A cleared display kept a lit strip at one edge.** `write_pattern` covers the
+  128 columns the panel shows, but controllers in this family carry wider RAM than
+  the glass — an SH1106 has 132 columns behind a 128-column panel — so the columns
+  past the visible edge were never written and held whatever was drawn there last.
+  After the border pattern, that read as a right-hand edge that would not switch
+  off.
+
+  `clear()` now writes past the visible width, and `OLED_TEST OFF` routes through
+  it. Overrunning is safe only because clearing is idempotent: the column pointer
+  wraps within the page and rewrites zeros over zeros. A real pattern must never be
+  written that way or the wrap would overwrite its left edge.
 
 - **Refusals were invisible to a strict host.** `serial.rs` wrote `ERROR ...` and
   returned for a command that is not enabled, and for one refused because another

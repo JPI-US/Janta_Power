@@ -183,6 +183,7 @@ Current serial commands enabled in this phase:
 - `PING`
 - `I2C_SCAN`
 - `LED_TEST <colour>`
+- `OLED_TEST [pattern]`
 - `FIRMWARE_VERSION`
 - `GET_CAPABILITIES`
 - `RTC_CHECK`
@@ -196,6 +197,23 @@ the board itself — the main loop does, after a short delay that lets the reply
 clear the USB Serial/JTAG FIFO before the CDC device drops with the reset.
 
 Serial still uses the old line-based command language from [`crates/diagnostics/src/lib.rs`](../../crates/diagnostics/src/lib.rs).
+
+### OLED_TEST
+
+Drives the HS96L03W2C03 (SSD1306-compatible, 128x64, I²C 0x3C) through
+`crates/drivers/ssd1306`. With no argument it walks every pattern, holding each for
+700 ms — short enough that the whole cycle stays inside the host's default silence
+budget, since serial is not serviced while it runs. With an argument it sets one
+pattern and holds it.
+
+The patterns are chosen for what each reveals: `ALL_ON` finds dead pixels, `OFF`
+finds one stuck on, `CHECKERBOARD` finds addressing faults through a misaligned
+grid, `STRIPES` isolates a segment driver, `BORDER` proves the edges are reachable
+when a centre-covering pattern would not.
+
+The panel acknowledges its address, so absence is detected before anything is drawn
+and reported as a real failure — this test is not purely operator-judged the way
+`LED_TEST` is.
 
 ### Announcing what the tower is doing
 
@@ -244,11 +262,59 @@ and the board holds it as an `Option`. When it is absent `go_home` refuses with
 `motion is not initialised yet`, which is the actual reason; unimplemented commands
 still give theirs. `ERROR BUSY <phase>` is reserved for what it describes.
 
-`poll_minimal` covers the mid-move case, where the move holds the motor and the
-caller holds NVS. Almost nothing is lendable there — but the status LED is, because
-nothing else takes it. So `LED_TEST` works while the tower is homing, which is
-exactly when somebody is stood next to it watching. Everything else is answered from
-`board_diagnostics::boot_phase_response` or refused with the phase.
+`poll_minimal` covers the mid-move case. The move holds the motor — and only the
+motor. The status LED is not taken by anything; the I²C bus is a `&'static` manager
+locking per transaction that motion never touches; and NVS is free during a homing
+search, because the search borrows nothing but the motor. So `poll_minimal` runs the
+same `execute_first_wave_command` the idle path runs, with `motion: None`, rather
+than serving a hand-picked subset.
+
+What stays refused is
+[`board_diagnostics::requires_exclusive_runtime`](../../crates/diagnostics/src/lib.rs):
+`GO_HOME`, `MOTOR_MOVE` and `RELAY_MOTOR`, which want the motor or its power, and
+`REBOOT`, which belongs to the main loop — serving it here would mean resetting from
+inside the stepping loop with the motor relay still closed, or holding the request
+until the move ends, which for a homing sweep can be twenty minutes later. Those
+four get the same `ERROR BUSY <phase>` a boot wait sends, so nothing on the wire
+changed; the set of commands that receive it shrank.
+
+That predicate is an exhaustive `match` with no wildcard arm, so a command added
+later stops the crate compiling until somebody classifies it. Getting it wrong is
+otherwise invisible: a command that could have run is refused as `BUSY`, which reads
+on the wire exactly like a refusal that was meant.
+
+Two things vary with what the move can spare:
+
+- **NVS.** A homing search lends it; a tracking pass and encoder recovery hold it
+  for their own bookkeeping and pass `None`. Configuration commands then refuse with
+  `configuration storage is not lendable during a tracking move` — never `BUSY`,
+  because "busy" invites waiting for a move that will be followed by another.
+- **Time.** `MoveTolerance::Homing` allows a command to hold the stepping loop for
+  seconds; `PositionCritical` does not. Only the full `OLED_TEST` walk asks for
+  that: at 10 kHz a full-screen write is about a second and the walk is five of
+  them.
+
+  Worth being precise about *why*, because the obvious answer is wrong. The tower
+  is not turning fast enough for a pause to cost steps — 25,600 microsteps per motor
+  revolution behind an 85:1 slew, accelerating at 200 steps/s², makes a one-degree
+  homing move eleven seconds long and never gets it past about 1,100 steps/s, under
+  3 rpm at the motor. Nothing restarted from rest at that speed loses anything. What
+  a pause actually costs is supervision: the stall and overshoot detectors live
+  inside the stepping loop and run only between `motor.poll()` calls, so a blocked
+  loop is a blind one. Homing switches both off for its whole duration, which is
+  what makes the walk free there and not during a tracking move.
+
+The sensor reads never approach that limit. A whole `HDC1080_READ` is about 60 ms,
+an `RTC_CHECK` about 10 ms and an `I2C_SCAN` about 3 ms, against a stall detector
+that samples every 250 ms. Raising the bus clock would remove the OLED constraint
+too — every device on it supports 400 kHz — but it is left at 10 kHz deliberately
+and changing it is a separate decision.
+
+`poll_minimal` takes no control-command reservation, unlike `poll`. The reservation
+stops an MQTT command and a serial command running at once, and that cannot happen
+here: MQTT hands its commands to the main loop through a channel, and the main loop
+is the thread blocked inside this move. Taking it would only add a way for a stale
+MQTT reservation to lock out the person stood at the tower.
 
 That is why the LED is *not* part of `MotionContext`. Motion and the LED have
 different availability: motion disappears during a move, the LED does not. Bundling
@@ -403,7 +469,7 @@ We are reusing this crate as logic, not as a second firmware runtime model.
 
 - The old diagnostics crate still contains its own serial runtime pieces, but the current firmware now prefers the standalone `serial_console` crate for the live transport
 - Only the first-wave commands are integrated right now
-- `CONFIG_MODE`, `MOTOR_MOVE`, relay commands, and display commands are still deferred
+- `MOTOR_MOVE` and the relay commands are still deferred
 - `WRITE_ENV_FILE` is refused outright: there is no filesystem to write
 - Serial diagnostics is not running in its own background thread; it is polled from the main loop sleep slices
 - Full firmware `cargo check` is still blocked in this Windows environment by the existing ESP-IDF path-length issue

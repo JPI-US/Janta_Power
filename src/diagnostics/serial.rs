@@ -82,49 +82,90 @@ impl SerialDiagnosticsRuntime {
         self.last_phase = Some(phase.to_string());
     }
 
-    /// Answer what can be served while a move is in progress.
+    /// Answer everything a move does not actually prevent.
     ///
-    /// The move holds the motor and the caller holds NVS, so almost nothing is
-    /// lendable — but the status LED is. `LED_TEST` therefore works while the tower
-    /// is homing, which is exactly when someone is stood next to it watching. Boot
-    /// waits use the full [`poll`](Self::poll) instead, since by then the bus and
-    /// NVS exist too.
-    pub fn poll_minimal(
+    /// A move holds the motor. It does not hold the I2C bus, the status LED, or —
+    /// during a homing search — NVS, so every command that needs only those is
+    /// executed here for real, through the same
+    /// [`executor::execute_first_wave_command`] the idle path uses. That matters
+    /// because a homing sweep can run for tens of minutes, and it runs at exactly
+    /// the moment a technician is stood beside the tower wanting to scan the bus
+    /// or read a sensor.
+    ///
+    /// Only [`board_diagnostics::requires_exclusive_runtime`] commands are
+    /// refused, with the same `ERROR BUSY <phase>` a boot wait sends, so nothing
+    /// on the wire changes for a host — the set of commands that get that answer
+    /// simply shrinks.
+    ///
+    /// No control-command reservation is taken, unlike [`poll`](Self::poll). The
+    /// reservation stops an MQTT command and a serial command from running at
+    /// once, and that cannot happen here: MQTT hands its commands to the main loop
+    /// through a channel, and the main loop is the thread currently blocked inside
+    /// this move. Taking it would add nothing but a way for a stale MQTT
+    /// reservation to lock out the person at the tower.
+    pub fn poll_minimal<T>(
         &mut self,
         phase: &str,
         firmware_version: &str,
         mut led: Option<&mut rgb_led::Led<'_>>,
-    ) -> anyhow::Result<()> {
+        bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+        mut nvs: Option<&mut EspNvs<T>>,
+        staging: &mut ConfigStaging,
+        tolerance: board_diagnostics::MoveTolerance,
+    ) -> anyhow::Result<()>
+    where
+        T: NvsPartitionId,
+    {
         self.runtime.poll(&mut self.console, |console, line| {
             let _ = console.write_line("CMD_RECEIVED");
             let command = DiagnosticCommand::parse(line);
 
-            if let (DiagnosticCommand::LedTest { color }, Some(led)) =
-                (&command, led.as_deref_mut())
-            {
-                let mut io = ConsoleIo::new(&mut *console);
-                let outcome = executor::drive_status_led(led, color, &mut io);
-                let wrote_any = io.wrote_any;
-                if !wrote_any {
-                    let _ = console.write_line("LED_TEST produced no output");
+            if board_diagnostics::requires_exclusive_runtime(&command) {
+                // Built here rather than outside the closure: this runs on every
+                // motion tick, and only an actual command needs the string.
+                for response in board_diagnostics::boot_phase_response(
+                    &command,
+                    phase,
+                    firmware_version,
+                    &executor::capabilities_csv(),
+                ) {
+                    let _ = console.write_line(&response);
                 }
-                let _ = console.write_line(&match &outcome {
-                    Ok(details) => board_diagnostics::result_line("LED_TEST", true, details, ""),
-                    Err(message) => board_diagnostics::result_line("LED_TEST", false, &[], message),
-                });
                 return Ok::<(), anyhow::Error>(());
             }
 
-            // Built here rather than outside the closure: this runs every 50 ms
-            // through boot, and only an actual command needs the string.
-            for response in board_diagnostics::boot_phase_response(
-                &command,
-                phase,
+            let mut io = ConsoleIo::new(&mut *console);
+            let transcript = executor::execute_first_wave_command(
+                &mut io,
+                command.clone(),
                 firmware_version,
-                &executor::capabilities_csv(),
-            ) {
-                let _ = console.write_line(&response);
+                // The move has the motor. Nothing else here is withheld.
+                None,
+                led.as_deref_mut(),
+                nvs.as_deref_mut(),
+                staging,
+                bus,
+                tolerance.allows_long_blocking(),
+            );
+            let wrote_any = io.wrote_any;
+
+            // Same fallback as the idle path: a handler that emitted nothing
+            // leaves the installer with only CMD_RECEIVED, which reads as a
+            // timeout.
+            if !wrote_any {
+                let _ = console.write_line(&transcript.message);
             }
+
+            let _ = console.write_line(&board_diagnostics::result_line(
+                executor::command_name(&command),
+                transcript.status == "completed",
+                &transcript.details,
+                &transcript.message,
+            ));
+
+            // No reboot to propagate. `REBOOT` is refused above, precisely
+            // because this closure has no way to stop the move, and it is the
+            // only command that can set the flag.
             Ok::<(), anyhow::Error>(())
         })?;
 
@@ -195,9 +236,11 @@ impl SerialDiagnosticsRuntime {
                 firmware_version,
                 motion.as_deref_mut(),
                 led.as_deref_mut(),
-                nvs,
+                Some(&mut *nvs),
                 staging,
                 bus,
+                // Nothing is stepping here, so nothing is lost by taking the time.
+                true,
             );
             let wrote_any = io.wrote_any;
 

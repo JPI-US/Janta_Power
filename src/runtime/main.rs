@@ -622,6 +622,15 @@ fn main() -> anyhow::Result<()> {
             "homing",
             &current_version_string,
             &mut led,
+            bus,
+            // Free here: the search below borrows only the motor.
+            Some(&mut nvs),
+            &mut config_staging,
+            // Homing switches stall detection off and skips the overshoot check,
+            // and takes its heading from the limit switch rather than the step
+            // count — so a command that pauses the loop interrupts no supervision
+            // and costs time alone.
+            board_diagnostics::MoveTolerance::Homing,
         );
         let limit_sw_status = match HOMING_DIRECTION {
             Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
@@ -746,6 +755,10 @@ fn main() -> anyhow::Result<()> {
                 "re-homing",
                 &current_version_string,
                 &mut led,
+                bus,
+                Some(&mut nvs),
+                &mut config_staging,
+                board_diagnostics::MoveTolerance::Homing,
             );
             let limit_sw_status = match HOMING_DIRECTION {
                 Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
@@ -809,6 +822,13 @@ fn main() -> anyhow::Result<()> {
             "encoder recovery",
             &current_version_string,
             &mut led,
+            bus,
+            // `encoder_fault.tick` below takes NVS for its own bookkeeping, so it
+            // cannot be lent here too. Configuration commands are refused for the
+            // few seconds a recovery probe lasts, saying exactly that.
+            None,
+            &mut config_staging,
+            board_diagnostics::MoveTolerance::PositionCritical,
         );
         let encoder_fault_active = encoder_fault.tick(
             &encoder_recovery_cfg,
@@ -851,6 +871,10 @@ fn main() -> anyhow::Result<()> {
                 "re-homing",
                 &current_version_string,
                 &mut led,
+                bus,
+                Some(&mut nvs),
+                &mut config_staging,
+                board_diagnostics::MoveTolerance::Homing,
             );
             let limit_sw_status = match HOMING_DIRECTION {
                 Direction::Cw => motion.find_limit_switch_cw_watched(&mut on_tick),
@@ -904,6 +928,15 @@ fn main() -> anyhow::Result<()> {
                 "tracking move",
                 &current_version_string,
                 &mut led,
+                bus,
+                // `tracking_loop::tick` below holds NVS; same reasoning as above.
+                None,
+                &mut config_staging,
+                // Stall detection and overshoot protection are live here and run
+                // only inside the stepping loop, so a command that holds it for
+                // seconds is seconds of a moving tower going unwatched. Refused,
+                // with that reason.
+                board_diagnostics::MoveTolerance::PositionCritical,
             );
             let tick_result = app::tracking_loop::tick(
                 &mut motion,
@@ -1032,14 +1065,15 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// A [`motion::MoveWatcher`] that services read-only serial diagnostics.
+/// A [`motion::MoveWatcher`] that keeps serial diagnostics answering mid-move.
 ///
 /// Homing and tracking moves block this thread for as long as they take — a
 /// worst-case homing search runs for tens of minutes — and without this the board
-/// is silent for all of it. The commands this can answer need no hardware, so
-/// running them from inside the stepping loop does not break the rule that the
-/// main loop is the single owner of motion, NVS, and the I2C bus: see
-/// `SerialDiagnosticsRuntime::poll_readonly`, which refuses everything else.
+/// is silent for all of it. What runs here is not a reduced set for its own sake:
+/// the move owns the motor and nothing else, so the bus, the LED and (where the
+/// caller can spare it) NVS are all lent through, and only the motor commands and
+/// `REBOOT` are refused. `SerialDiagnosticsRuntime::poll_minimal` is where that
+/// rule lives.
 ///
 /// Motion calls this from the same 100 ms block as its existing position log, so
 /// the added work on the stepping loop is comparable to what it already does.
@@ -1051,10 +1085,29 @@ fn pump_serial_during_move<'a>(
     // owned peripherals and lives for the whole program, and a borrowed inner
     // lifetime would have to appear in the return type's bounds to be captured.
     led: &'a mut Led<'static>,
+    // `&'static` and locked per transaction, so a move does not hold it — which is
+    // what lets the sensors and the display be read while the tower is homing.
+    bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    // `None` where the move's own caller already holds NVS: a tracking pass and
+    // encoder recovery both do, and the borrow checker is the honest arbiter of
+    // that. Spelled with the concrete partition type rather than a parameter, so
+    // that passing `None` needs no turbofish at the call site.
+    nvs: Option<&'a mut EspNvs<esp_idf_svc::nvs::NvsDefault>>,
+    staging: &'a mut board_diagnostics::ConfigStaging,
+    tolerance: board_diagnostics::MoveTolerance,
 ) -> impl FnMut(motion::MoveTick) + 'a {
     serial_diagnostics.announce_phase(phase);
+    let mut nvs = nvs;
     move |_tick| {
-        if let Err(err) = serial_diagnostics.poll_minimal(phase, firmware_version, Some(led)) {
+        if let Err(err) = serial_diagnostics.poll_minimal(
+            phase,
+            firmware_version,
+            Some(led),
+            bus,
+            nvs.as_deref_mut(),
+            staging,
+            tolerance,
+        ) {
             warn!("Serial diagnostics unavailable during {}: {:?}", phase, err);
         }
     }
@@ -1406,9 +1459,11 @@ fn service_diagnostics_control_commands<T: esp_idf_svc::nvs::NvsPartitionId>(
                         need_rehome_stepper_only,
                     }),
                     Some(led),
-                    nvs,
+                    Some(nvs),
                     config_staging,
                     bus,
+                    // The main loop is idle while this runs; nothing is stepping.
+                    true,
                 );
                 transcript.lines = io.into_lines();
 

@@ -190,6 +190,99 @@ pub fn boot_phase_response(
     }
 }
 
+/// Commands that cannot be served from inside a move, whatever else the runtime
+/// can lend.
+///
+/// The mid-move serial path answers everything needing only the I2C bus, the
+/// status LED, or NVS — none of which the stepping loop holds. Refusing them
+/// meant a technician stood beside a homing tower could not read a sensor, scan
+/// the bus or push a configuration, and a homing search can run for tens of
+/// minutes.
+///
+/// What stays refused is refused for a reason, not for tidiness:
+///
+/// - `GO_HOME`, `MOTOR_MOVE` and `RELAY_MOTOR` want the motor or its power, which
+///   the move in progress is using.
+/// - `REBOOT` belongs to the main loop alone. Serving it here would mean either
+///   resetting from inside the stepping loop with the motor relay still closed,
+///   or holding the request until the move ends — which for a homing sweep can be
+///   twenty minutes after it was asked for.
+///
+/// Written as an exhaustive match with no wildcard arm: a command added later
+/// stops this compiling until someone classifies it. Getting it wrong is
+/// otherwise silent, because a command that could have run is refused as
+/// `ERROR BUSY <phase>`, which on the wire is indistinguishable from a real one.
+pub fn requires_exclusive_runtime(command: &DiagnosticCommand) -> bool {
+    match command {
+        DiagnosticCommand::GoHome
+        | DiagnosticCommand::MotorMove { .. }
+        | DiagnosticCommand::RelayMotor { .. }
+        | DiagnosticCommand::Reboot => true,
+
+        // Bus, LED and NVS are all lendable while the tower moves.
+        DiagnosticCommand::Ping
+        | DiagnosticCommand::I2cScan
+        | DiagnosticCommand::LedTest { .. }
+        | DiagnosticCommand::Hdc1080Read
+        | DiagnosticCommand::RtcCheck
+        | DiagnosticCommand::OledTest { .. }
+        | DiagnosticCommand::RelayHotspot { .. }
+        | DiagnosticCommand::ConfigMode
+        | DiagnosticCommand::SetEnv { .. }
+        | DiagnosticCommand::InvalidSetEnv { .. }
+        | DiagnosticCommand::SaveConfig
+        | DiagnosticCommand::WriteEnvFile
+        | DiagnosticCommand::GetEnv { .. }
+        | DiagnosticCommand::FirmwareVersion
+        | DiagnosticCommand::GetCapabilities
+        | DiagnosticCommand::GetConfig => false,
+
+        // Answered so the host gets `UNKNOWN is not enabled`, which says what is
+        // wrong, rather than `BUSY homing`, which sends someone waiting for a
+        // move to finish before retrying a command that will never work.
+        DiagnosticCommand::Unknown { .. } => false,
+    }
+}
+
+/// How much the move in progress can afford to be interrupted.
+///
+/// Not a stand-in for "is the tower moving" — both variants mean it is. What
+/// differs is what a pause forfeits, and it is not what one might assume. The
+/// tower turns slowly enough that pausing it is mechanically harmless either way:
+/// 25,600 microsteps per motor revolution behind an 85:1 slew, accelerating at
+/// 200 steps/s², puts a one-degree homing move at eleven seconds and a peak of
+/// about 1,100 steps/s — under 3 rpm at the motor. Nothing restarted from rest at
+/// that speed loses steps.
+///
+/// What a pause really costs is *supervision*. The stall and overshoot detectors
+/// live inside the stepping loop and run only between `motor.poll()` calls, so a
+/// blocked loop is a blind loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveTolerance {
+    /// A homing search, which switches stall detection off and skips the overshoot
+    /// check for its whole duration. There is no supervision to interrupt, and the
+    /// heading afterwards comes from the limit switch rather than the step count —
+    /// so a pause costs time and nothing else.
+    Homing,
+    /// A tracking or recovery move, where stall detection and overshoot protection
+    /// are both live. Every millisecond the loop spends blocked is a millisecond a
+    /// stalled or overshooting tower goes unnoticed.
+    PositionCritical,
+}
+
+impl MoveTolerance {
+    /// May a command hold the stepping loop for seconds rather than milliseconds?
+    ///
+    /// Only the full `OLED_TEST` walk asks for that: on this board's 10 kHz I2C
+    /// bus a single full-screen write is close to a second, and the walk is five
+    /// of them. Everything else is two orders of magnitude cheaper — a whole
+    /// `HDC1080_READ` is about 60 ms, against a stall detector that samples every
+    /// 250 ms — so the rest run under either tolerance.
+    pub fn allows_long_blocking(self) -> bool {
+        matches!(self, Self::Homing)
+    }
+}
+
 /// The structured protocol version this firmware speaks.
 ///
 /// Emitted ahead of the `VERSION` line so a host can record it while the command
@@ -1378,6 +1471,53 @@ mod tests {
     // The boot-phase path is the only diagnostics the installer can reach while
     // the tower is associating to Wi-Fi or validating its boot, so its exact
     // wire lines are pinned here rather than left to the firmware crate.
+    #[test]
+    fn only_the_motor_and_the_reset_are_withheld_during_a_move() {
+        // The point of the mid-move path. Every one of these needs the I2C bus,
+        // the status LED or NVS, and a move holds none of them — so refusing them
+        // stranded a technician for the length of a homing search.
+        for line in [
+            "PING",
+            "I2C_SCAN",
+            "HDC1080_READ",
+            "RTC_CHECK",
+            "LED_TEST RED",
+            "OLED_TEST BORDER",
+            "CONFIG_MODE",
+            "SET_ENV wifi.ssid=site",
+            "SAVE_CONFIG",
+            "GET_ENV device.tower_id",
+            "GET_CONFIG",
+            "FIRMWARE_VERSION",
+            "GET_CAPABILITIES",
+        ] {
+            assert!(
+                !requires_exclusive_runtime(&DiagnosticCommand::parse(line)),
+                "{line} needs nothing a move holds and must be answerable mid-move"
+            );
+        }
+
+        for line in ["GO_HOME", "MOTOR_MOVE 10", "RELAY_MOTOR ON", "REBOOT"] {
+            assert!(
+                requires_exclusive_runtime(&DiagnosticCommand::parse(line)),
+                "{line} wants the motor or the main loop and must stay refused mid-move"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_command_is_not_reported_as_busy() {
+        // `BUSY homing` invites a retry after the move; `not enabled` says the
+        // retry will not help. A typo deserves the second answer.
+        assert!(!requires_exclusive_runtime(&DiagnosticCommand::parse("NONSENSE")));
+    }
+
+    #[test]
+    fn only_homing_may_block_the_stepping_loop_for_seconds() {
+        assert!(MoveTolerance::Homing.allows_long_blocking());
+        assert!(!MoveTolerance::PositionCritical.allows_long_blocking());
+    }
+
     #[test]
     fn boot_phase_answers_hardware_free_commands_and_refuses_the_rest() {
         let caps = "SERIAL,STATUS,PING";

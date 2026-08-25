@@ -127,16 +127,48 @@ Two consumers:
 
 - `go_home` in `executor.rs` reports `HOMING steps_remaining=... encoder_ticks=...`
   every five seconds, through the streaming `DiagnosticIo` that 2c introduced.
-- `main.rs` passes `pump_serial_during_move`, which calls `poll_readonly` — the
-  hardware-free path from 2b — so read-only commands are answered throughout boot
-  homing, re-homing, encoder recovery, and tracking passes. Because it can only
-  answer commands that need no hardware, running it from inside the stepping loop
-  does not break single-owner ownership of motion, NVS, and the bus.
+- `main.rs` passes `pump_serial_during_move`, which calls `poll_minimal`, so
+  commands are answered throughout boot homing, re-homing, encoder recovery, and
+  tracking passes. It began as the hardware-free path from 2b and was widened
+  later: a move holds the motor and nothing else, so the bus, the LED and (during
+  homing) NVS are all lent through. Single-owner ownership is unbroken because the
+  refusal list is derived from what the move actually took, not from a guess —
+  `board_diagnostics::requires_exclusive_runtime`.
 
 With progress on the wire, `COMMAND_TIMEOUTS.GO_HOME` drops from a 180 s
 everything-budget to a 30 s silence budget with a one-hour ceiling: a board that
 dies mid-search now fails in half a minute instead of three, and a legitimate
 full-travel search is no longer cut off. (2e, and the caveat left open in 2d)
+
+**Homing blocked commands that had nothing to do with the motor.** 2e's mid-move
+pump was a three-command allowlist chosen for being hardware-free, later widened by
+hand to `LED_TEST` and `OLED_TEST`. Everything else — `I2C_SCAN`, `HDC1080_READ`,
+`RTC_CHECK`, `CONFIG_MODE`, the whole `SET_ENV`/`SAVE_CONFIG`/`GET_CONFIG` set —
+answered `ERROR BUSY homing` for the length of a search that at 200 steps/s² and
+6,044 steps per degree runs about an hour end to end. That is precisely when a
+technician is stood at the tower wanting to run them.
+
+The allowlist was answering the wrong question. A move holds the motor, and only
+the motor: the I²C bus is a `&'static` manager locking per transaction, the status
+LED belongs to nothing, and NVS is free during a homing search because the search
+borrows the motor alone. So `poll_minimal` now runs the same
+`execute_first_wave_command` the idle path runs, with `motion: None`, and the
+refusals are derived rather than listed —
+`board_diagnostics::requires_exclusive_runtime` covers `GO_HOME`, `MOTOR_MOVE`,
+`RELAY_MOTOR` and `REBOOT`, as an exhaustive `match` with no wildcard arm so a
+command added later will not compile until it is classified. Nothing on the wire
+changed; the set of commands that receive `ERROR BUSY` shrank.
+
+Two things vary with what a given move can spare, and both name their own reason
+rather than falling back on `BUSY`. A tracking pass and encoder recovery hold NVS,
+so configuration commands refuse there with `not lendable during a tracking move`.
+And `MoveTolerance` decides whether a command may hold the stepping loop for
+seconds — which only the full `OLED_TEST` walk asks for. That limit is *not* about
+losing steps: at 25,600 microsteps per motor revolution behind an 85:1 slew the
+tower never exceeds about 3 rpm at the motor, and nothing restarted from rest at
+that speed loses anything. It is about supervision — the stall and overshoot
+detectors run only inside the stepping loop — and homing switches both off for its
+whole duration, which is exactly why the walk is free there and not during tracking.
 
 **The board never said what it was doing.** Busy and wedged look identical from
 the host: both are silence.
@@ -350,30 +382,61 @@ drive dead.
 `RELAY_HOTSPOT` is **blocked**: there is no hotspot relay pin in the firmware.
 GPIO17 is the only relay wired. Needs a pin assignment before it can be planned.
 
-### Group C — `OLED_TEST`
+### Group C — `OLED_TEST` — done
 
-**Blocked.** There is no display driver in the tree. The I²C bus carries the
-HDC1080 and the DS3231 only. Work needed: identify the controller on SDA/SCL
-(SSD1306, or an HD44780 behind a PCF8574 expander), add a driver under
-`crates/drivers/`, acquire a handle from the existing `shared_bus`, then have
-`oled_test` draw a pattern and report. Until the part is identified this cannot
-be scoped.
+The part is an **HS96L03W2C03** (LCSC C5248080): 128x64, I²C at **0x3C**. Its
+datasheet does not name a controller but leaves no doubt — `0x00`/`0x40` control
+bytes and the standard SSD1306 initialisation sequence, charge pump included.
+
+`crates/drivers/ssd1306` drives it from the existing `shared_bus`. It keeps no
+framebuffer: a frame is 1 KB, and computing each page as it is sent avoids putting
+that on the caller's stack for a driver that only draws test patterns. The crate
+depends on `embedded-hal` alone, so its pattern geometry is host-testable.
+
+`OLED_TEST` with no argument walks `ALL_ON`, `CHECKERBOARD`, `STRIPES`, `BORDER`,
+`OFF`, holding each briefly; with an argument it sets one and holds it. The
+patterns are chosen for what each can reveal — `ALL_ON` finds dead pixels, `OFF`
+finds one stuck on, `CHECKERBOARD` finds addressing faults, `BORDER` proves the
+edges are reachable.
+
+Unlike `LED_TEST` this one partly verifies itself: the panel acknowledges its
+address, so a missing display is a failure the board reports on its own. Only
+"are the right pixels lit" needs a person.
+
+**Supply caveat.** The module's VCC is rated 2.8-3.3 V *absolute maximum*, and the
+board runs it from 5 V. It responds, but responding is not evidence of being within
+spec, and the datasheet warns of permanent damage beyond those ratings.
 
 ### Group D — `REBOOT` and `CONFIG_MODE`
 
-`REBOOT` is **done** — see Completed above. Both halves shipped together: the
-firmware answers and resets, and the installer releases the port and reconnects.
+Both **done**, though `CONFIG_MODE` shipped as a smaller thing than this section
+originally proposed, and the difference is worth stating plainly.
 
-`CONFIG_MODE` has no defined meaning. `DiagnosticBoard::config_mode` defaults to
-a no-op that writes nothing, which reads as a timeout. Proposal: a RAM-only mode
-with a TTL that suspends tracking and holds position so an installer can work
-safely, auto-expiring the way the parking lot's `admin_unlock` sketch does. The
-tracking loop checks the flag; the handler answers `OK`.
+`REBOOT`: the firmware answers and resets, and the installer releases the port and
+reconnects.
+
+`CONFIG_MODE` is now a readiness question rather than a mode. There is no mode to
+enter — `SET_ENV` and `SAVE_CONFIG` are accepted whenever NVS is lendable — so the
+command reads NVS and reports `provisioned=yes|no stored=<n> staged=<n> keys=<n>`.
+That gives it a real failure: a namespace that cannot be opened is caught here,
+instead of surfacing as a `SAVE_CONFIG` fifteen commands later that reports success
+and loses everything. A handler that only replied `OK` would have been another
+diagnostic that cannot fail, which this firmware has already produced twice.
+
+**Still open, and now clearly a separate feature:** the RAM-only hold this section
+proposed — a TTL-bounded mode that suspends tracking and holds position so an
+installer can work safely, auto-expiring the way the parking lot's `admin_unlock`
+sketch does. That is a *control* command with real safety consequences, not a
+handshake, and it deserves its own verb (`SERVICE_HOLD`, say) rather than being
+hidden behind a name the installer already treats as a passive check. Note it would
+also be the one new command that `requires_exclusive_runtime` should return `true`
+for.
 
 ### Suggested order
 
-~~`REBOOT`~~ (done) → Group A → `CONFIG_MODE` → `MOTOR_MOVE` / `RELAY_MOTOR` →
-`RELAY_HOTSPOT` (blocked) → `OLED_TEST` (blocked).
+~~`REBOOT`~~ (done) → ~~Group A~~ (done) → ~~`CONFIG_MODE`~~ (done, as a readiness
+check) → `MOTOR_MOVE` / `RELAY_MOTOR` → a service hold → `RELAY_HOTSPOT` (blocked)
+→ ~~`OLED_TEST`~~ (done).
 
 ---
 
@@ -424,6 +487,7 @@ genuinely cannot run that early.
 There is a second inaccuracy: `OLED_TEST`, `RELAY_MOTOR`, `RELAY_HOTSPOT` and
 `CONFIG_MODE` are not implemented at all, so blaming Wi-Fi misdescribes why they
 were refused — they would be refused after boot too, for a different reason.
+(`OLED_TEST` and `CONFIG_MODE` have since been implemented; the relays have not.)
 
 Fixed as described. `MotionContext` now bundles the motion handle with the five
 values only `go_home` uses, and the board holds it as an `Option` — which also cut
@@ -499,10 +563,13 @@ See Completed. The queue version — routing serial control commands through
 later — remains deliberately undone. It turns the wire protocol asynchronous, and
 the callback appears to be enough.
 
-One thing the callback deliberately does **not** do: answer commands that touch
-hardware. Mid-move, `poll_readonly` refuses those with `ERROR BUSY`. That is the
-point rather than a limitation — the alternative is re-entering the motion stack
-while it holds the motor.
+One thing the callback deliberately does **not** do: re-enter the motion stack.
+`GO_HOME`, `MOTOR_MOVE` and `RELAY_MOTOR` are refused with `ERROR BUSY <phase>`,
+along with `REBOOT`, which belongs to the main loop.
+
+It originally refused everything that touched hardware at all, which turned out to
+be far too wide — see "Homing blocked commands that had nothing to do with the
+motor" under Completed.
 
 Worth knowing: during a diagnostics `GO_HOME` the pump is not what helps, because
 the installer already has its one command in flight and sends nothing else. What
@@ -629,5 +696,7 @@ time is known. Do not simply delete the panic.
    `MOTOR_MOVE <CW|CCW> <degrees>` bounded to ~10°.
 3. **`RELAY_HOTSPOT` pin assignment.** Blocked until the hardware is defined.
 4. **Which controller is on the LCD?** Blocks `OLED_TEST` entirely.
-5. **What should `CONFIG_MODE` do?** Proposal above is a TTL-bounded hold that
-   suspends tracking.
+5. ~~**What should `CONFIG_MODE` do?**~~ Answered: a readiness check that reads
+   NVS and reports what is stored against what is staged. The TTL-bounded hold that
+   was proposed instead is still worth building, but as its own command — see
+   Group D.

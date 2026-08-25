@@ -168,6 +168,25 @@ If the firmware already has its own transport loop, parse incoming text with `Di
 
 Unknown commands return `ERROR Unknown command: <COMMAND>`. Malformed `SET_ENV` input returns `ERROR Bad SET_ENV format`.
 
+A firmware may route a command away from this table when what it needs lives
+somewhere other than the board — the tower routes `CONFIG_MODE` to its NVS handler,
+because what the command reports is provisioning state rather than hardware.
+
+## Serving Commands Mid-Move
+
+`requires_exclusive_runtime` classifies a command by whether it can be answered
+while the device is busy doing something else — for the tower, while the motor is
+turning. Only `GO_HOME`, `MOTOR_MOVE`, `RELAY_MOTOR` and `REBOOT` are excluded;
+everything else needs a sensor bus, an LED or storage, none of which a move holds.
+It is written as an exhaustive `match` with no wildcard arm, so a new
+`DiagnosticCommand` variant will not compile until it is classified. That is
+deliberate: a command wrongly marked exclusive is refused as `ERROR BUSY <phase>`,
+which on the wire is indistinguishable from a refusal that was intended.
+
+`MoveTolerance` is the companion question — whether a command may hold the
+device's control loop for seconds rather than milliseconds. `allows_long_blocking`
+answers it.
+
 ## Unit Tests
 
 The test module replaces every external dependency with an in-memory implementation:

@@ -16,12 +16,22 @@ use crate::{app::encoder_fault::Direction, infra};
 
 /// Devices expected on the shared I2C bus, so a scan can name what it found and
 /// say plainly what is missing.
-const EXPECTED_I2C_DEVICES: &[(u8, &str)] = &[(0x40, "HDC1080"), (0x68, "DS3231")];
+const EXPECTED_I2C_DEVICES: &[(u8, &str)] = &[
+    (0x3C, "SSD1306 OLED"),
+    (0x40, "HDC1080"),
+    (0x68, "DS3231"),
+];
 
 /// Identity registers the HDC1080 reports. A device answering anything else is not
 /// the sensor we think we are reading, and its measurements mean nothing.
 const HDC1080_DEVICE_ID: u16 = 0x1050;
 const HDC1080_MANUFACTURER_ID: u16 = 0x5449;
+
+/// How long each pattern is held during a full `OLED_TEST` walkthrough.
+///
+/// Long enough to register, short enough that the whole cycle stays inside the
+/// host's default silence budget — serial is not serviced while this runs.
+const OLED_PATTERN_HOLD: Duration = Duration::from_millis(700);
 
 /// How often `GO_HOME` reports progress while searching for the limit switch.
 ///
@@ -42,6 +52,7 @@ pub const FIRST_WAVE_CAPABILITIES: &[&str] = &[
     "CONFIG",
     "I2C_SCAN",
     "LED_TEST",
+    "OLED",
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -71,6 +82,7 @@ pub struct DiagnosticsTranscript {
 #[derive(Debug)]
 enum RuntimeBoardError {
     Hdc1080(String),
+    OledTest(String),
     LedTest(String),
     I2cScan(String),
     RtcCheck(String),
@@ -114,8 +126,17 @@ where
     motion: Option<&'ctx mut MotionContext<'ctm, 'motion>>,
     /// `None` only before the LED exists. Unlike motion, a move does not take it.
     led: Option<&'ctx mut rgb_led::Led<'led>>,
-    nvs: &'ctx mut EspNvs<T>,
+    /// `None` when the caller holds it — a tracking pass and encoder recovery
+    /// both take `&mut EspNvs` for their own bookkeeping while they run. Only
+    /// `go_home` reads it on this path, and `go_home` needs the motor anyway.
+    nvs: Option<&'ctx mut EspNvs<T>>,
     bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    /// May a command hold this thread for seconds rather than milliseconds?
+    ///
+    /// False only during a position-critical move; see
+    /// [`board_diagnostics::MoveTolerance`]. Everywhere else — boot, idle, a
+    /// homing search — there is nothing to lose by taking the time.
+    allow_long_blocking: bool,
     /// Filled by whichever board method ran; read back through
     /// `StandardDiagnosticHandler::board` once the command completes.
     details: Vec<(String, String)>,
@@ -367,10 +388,24 @@ where
         context.motion.update_position(*context.actual_heading);
 
         if context.persist_nvs {
-            infra::SnapshotStore::new(self.nvs, true).save_heading(*context.actual_heading);
-            if context.motion_mode == MotionMode::EncoderGuarded {
-                infra::SnapshotStore::new(self.nvs, true)
-                    .save_encoder_snapshot(context.motion.encoder_ticks_adjusted());
+            match self.nvs.as_deref_mut() {
+                Some(nvs) => {
+                    infra::SnapshotStore::new(nvs, true).save_heading(*context.actual_heading);
+                    if context.motion_mode == MotionMode::EncoderGuarded {
+                        infra::SnapshotStore::new(nvs, true)
+                            .save_encoder_snapshot(context.motion.encoder_ticks_adjusted());
+                    }
+                }
+                // Unreachable today: the only caller without NVS is the mid-move
+                // path, which has no motion to lend either and so never gets
+                // here. Said out loud rather than assumed, because a homing run
+                // whose heading silently failed to persist is a tower that comes
+                // back up believing the wrong direction.
+                None => {
+                    let _ = io.write_line(
+                        "WARN GO_HOME found home but could not persist the heading: NVS is not available on this path",
+                    );
+                }
             }
         }
 
@@ -385,11 +420,16 @@ where
 
     fn oled_test<IO: DiagnosticIo>(
         &mut self,
-        _payload: &str,
+        payload: &str,
         io: &mut IO,
     ) -> Result<(), Self::Error> {
-        let _ = io.write_line("ERROR OLED_TEST is not enabled in first-wave diagnostics");
-        Err(RuntimeBoardError::Unsupported("OLED_TEST"))
+        match drive_oled_pattern(self.bus, payload, io, self.allow_long_blocking) {
+            Ok(details) => {
+                self.details.extend(details);
+                Ok(())
+            }
+            Err(message) => Err(RuntimeBoardError::OledTest(message)),
+        }
     }
 
     fn relay_motor<IO: DiagnosticIo>(
@@ -636,6 +676,115 @@ impl DiagnosticBoard for UnsupportedBoard {
     }
 }
 
+/// Draw a display pattern, shared by the full diagnostics path and the mid-move one.
+///
+/// The I2C bus is a `&'static` manager that locks per transaction, and motion does
+/// not touch it — so this is reachable while the tower is moving, in the same way
+/// the status LED is.
+///
+/// It is far from free, though. The bus runs at 10 kHz, where a full-screen write is
+/// roughly a second, and during a move that second is one the stepping loop — and
+/// so the stall and overshoot detectors that live inside it — is not running.
+/// `allow_full_walk` is false during a position-critical move for that reason: a
+/// caller must name one pattern rather than asking for all five. A homing search
+/// sets it, because homing switches both detectors off anyway, so there is no
+/// supervision left to interrupt.
+///
+/// Returns the details for a `RESULT` on success, or the failure message.
+pub fn drive_oled_pattern<IO: DiagnosticIo>(
+    bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    payload: &str,
+    io: &mut IO,
+    allow_full_walk: bool,
+) -> Result<Vec<(String, String)>, String> {
+    let mut panel = ssd1306_oled::Ssd1306::new(bus.acquire_i2c());
+
+    // Checked before anything is drawn. Unlike the status LED this part answers, so
+    // a missing panel is a real failure the board can report by itself rather than
+    // something only a person looking at it could notice.
+    if !panel.present() {
+        let message = format!(
+            "OLED_TEST: no response at 0x{:02X}",
+            ssd1306_oled::DEFAULT_ADDRESS
+        );
+        let _ = io.write_line(&format!("ERROR {message}"));
+        return Err(message);
+    }
+
+    if let Err(err) = panel.init() {
+        let message = format!("OLED_TEST: initialisation failed: {err:?}");
+        let _ = io.write_line(&format!("ERROR {message}"));
+        return Err(message);
+    }
+
+    let requested = payload.trim();
+    let patterns: Vec<ssd1306_oled::Pattern> = if requested.is_empty() {
+        if !allow_full_walk {
+            let message = String::from(
+                "OLED_TEST: name one pattern during a tracking move; walking all five would leave stall detection unserviced for about five seconds",
+            );
+            let _ = io.write_line(&format!("ERROR {message}"));
+            return Err(message);
+        }
+        ssd1306_oled::Pattern::ALL
+            .iter()
+            .map(|(_, pattern)| *pattern)
+            .collect()
+    } else {
+        match ssd1306_oled::Pattern::from_name(requested) {
+            Some(pattern) => vec![pattern],
+            None => {
+                let names: Vec<&str> = ssd1306_oled::Pattern::ALL
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect();
+                let message = format!(
+                    "OLED_TEST: unknown pattern '{}', expected one of {}",
+                    requested,
+                    names.join(",")
+                );
+                let _ = io.write_line(&format!("ERROR {message}"));
+                return Err(message);
+            }
+        }
+    };
+
+    let walking = patterns.len() > 1;
+    for (index, pattern) in patterns.iter().enumerate() {
+        // `Off` goes through `clear`, which also blanks the columns behind the glass.
+        // Writing only the visible 128 leaves a strip holding whatever was drawn
+        // there last, which is how a border survives being switched off.
+        let outcome = if *pattern == ssd1306_oled::Pattern::Off {
+            panel.clear()
+        } else {
+            panel.write_pattern(*pattern)
+        };
+        if let Err(err) = outcome {
+            let message = format!("OLED_TEST: writing {} failed: {err:?}", pattern.name());
+            let _ = io.write_line(&format!("ERROR {message}"));
+            return Err(message);
+        }
+        let _ = io.write_line(&format!("OLED pattern {}", pattern.name()));
+        if walking && index + 1 < patterns.len() {
+            std::thread::sleep(OLED_PATTERN_HOLD);
+        }
+    }
+
+    // Legacy terminal line, for a host that predates the structured protocol.
+    let _ = io.write_line("OK");
+    Ok(vec![
+        (String::from("patterns"), patterns.len().to_string()),
+        (
+            String::from("shown"),
+            patterns
+                .iter()
+                .map(|pattern| pattern.name())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+    ])
+}
+
 /// Drive the status LED, shared by the full diagnostics path and the mid-move one.
 ///
 /// The LED is the one piece of hardware that stays lendable while the tower moves —
@@ -712,6 +861,7 @@ pub fn supports_first_wave_command(command: &DiagnosticCommand) -> bool {
         DiagnosticCommand::Ping
             | DiagnosticCommand::I2cScan
             | DiagnosticCommand::LedTest { .. }
+            | DiagnosticCommand::OledTest { .. }
             | DiagnosticCommand::FirmwareVersion
             | DiagnosticCommand::GetCapabilities
             | DiagnosticCommand::RtcCheck
@@ -728,7 +878,11 @@ pub fn supports_first_wave_command(command: &DiagnosticCommand) -> bool {
 pub fn is_config_command(command: &DiagnosticCommand) -> bool {
     matches!(
         command,
-        DiagnosticCommand::SetEnv { .. }
+        // `CONFIG_MODE` is here because what it reports lives in NVS, not on the
+        // board: this firmware has no separate mode to enter, so the command is a
+        // question about the provisioning path rather than an instruction to it.
+        DiagnosticCommand::ConfigMode
+            | DiagnosticCommand::SetEnv { .. }
             | DiagnosticCommand::InvalidSetEnv { .. }
             | DiagnosticCommand::GetEnv { .. }
             | DiagnosticCommand::SaveConfig
@@ -744,6 +898,7 @@ pub fn is_control_command(command: &DiagnosticCommand) -> bool {
             | DiagnosticCommand::Hdc1080Read
             | DiagnosticCommand::I2cScan
             | DiagnosticCommand::LedTest { .. }
+            | DiagnosticCommand::OledTest { .. }
             | DiagnosticCommand::GoHome
             | DiagnosticCommand::Reboot
             // SET_ENV only stages into RAM; SAVE_CONFIG is the one that writes.
@@ -812,6 +967,10 @@ where
     IO: DiagnosticIo,
     T: NvsPartitionId,
 {
+    if matches!(command, DiagnosticCommand::ConfigMode) {
+        return execute_config_mode(io, nvs, staging);
+    }
+
     // Built first, and it holds owned data — so the read borrow is finished before
     // the environment takes the same handle mutably.
     let configuration = nvs_configuration(firmware_version, nvs, staging);
@@ -848,6 +1007,71 @@ where
             reboot_requested: false,
             details: Vec::new(),
         },
+    }
+}
+
+/// Answer `CONFIG_MODE`: is the provisioning path usable, and what does it hold?
+///
+/// There is no mode to enter. `SET_ENV` and `SAVE_CONFIG` are accepted whenever
+/// NVS is lendable, so a command that merely replied `OK` would be asserting that
+/// rather than showing it — another diagnostic that cannot fail, which this file
+/// has already produced twice. Instead it reads NVS, which fails when the
+/// namespace cannot be opened: the fault that would otherwise stay hidden until a
+/// `SAVE_CONFIG` fifteen commands later reported success and lost the lot.
+///
+/// The counts are the useful part. `stored` against `staged` tells a technician
+/// whether the values they are looking at in the app are committed or still
+/// waiting on a save.
+fn execute_config_mode<IO, T>(
+    io: &mut IO,
+    nvs: &mut EspNvs<T>,
+    staging: &ConfigStaging,
+) -> DiagnosticsTranscript
+where
+    IO: DiagnosticIo,
+    T: NvsPartitionId,
+{
+    let provisioned = match nvs.get_u8(board_diagnostics::NVS_KEY_PROVISIONED) {
+        Ok(flag) => flag.unwrap_or(0) == 1,
+        Err(err) => {
+            let message = format!("CONFIG_MODE failed: NVS is not readable: {err}");
+            let _ = io.write_line(&format!("ERROR {message}"));
+            return DiagnosticsTranscript {
+                status: "failed",
+                message,
+                ..Default::default()
+            };
+        }
+    };
+
+    // A plain loop rather than a filtered iterator: `read_stored_value` needs the
+    // same `&mut` handle the iterator would still be holding.
+    let mut stored = 0usize;
+    for entry in board_diagnostics::CONFIG_KEYS {
+        if read_stored_value(nvs, entry).is_some_and(|value| !value.is_empty()) {
+            stored += 1;
+        }
+    }
+
+    // Legacy terminal line, for a host that predates the structured protocol.
+    // `docs/serial-protocol.md` records the three spellings the installer accepts.
+    let _ = io.write_line("CONFIG_MODE OK");
+    DiagnosticsTranscript {
+        status: "completed",
+        message: String::from("Configuration storage is readable"),
+        details: vec![
+            (
+                String::from("provisioned"),
+                String::from(if provisioned { "yes" } else { "no" }),
+            ),
+            (String::from("stored"), stored.to_string()),
+            (String::from("staged"), staging.len().to_string()),
+            (
+                String::from("keys"),
+                board_diagnostics::CONFIG_KEYS.len().to_string(),
+            ),
+        ],
+        ..Default::default()
     }
 }
 
@@ -888,15 +1112,34 @@ pub fn execute_first_wave_command<IO, T>(
     firmware_version: &str,
     motion: Option<&mut MotionContext<'_, '_>>,
     led: Option<&mut rgb_led::Led<'_>>,
-    nvs: &mut EspNvs<T>,
+    nvs: Option<&mut EspNvs<T>>,
     staging: &mut ConfigStaging,
     bus: &'static shared_bus::BusManagerStd<I2cDriver<'static>>,
+    allow_long_blocking: bool,
 ) -> DiagnosticsTranscript
 where
     IO: DiagnosticIo,
     T: NvsPartitionId,
 {
+    let mut nvs = nvs;
+
     if is_config_command(&command) {
+        let Some(nvs) = nvs.as_deref_mut() else {
+            // Named precisely, and never as `BUSY`. The tracking pass holds NVS
+            // for its own bookkeeping; a technician who reads "busy" waits for the
+            // move to end, where "not lendable during a tracking move" tells them
+            // the same command works during the homing search they will see next.
+            let message = format!(
+                "{} unavailable: configuration storage is not lendable during a tracking move",
+                command_name(&command)
+            );
+            let _ = io.write_line(&format!("ERROR {message}"));
+            return DiagnosticsTranscript {
+                status: "failed",
+                message,
+                ..Default::default()
+            };
+        };
         return execute_config_command(io, command, firmware_version, nvs, staging);
     }
 
@@ -921,6 +1164,7 @@ where
         led,
         nvs,
         bus,
+        allow_long_blocking,
         details: Vec::new(),
     };
     let environment = UnsupportedEnvironment;
@@ -973,6 +1217,7 @@ fn failure_message(
 ) -> String {
     match error {
         StandardDiagnosticError::Board(RuntimeBoardError::Hdc1080(message))
+        | StandardDiagnosticError::Board(RuntimeBoardError::OledTest(message))
         | StandardDiagnosticError::Board(RuntimeBoardError::LedTest(message))
         | StandardDiagnosticError::Board(RuntimeBoardError::I2cScan(message))
         | StandardDiagnosticError::Board(RuntimeBoardError::RtcCheck(message))

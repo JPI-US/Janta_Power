@@ -2,6 +2,7 @@
 members = [
     "crates/ui/buttons",
     "crates/drivers/rgb_led",
+    "crates/drivers/ssd1306",
     "crates/diagnostics",
     "crates/sensors/sensors",
     "crates/infrastructure/clock",
@@ -69,6 +70,7 @@ shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0
 ] }
 embedded-hal = "1.0.0"
 rgb_led = { path = "crates/drivers/rgb_led" }
+ssd1306_oled = { path = "crates/drivers/ssd1306" }
 rgb = "0.8.50"
 #esp32-nimble = "0.11"
 heapless = "0.8.0"
