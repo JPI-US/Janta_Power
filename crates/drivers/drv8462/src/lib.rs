@@ -18,9 +18,6 @@ pub mod config;
 #[derive(Copy, Clone)]
 pub enum Register {
     Fault = 0x00,
-    Diag1 = 0x01,
-    Diag2 = 0x02,
-    Diag3 = 0x03,
 
     Ctrl1 = 0x04,
     Ctrl2 = 0x05,
@@ -197,25 +194,15 @@ where
             self.read_register(Register::Ctrl13)?
         );
 
-        println!(
-            "FAULT=0x{:02X} DIAG1=0x{:02X} DIAG2=0x{:02X} DIAG3=0x{:02X}",
-            self.read_register(Register::Fault)?,
-            self.read_register(Register::Diag1)?,
-            self.read_register(Register::Diag2)?,
-            self.read_register(Register::Diag3)?
-        );
+        println!("FAULT=0x{:02X}", self.read_register(Register::Fault)?,);
 
         Ok(())
     }
 
     pub fn decode_fault(&mut self) -> Result<()> {
         let fault = self.read_register(Register::Fault)?;
-        let diag1 = self.read_register(Register::Diag1)?;
-        let diag2 = self.read_register(Register::Diag2)?;
 
         println!("FAULT=0x{:02X}", fault);
-        println!("DIAG1=0x{:02X}", diag1);
-        println!("DIAG2=0x{:02X}", diag2);
 
         if fault & 0x40 != 0 {
             println!(" -> SPI_ERROR");
@@ -235,18 +222,6 @@ where
 
         if fault & 0x01 != 0 {
             println!(" -> OL");
-        }
-
-        if diag2 & 0x01 != 0 {
-            println!(" -> OL_A");
-        }
-
-        if diag2 & 0x02 != 0 {
-            println!(" -> OL_B");
-        }
-
-        if diag2 & 0x08 != 0 {
-            println!(" -> STALL");
         }
 
         Ok(())
