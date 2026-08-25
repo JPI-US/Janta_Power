@@ -18,7 +18,6 @@ pub mod config;
 #[derive(Copy, Clone)]
 pub enum Register {
     Fault = 0x00,
-
     Ctrl1 = 0x04,
     Ctrl2 = 0x05,
     Ctrl3 = 0x06,
@@ -301,17 +300,25 @@ where
         Ok(())
     }
 
-    pub fn step_once(&mut self, delay_us: u32) -> Result<()> {
+    pub fn step_once(&mut self, delay_us: u32) -> Result<bool> {
+        if self.get_fault()?.is_some() {
+            return Ok(false);
+        }
+
         self.step.set_high()?;
         Ets::delay_us(2);
 
         self.step.set_low()?;
         Ets::delay_us(delay_us);
 
-        Ok(())
+        Ok(true)
     }
 
-    pub fn move_steps(&mut self, steps: u32, forward: bool) -> Result<()> {
+    pub fn move_steps(&mut self, steps: u32, forward: bool) -> Result<bool> {
+        if self.get_fault()?.is_some() {
+            return Ok(false);
+        }
+
         self.enable.set_high()?;
 
         if forward {
@@ -349,6 +356,51 @@ where
 
         self.enable.set_low()?;
 
-        Ok(())
+        Ok(true)
     }
+
+    /// Gets the current fault condition, if any.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok<Some(Fault)>` if there is a fault condition.
+    /// - `Ok<None>` if there is no fault condition.
+    /// - `Err(_)` if there was an error getting the fault condition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on SPI failure.
+    pub fn get_fault(&mut self) -> Result<Option<Fault>> {
+        let faults = self.read_register(Register::Fault)?;
+
+        // TODO: Improve get_fault checks
+        if faults & 64 == 64 {
+            return Ok(Some(Fault::SpiError));
+        } else if faults & 32 == 32 {
+            return Ok(Some(Fault::UndervoltageLockout));
+        } else if faults & 16 == 16 {
+            return Ok(Some(Fault::ChargePumpUndervoltage));
+        } else if faults & 8 == 8 {
+            return Ok(Some(Fault::OverCurrent));
+        } else if faults & 4 == 4 {
+            return Ok(Some(Fault::Stall));
+        } else if faults & 2 == 2 {
+            return Ok(Some(Fault::Temperature));
+        } else if faults & 1 == 1 {
+            return Ok(Some(Fault::OpenLoad));
+        }
+
+        Ok(None)
+    }
+}
+
+/// Possible fault conditions per Table 7-37 of the [datasheet](https://www.ti.com/lit/ds/symlink/drv8452.pdf).
+pub enum Fault {
+    SpiError,
+    UndervoltageLockout,
+    ChargePumpUndervoltage,
+    OverCurrent,
+    Stall,
+    Temperature,
+    OpenLoad,
 }
