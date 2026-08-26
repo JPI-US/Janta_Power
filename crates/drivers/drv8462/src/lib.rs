@@ -30,9 +30,8 @@ pub enum Register {
     Ctrl13 = 0x10,
 }
 
-pub struct Drv8462<'d, EN, SLP, STP, DIR, CS>
+pub struct Drv8462<'d, SLP, STP, DIR, CS>
 where
-    EN: OutputPin,
     SLP: OutputPin,
     STP: OutputPin,
     DIR: OutputPin,
@@ -40,7 +39,6 @@ where
 {
     spi: SpiDeviceDriver<'d, SpiDriver<'d>>,
     cs: PinDriver<'d, CS, Output>,
-    enable: PinDriver<'d, EN, Output>,
     sleep: PinDriver<'d, SLP, Output>,
     step: PinDriver<'d, STP, Output>,
     dir: PinDriver<'d, DIR, Output>,
@@ -48,7 +46,7 @@ where
     enabled: bool,
 }
 
-pub struct Drv8462Hardware<SPI, SCLK, MOSI, MISO, CS, EN, SLP, STP, DIR>
+pub struct Drv8462Hardware<SPI, SCLK, MOSI, MISO, CS, SLP, STP, DIR>
 where
     SPI: Peripheral,
     SPI::P: SpiAnyPins,
@@ -65,7 +63,6 @@ where
     CS: Peripheral,
     CS::P: OutputPin,
 
-    EN: OutputPin,
     SLP: OutputPin,
     STP: OutputPin,
     DIR: OutputPin,
@@ -75,22 +72,20 @@ where
     pub mosi: MOSI,
     pub miso: Option<MISO>,
     pub cs: CS,
-    pub enable: EN,
     pub sleep: SLP,
     pub step: STP,
     pub dir: DIR,
 }
 
-impl<'a, EN, SLP, STP, DIR, CS> Drv8462<'a, EN, SLP, STP, DIR, CS>
+impl<'a, SLP, STP, DIR, CS> Drv8462<'a, SLP, STP, DIR, CS>
 where
-    EN: OutputPin,
     SLP: OutputPin,
     STP: OutputPin,
     DIR: OutputPin,
     CS: OutputPin,
 {
     pub fn new<SPI, SCLK, MOSI, MISO>(
-        hardware: Drv8462Hardware<SPI, SCLK, MOSI, MISO, CS, EN, SLP, STP, DIR>,
+        hardware: Drv8462Hardware<SPI, SCLK, MOSI, MISO, CS, SLP, STP, DIR>,
         config: Drv8462Config,
     ) -> Result<Self>
     where
@@ -123,7 +118,6 @@ where
         let device = SpiDeviceDriver::new(spi, None::<CS>, &spi_config)?;
         let cs = PinDriver::output(hardware.cs)?;
 
-        let enable = PinDriver::output(hardware.enable)?;
         let sleep = PinDriver::output(hardware.sleep)?;
         let step = PinDriver::output(hardware.step)?;
         let dir = PinDriver::output(hardware.dir)?;
@@ -131,7 +125,6 @@ where
         let mut driver = Self {
             spi: device,
             cs,
-            enable: enable,
             sleep: sleep,
             step,
             dir,
@@ -255,12 +248,6 @@ where
 
         self.write_register(Register::Ctrl1, ctrl1)?;
 
-        if enable {
-            self.enable.set_high()?;
-        } else {
-            self.enable.set_low()?;
-        }
-
         self.enabled = enable;
 
         Ok(())
@@ -305,11 +292,15 @@ where
             return Ok(false);
         }
 
+        self.set_enabled(true)?;
+
         self.step.set_high()?;
         Ets::delay_us(2);
 
         self.step.set_low()?;
         Ets::delay_us(delay_us);
+
+        self.set_enabled(false)?;
 
         Ok(true)
     }
@@ -318,8 +309,6 @@ where
         if self.get_fault()?.is_some() {
             return Ok(false);
         }
-
-        self.enable.set_high()?;
 
         if forward {
             self.dir.set_high()?;
@@ -353,8 +342,6 @@ where
                 }
             }
         }
-
-        self.enable.set_low()?;
 
         Ok(true)
     }

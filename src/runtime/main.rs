@@ -27,7 +27,6 @@ fn main() -> anyhow::Result<()> {
             mosi: peripherals.pins.gpio40,
             miso: Some(peripherals.pins.gpio39),
             cs: peripherals.pins.gpio38,
-            enable: peripherals.pins.gpio37,
             sleep: peripherals.pins.gpio36,
             step: peripherals.pins.gpio35,
             dir: peripherals.pins.gpio45,
