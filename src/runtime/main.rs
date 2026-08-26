@@ -41,7 +41,6 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    driver.set_enabled(true)?;
     driver.move_steps(2_500, true)?;
 
     Ok(())
