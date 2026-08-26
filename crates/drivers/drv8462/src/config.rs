@@ -295,22 +295,22 @@ impl Drv8462Config {
 
     /// Serializes the CTRL10 fields to be written to the register.
     pub fn as_ctrl10(&self) -> u8 {
-        self.holding_current as u8
+        self.holding_current
     }
 
     /// Serializes the CTRL11 fields to be written to the register.
     pub fn as_ctrl11(&self) -> u8 {
-        self.run_current as u8
+        self.run_current
     }
 
     /// Serializes the CTRL12 fields to be written to the register.
     pub fn as_ctrl12(&self) -> u8 {
-        (self.standstill_power_saving_mode as u8) << 7 | (self.standstill_fall_time as u8) << 3
+        (self.standstill_power_saving_mode as u8) << 7 | self.standstill_fall_time << 3
     }
 
     /// Serializes the CTRL13 fields to be written to the register.
     pub fn as_ctrl13(&self) -> u8 {
-        (self.standstill_delay as u8) << 2 | (self.enable_internal_voltage_reference as u8) << 1
+        self.standstill_delay << 2 | (self.enable_internal_voltage_reference as u8) << 1
     }
 }
 

@@ -125,7 +125,7 @@ where
         let mut driver = Self {
             spi: device,
             cs,
-            sleep: sleep,
+            sleep,
             step,
             dir,
             config,
