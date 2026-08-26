@@ -1,0 +1,10 @@
+[package]
+name = "ssd1306_oled"
+version = "0.1.0"
+edition = "2021"
+
+# Only the embedded-hal I2C trait: the panel is driven entirely over the shared
+# bus, so this crate needs no platform or ESP-IDF dependency and can be reasoned
+# about on its own.
+[dependencies]
+embedded-hal = "1.0.0"

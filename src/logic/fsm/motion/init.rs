@@ -36,45 +36,58 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
         // defaults are (re)written into NVS on every boot, so updating `.env` and
         // reflashing updates the tower coordinates on the next boot.
         let tower_latitude: f64 = ctx.switchboard.default_tower_latitude;
+        let tower_longitude: f64 = ctx.switchboard.default_tower_longitude;
 
-        if PERSIST_NVS {
+        // Same gate as the Wi-Fi seeding in `network.rs`: coordinates set through
+        // the diagnostics channel must survive a reboot, and they cannot if boot
+        // rewrites them from `.env` every time.
+        let provisioned = crate::storage::snapshot_store::is_provisioned(&mut ctx.nvs);
+
+        if PERSIST_NVS && !provisioned {
             match ctx
                 .nvs
                 .set_str("tower_latitude", &tower_latitude.to_string())
             {
-                Ok(_) => info!("Tower latitude has been updated"),
+                Ok(_) => info!("Tower latitude seeded from build-time default"),
                 Err(e) => error!("Tower latitude was not updated {:?}", e),
             };
-        }
 
-        let tower_longitude: f64 = ctx.switchboard.default_tower_longitude;
-
-        if PERSIST_NVS {
             match ctx
                 .nvs
                 .set_str("tower_longitude", &tower_longitude.to_string())
             {
-                Ok(_) => info!("Tower longitude has been updated"),
+                Ok(_) => info!("Tower longitude seeded from build-time default"),
                 Err(e) => error!("Tower longitude was not updated {:?}", e),
             };
+        } else if provisioned {
+            info!("Tower is provisioned; using stored coordinates, not the build-time defaults");
         }
 
         let mut lat_buf = [0u8; 64];
         let mut lon_buf = [0u8; 64];
 
+        // Falls back to the build-time default, not to zero.
+        //
+        // Zero was safe only while boot rewrote both keys unconditionally, which
+        // guaranteed they existed. Now that the seeding is gated, a tower
+        // provisioned with (say) only Wi-Fi has the flag set and no coordinates —
+        // and latitude 0 is a real place in the Gulf of Guinea, so the sun
+        // calculation would not fail, it would confidently track the wrong sky.
         let latitude = ctx
             .nvs
-            .get_str("tower_latitude", &mut lat_buf)?
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0.0);
+            .get_str("tower_latitude", &mut lat_buf)
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.parse::<f64>().ok())
+            .unwrap_or(tower_latitude);
 
         let longitude = ctx
             .nvs
-            .get_str("tower_longitude", &mut lon_buf)?
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0.0);
+            .get_str("tower_longitude", &mut lon_buf)
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.parse::<f64>().ok())
+            .unwrap_or(tower_longitude);
 
         let altitude: f64 = 0.0;
 

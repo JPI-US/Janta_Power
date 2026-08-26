@@ -5,6 +5,7 @@ use esp_idf_svc::{
     nvs::{EspDefaultNvsPartition, EspNvs},
 };
 use log::info;
+use serial_console::UsbSerialJtagConsole;
 
 use crate::{
     config::{
@@ -12,6 +13,7 @@ use crate::{
         switchboard::{self, Switchboard},
     },
     hardware::peripheral_map::PeripheralMap,
+    logic::fsm::diagnostics::DiagnosticsContext,
     storage::snapshot_store::SnapshotStore,
 };
 
@@ -21,6 +23,9 @@ pub struct StartupContext {
     pub trust_nvs_state: bool,
     pub nvs_default_partition: EspDefaultNvsPartition,
     pub peripherals: PeripheralMap<'static>,
+    /// `None` if the USB Serial/JTAG peripheral could not be claimed. The board
+    /// runs regardless; it just cannot be asked about itself over USB.
+    pub diagnostics_console: Option<UsbSerialJtagConsole>,
 }
 
 pub fn startup() -> anyhow::Result<StartupContext> {
@@ -34,6 +39,17 @@ pub fn startup() -> anyhow::Result<StartupContext> {
 
     // Logger and event loop
     EspLogger::initialize_default();
+
+    // Claimed immediately after the logger, and before anything else is brought
+    // up. Two reasons, both learned the hard way:
+    //
+    //   * The install depends on nothing — no peripherals, no NVS, no clock — so
+    //     there is no reason to make the console wait for them. Claiming it here
+    //     means it is answering while the rest of boot is still running.
+    //   * It has to come *after* `EspLogger::initialize_default()`, or the log
+    //     lines reporting whether the claim worked go nowhere. A diagnostic
+    //     channel that fails silently is worse than one that is simply absent.
+    let diagnostics_console = DiagnosticsContext::claim_console();
 
     let sysloop = EspSystemEventLoop::take()?;
 
@@ -85,5 +101,6 @@ pub fn startup() -> anyhow::Result<StartupContext> {
         trust_nvs_state,
         nvs_default_partition,
         peripherals,
+        diagnostics_console,
     })
 }

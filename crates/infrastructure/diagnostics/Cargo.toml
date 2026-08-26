@@ -1,0 +1,10 @@
+[package]
+name = "diagnostics"
+version = "0.1.0"
+edition = "2021"
+
+# Intentionally dependency-free. This crate is the transport-agnostic protocol
+# layer, which is what lets it build and test on the host without the Xtensa
+# toolchain. Hardware access belongs in the consumer; see `serial_console` for
+# the USB Serial/JTAG transport.
+[dependencies]

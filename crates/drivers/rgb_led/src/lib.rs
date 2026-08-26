@@ -26,10 +26,25 @@ impl<'d> Led<'d> {
     pub fn set_color(&mut self, rgb: RGB8) -> Result<()> {
         let color: u32 = ((rgb.g as u32) << 16) | ((rgb.r as u32) << 8) | rgb.b as u32;
         let ticks_hz = self.tx_rtm_driver.counter_clock()?;
-        let t0h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(350))?;
-        let t0l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(800))?;
-        let t1h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(700))?;
-        let t1l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(600))?;
+        // A WS2812 tells a 1 from a 0 by how long the line is held high, splitting
+        // them at roughly 500 ns. These are chosen to sit as far from that boundary
+        // as the part's own timing windows allow, because the margin is what this
+        // board is short of: the LED is a 5 V part driven from a 3.3 V GPIO, so its
+        // logic-high threshold is only just met and every edge arrives slower than
+        // the datasheet assumes.
+        //
+        // The previous values were 350/800/700/600, which left about 150 ns either
+        // side. That is what produced the scrambled colours seen on the bench —
+        // red arriving as yellow, blue as purple, and "off" glowing faintly — since
+        // a single misread bit shifts a whole channel.
+        //
+        // 300 and 850 put ~200 ns and ~350 ns between the two cases. Both stay
+        // inside the WS2812B window (T0H 0.4 us +/- 150 ns, T1H 0.8 us +/- 150 ns)
+        // and the 1.25 us +/- 600 ns bit period holds for both.
+        let t0h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(300))?;
+        let t0l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(850))?;
+        let t1h = Pulse::new_with_duration(ticks_hz, PinState::High, &ns(850))?;
+        let t1l = Pulse::new_with_duration(ticks_hz, PinState::Low, &ns(450))?;
         let mut signal = FixedLengthSignal::<24>::new();
         for i in (0..24).rev() {
             let p = 2_u32.pow(i);

@@ -1,8 +1,7 @@
 use core::{option::Option::None, time::Duration};
-use std::{thread::sleep, time::Instant};
+use std::{collections::VecDeque, thread::sleep, time::Instant};
 
 use anyhow::Context;
-use esp_idf_hal::{delay::Ets, i2c::I2cDriver};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::modem::Modem,
@@ -13,19 +12,19 @@ use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
-use hdc1080::Hdc1080;
 use log::{error, info, warn};
 use motion::motion::MotionMode;
 use network::{mqtt::Mqtt, telemetry::publish_json};
 use ota::OtaUpdater;
-use rtc::Rtc;
 use semver::Version;
-use shared_bus::I2cProxy;
 use wifi::wifi::{Wifi, WifiState};
 
 use crate::{
     config::switchboard::Switchboard,
-    hardware::temperature::report_system_temperature,
+    hardware::{
+        sensors::{self, SharedSensors},
+        temperature::report_system_temperature,
+    },
     logic::{
         fsm::{FSMAddress, FSMCommand, FSMState},
         reset_reason::ResetReason,
@@ -36,8 +35,23 @@ use crate::{
 // TODO: Remove const
 const PERSIST_NVS: bool = true;
 const FORCE_NTP_SKIP_RTC: bool = false;
+
+/// How long a routine sensor read may wait for the lock before giving up.
+///
+/// A read itself is tens of milliseconds, so anything beyond this means another
+/// machine is mid-sequence and the heartbeat is better off skipping a reading
+/// than delaying everything behind it.
+const SENSOR_LOCK_BUDGET: Duration = Duration::from_millis(500);
+
+/// How long clock initialisation may wait for the lock.
+///
+/// Longer, because this happens once at boot and failing it costs the tower its
+/// sense of time — which is worth waiting a few seconds for.
+const RTC_INIT_LOCK_BUDGET: Duration = Duration::from_secs(5);
 const ALLOW_BOOT_VALIDATION: bool = true;
-const DEFAULT_VERSION: &str = "1.1.5";
+/// Re-exported under the old name so the call sites below read unchanged; the
+/// value itself lives in `config` so nothing can define a second one.
+use crate::config::FIRMWARE_VERSION as DEFAULT_VERSION;
 
 pub struct NetworkContext {
     nvs: EspNvs<NvsDefault>,
@@ -47,15 +61,62 @@ pub struct NetworkContext {
     switchboard: Switchboard,
     wifi: Option<Wifi<'static>>,
     init_network_services: bool,
-    rtc: Rtc,
     mqtt: Option<Mqtt>,
     formatted_time: Option<String>,
     current_version: Option<Version>,
     last_heartbeat_instant: Instant,
-    temperature_sensor:
-        Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
+    /// Shared with the diagnostics machine; see [`crate::hardware::sensors`] for
+    /// why these two devices need an owner rather than just the bus lock.
+    sensors: SharedSensors,
     motion_mode: Option<MotionMode>,
     actual_heading: Option<f32>,
+    inbox: NetworkInbox,
+    /// Whether the current disconnection has already been reported.
+    ///
+    /// Exists so the report is edge-triggered. This machine steps every 10 ms, so
+    /// logging the condition rather than the transition emitted up to a hundred
+    /// identical lines a second for as long as Wi-Fi was down — onto the console
+    /// the diagnostics protocol shares, and precisely when somebody would be
+    /// trying to use it to find out why.
+    reported_disconnect: bool,
+}
+
+/// Mail this FSM has taken out of its mailbox but not yet acted on.
+///
+/// The mailbox used to be read one message per pass, inside an `else if` that only
+/// ran once network services were up — and any variant the `match` did not name
+/// was dropped on the floor by a `_ => {}` arm. Both are silent failures: a
+/// publish requested during boot, or a variant nobody wrote an arm for, simply
+/// never happened and nothing said so.
+///
+/// Draining into here separates *receiving* from *acting*. Everything is taken
+/// out of the mailbox on every pass, and the state acts on as much as it can —
+/// which for publishes is one per pass, because sending one is a state transition.
+#[derive(Default)]
+struct NetworkInbox {
+    /// Publishes waiting to go out, in the order they were requested.
+    publishes: VecDeque<(String, String)>,
+    /// Newest motion snapshot. Collapses: only the current heading is of interest.
+    motion_snapshot: Option<(MotionMode, f32)>,
+    /// Messages with no handler, kept so they can be reported rather than lost.
+    unhandled: VecDeque<FSMCommand>,
+}
+
+impl NetworkInbox {
+    /// Empty the mailbox into this inbox. Non-blocking; safe on every pass.
+    fn fill(&mut self, mailbox: &Mailbox<FSMAddress, FSMCommand>) {
+        while let Ok(message) = mailbox.receive() {
+            match message {
+                FSMCommand::MqttPublishJson(payload, topic) => {
+                    self.publishes.push_back((payload, topic));
+                }
+                FSMCommand::UpdateNetworkMotionContext(mode, heading) => {
+                    self.motion_snapshot = Some((mode, heading));
+                }
+                other => self.unhandled.push_back(other),
+            }
+        }
+    }
 }
 
 impl NetworkContext {
@@ -64,10 +125,7 @@ impl NetworkContext {
         sysloop: EspSystemEventLoop,
         modem: Modem,
         switchboard: Switchboard,
-        rtc: Rtc,
-        temperature_sensor: Option<
-            Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>,
-        >,
+        sensors: SharedSensors,
     ) -> Self {
         // TODO: Better error handling
         let nvs = match EspNvs::new(partition.clone(), "storage", true) {
@@ -86,14 +144,15 @@ impl NetworkContext {
             switchboard,
             wifi: None,
             init_network_services: true,
-            rtc,
             mqtt: None,
             formatted_time: None,
             current_version: None,
             last_heartbeat_instant: Instant::now(),
-            temperature_sensor,
+            sensors,
             motion_mode: None,
             actual_heading: None,
+            inbox: NetworkInbox::default(),
+            reported_disconnect: false,
         }
     }
 }
@@ -118,12 +177,18 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
-        if PERSIST_NVS {
+        // Seed the build-time defaults only while the tower is unprovisioned. Once
+        // `SAVE_CONFIG` has run, NVS holds the site's real credentials and writing
+        // over them on every boot is how a provisioned tower quietly reverts to
+        // the flashed image's Wi-Fi. See `storage::snapshot_store::is_provisioned`.
+        let provisioned = crate::storage::snapshot_store::is_provisioned(&mut ctx.nvs);
+
+        if PERSIST_NVS && !provisioned {
             match ctx
                 .nvs
                 .set_str("wifi_ssid", ctx.switchboard.default_wifi_ssid)
             {
-                Ok(_) => info!("Wifi ssid updated"),
+                Ok(_) => info!("Wifi ssid seeded from build-time default"),
                 Err(e) => error!("Wifi ssid not updated {:?}", e),
             };
 
@@ -131,7 +196,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
                 .nvs
                 .set_str("wifi_pass", ctx.switchboard.default_wifi_pass)
             {
-                Ok(_) => info!("Wifi password updated"),
+                Ok(_) => info!("Wifi password seeded from build-time default"),
                 Err(e) => error!("Wifi password not updated {:?}", e),
             };
 
@@ -139,9 +204,13 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
                 .nvs
                 .set_str("tz_posix", ctx.switchboard.default_tz_posix)
             {
-                Ok(_) => info!("POSIX TZ string has been updated"),
+                Ok(_) => info!("POSIX TZ string seeded from build-time default"),
                 Err(e) => error!("tz_posix was not updated {:?}", e),
             };
+        } else if provisioned {
+            // Said out loud on every boot. "Why did my flashed SSID not take?" is
+            // otherwise a genuinely hard thing to work out from the outside.
+            info!("Tower is provisioned; using stored Wi-Fi and timezone, not the build-time defaults");
         }
 
         let mut ssid_buf = [0u8; 64];
@@ -205,28 +274,48 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiConnectIfDi
             .context("Wifi should always be initialized by now")?;
 
         if wifi.state() == WifiState::Disconnected {
-            info!("WiFi disconnected; attempting to reconnect.");
+            if !ctx.reported_disconnect {
+                info!("WiFi disconnected; attempting to reconnect.");
+                ctx.reported_disconnect = true;
+            }
 
             if wifi.reconnect_if_disconnected().is_err() {
                 return Ok(StateResult::Hold);
             }
+        } else if ctx.reported_disconnect {
+            info!("WiFi reconnected.");
+            ctx.reported_disconnect = false;
+        }
+
+        // Drained first, and unconditionally. Reading the mailbox only in the
+        // branch where network services were already up meant a publish requested
+        // during boot sat unread behind whatever the tower did next.
+        ctx.inbox.fill(mailbox);
+
+        if let Some((mode, actual_heading)) = ctx.inbox.motion_snapshot.take() {
+            ctx.motion_mode = Some(mode);
+            ctx.actual_heading = Some(actual_heading);
+        }
+
+        // Loud rather than silent. `MotionEvent::CheckForOTA` already sends
+        // `PerformOTA` from tracking.rs, and nothing here has ever handled it — it
+        // used to vanish into a `_ => {}` arm. Reporting it is a deliberate step
+        // short of acting on it: starting an OTA is not a behaviour to switch on
+        // as a side effect of fixing message delivery.
+        while let Some(unhandled) = ctx.inbox.unhandled.pop_front() {
+            warn!("Network FSM has no handler for {unhandled:?}; message discarded");
         }
 
         if ctx.init_network_services && matches!(wifi.state(), WifiState::Connected(_)) {
             return Ok(StateResult::Running(Box::new(InitNetworkServices)));
-        } else if let Ok(cmd) = mailbox.receive() {
-            match cmd {
-                FSMCommand::MqttPublishJson(payload, topic) => {
-                    return Ok(StateResult::Running(Box::new(MqttPublishJson(
-                        payload, topic,
-                    ))));
-                }
-                FSMCommand::UpdateNetworkMotionContext(mode, actual_heading) => {
-                    ctx.motion_mode = Some(mode);
-                    ctx.actual_heading = Some(actual_heading);
-                }
-                _ => {}
-            }
+        }
+
+        // One per pass: publishing is a state transition, so the rest wait here
+        // rather than in the mailbox.
+        if let Some((payload, topic)) = ctx.inbox.publishes.pop_front() {
+            return Ok(StateResult::Running(Box::new(MqttPublishJson(
+                payload, topic,
+            ))));
         }
 
         if ctx.last_heartbeat_instant.elapsed() > Duration::from_mins(15) {
@@ -271,9 +360,26 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiPublishHear
                 log::error!("Failed to publish heartbeat: {:?}", e);
             }
 
-            // publish temperature
-            if let Some(ref mut sensor) = ctx.temperature_sensor {
-                report_system_temperature(sensor, mqtt, ctx.switchboard.device_id, &current_time);
+            // Read under the lock, publish outside it. Holding a sensor lock
+            // across an MQTT publish would put a network round trip in front of
+            // anyone else waiting to read the same device.
+            let reading = sensors::lock(&ctx.sensors, SENSOR_LOCK_BUDGET)
+                .and_then(|mut set| set.hdc1080.as_mut().map(|sensor| sensor.read()));
+
+            match reading {
+                Some(Ok((temp_c, rh))) => report_system_temperature(
+                    temp_c,
+                    rh,
+                    mqtt,
+                    ctx.switchboard.device_id,
+                    &current_time,
+                ),
+                Some(Err(e)) => warn!("HDC1080 read failed ({e:?}); skipping temp telemetry"),
+                None => {
+                    // Either no sensor is fitted, or something else held the lock
+                    // longer than the budget. Neither is worth a heartbeat's delay.
+                    log::debug!("Temperature unavailable this heartbeat");
+                }
             }
         } else {
             log::warn!("Skipping heartbeat publish: MQTT client unavailable");
@@ -347,13 +453,23 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for InitNetworkServ
             .get_str("tz_posix", &mut tz_buf)?
             .unwrap_or(ctx.switchboard.default_tz_posix);
 
-        ctx.rtc.init(
-            ctx.wifi
+        {
+            let wifi = ctx
+                .wifi
                 .as_ref()
-                .expect("Wifi should always be initialized by now"),
-            tz_posix_str,
-            FORCE_NTP_SKIP_RTC,
-        )?;
+                .expect("Wifi should always be initialized by now");
+
+            // The one place the sensor lock is held for longer than a read: an
+            // SNTP sync can take seconds. That is correct — you cannot read a
+            // clock while it is being set — and the diagnostics machine's bounded
+            // lock attempt turns the overlap into "busy, try again" rather than a
+            // stalled console.
+            let mut set = sensors::lock(&ctx.sensors, RTC_INIT_LOCK_BUDGET).ok_or_else(|| {
+                anyhow::anyhow!("Could not take the sensor lock to initialise the clock")
+            })?;
+
+            set.rtc.init(wifi, tz_posix_str, FORCE_NTP_SKIP_RTC)?;
+        }
 
         let local_time_boot = rtc::timezone::local_time();
         let formatted_time = format!("{}", local_time_boot.format("%d/%m/%Y %H:%M:%S"));

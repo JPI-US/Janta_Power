@@ -365,7 +365,8 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             FSMCommand::UpdateNetworkMotionContext(ctx.motion.motion_mode, ctx.actual_heading),
         )?;
 
-        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionTracking)) {
+        if let Some(state) = perform_maintenance_transition(ctx, mailbox, Box::new(MotionTracking))
+        {
             return Ok(StateResult::Running(state));
         }
 

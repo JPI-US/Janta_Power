@@ -14,30 +14,39 @@ use crate::logic::fsm::{
     FSMState,
 };
 
+#[derive(Copy, Clone, Debug)]
 pub(crate) enum MaintenanceAction {
     Moving(Direction),
     Idle,
 }
 
+/// If a maintenance button was pressed, the state to hand control to.
+///
+/// `return_to` is where [`MotionMaintenance`] resumes once maintenance ends, so
+/// the caller passes a copy of itself and gets back where it was.
 pub(crate) fn perform_maintenance_transition(
+    ctx: &mut MotionContext,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
     return_to: Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>,
 ) -> Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>> {
     Some(Box::new(MotionMaintenance {
-        action: check_maintenance(mailbox)?,
+        action: check_maintenance(ctx, mailbox)?,
         return_to: Some(return_to),
     }))
 }
 
+/// Drain the mailbox and report a pending button action, if there is one.
+///
+/// Draining is the point, not a side effect: this is called from every state that
+/// can be interrupted, so it is also what keeps mail moving for anything else
+/// addressed to this FSM. See [`super::MotionInbox`] for why it cannot simply
+/// take from the mailbox directly.
 pub(crate) fn check_maintenance(
+    ctx: &mut MotionContext,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
 ) -> Option<MaintenanceAction> {
-    match mailbox.receive_latest().ok()? {
-        FSMCommand::CCWPressed => Some(MaintenanceAction::Moving(Direction::Ccw)),
-        FSMCommand::CWPressed => Some(MaintenanceAction::Moving(Direction::Cw)),
-        FSMCommand::MaintenancePressed => Some(MaintenanceAction::Idle),
-        _ => None,
-    }
+    ctx.inbox.fill(mailbox);
+    ctx.inbox.take_button()
 }
 
 impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenance {
@@ -54,7 +63,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
             state.maintenance_mode = true;
         });
 
-        if let Some(action) = check_maintenance(mailbox) {
+        if let Some(action) = check_maintenance(ctx, mailbox) {
             match action {
                 MaintenanceAction::Idle => {
                     if matches!(self.action, MaintenanceAction::Idle) {

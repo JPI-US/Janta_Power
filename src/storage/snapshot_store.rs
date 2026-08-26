@@ -18,6 +18,37 @@ pub const NVS_KEY_ENCODER_DAILY_MODE: &str = "enc_daily_mode";
 
 pub const ENC_SNAPSHOT_VERSION: u32 = 1;
 
+/// Has this tower been provisioned through the diagnostics channel?
+///
+/// The flag is written by `SAVE_CONFIG`, and it decides which of two things is
+/// the tower's configuration:
+///
+/// * **Not provisioned** — the build-time defaults compiled from `.env` are the
+///   configuration, and boot seeds them into NVS so the rest of the firmware has
+///   one place to read them from.
+/// * **Provisioned** — NVS *is* the configuration, and boot must not write over
+///   it. Without this gate every reboot silently reverted a site's Wi-Fi
+///   credentials, coordinates and timezone to whatever the flashed image happened
+///   to carry, which made provisioning a tower over USB pointless: it worked
+///   until the tower was power-cycled, and then quietly undid itself.
+///
+/// The key name comes from `board_diagnostics` rather than being spelled here, so
+/// the firmware and the protocol cannot disagree about it.
+pub fn is_provisioned<T: NvsPartitionId>(nvs: &mut EspNvs<T>) -> bool {
+    match nvs.get_u8(board_diagnostics::NVS_KEY_PROVISIONED) {
+        Ok(Some(1)) => true,
+        Ok(_) => false,
+        // A read failure is not evidence of anything, so take the safer reading:
+        // treat the tower as provisioned and leave stored values alone. Seeding
+        // over a configuration that might be real is the destructive mistake;
+        // failing to seed one that is not is merely a tower on defaults.
+        Err(e) => {
+            warn!("Could not read the provisioned flag ({e:?}); assuming provisioned and leaving stored configuration alone");
+            true
+        }
+    }
+}
+
 pub struct SnapshotStore<'a, T: NvsPartitionId> {
     nvs: &'a mut EspNvs<T>,
     persist_enabled: bool,

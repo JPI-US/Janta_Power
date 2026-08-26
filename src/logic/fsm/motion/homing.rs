@@ -44,7 +44,9 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
-        if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionBeginHoming)) {
+        if let Some(state) =
+            perform_maintenance_transition(ctx, mailbox, Box::new(MotionBeginHoming))
+        {
             return Ok(StateResult::Running(state));
         }
 
@@ -129,6 +131,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
         if let Some(state) = perform_maintenance_transition(
+            ctx,
             mailbox,
             Box::new(MotionHoming {
                 steps_left: self.steps_left,

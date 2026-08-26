@@ -10,9 +10,13 @@ use hdc1080::Hdc1080;
 use log::{info, warn};
 use motion::motion::{ActiveLevel, Motion};
 use rgb_led::Led;
-use shared_bus::{BusManager, I2cProxy};
+use rtc::Rtc;
+use shared_bus::BusManager;
 
-use crate::hardware::buttons::Buttons;
+use crate::hardware::{
+    buttons::Buttons,
+    sensors::{self, SharedSensors},
+};
 
 /// Collection of initialized hardware peripherals used by the device.
 pub struct PeripheralMap<'a> {
@@ -28,9 +32,11 @@ pub struct PeripheralMap<'a> {
     /// Cellular modem peripheral.
     pub modem: Modem,
 
-    /// Temperature sensor.
-    pub temperature_sensor:
-        Option<Hdc1080<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>, Ets>>,
+    /// Devices that need an owner rather than just a bus lock — the HDC1080 and
+    /// the DS3231. Handed out as a shared handle because two machines read them:
+    /// the network machine for telemetry, the diagnostics machine on request.
+    /// See [`crate::hardware::sensors`].
+    pub sensors: SharedSensors,
 
     /// East, West, and maintenance buttons
     pub buttons: Buttons<'static, Gpio5, Gpio4, Gpio6>,
@@ -114,7 +120,7 @@ impl PeripheralMap<'_> {
             led,
             motion,
             modem,
-            temperature_sensor,
+            sensors: sensors::shared(temperature_sensor, Rtc::new(i2c_bus)),
             buttons,
         })
     }

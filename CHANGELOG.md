@@ -15,6 +15,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unused `fullchain.pem`.
 - Removed `bno080` and various dead code.
 
+## Fixed
+- **The diagnostics console dropped bytes out of the middle of its own lines**, and
+  stalled its own thread for tens of seconds doing it.
+
+  ESP-IDF mirrors its console onto USB Serial/JTAG on this chip and writes it
+  straight into the 64-byte hardware FIFO, a byte at a time, with no lock. The
+  `usb_serial_jtag` driver writes the same FIFO from its interrupt handler.
+  Nothing synchronised them, so `CMD_RECEIVED` arrived as `CMD_RECIVED` and a host
+  matching whole lines never saw an answer. The console's writer also spins for
+  FIFO space and gives up only after 50 ms **per byte**, so one log line could
+  hold its thread for seconds.
+
+  `install_driver` now also calls `esp_vfs_usb_serial_jtag_use_driver`, putting
+  both writers behind the same mutex-protected ring buffer. Alongside it:
+  `write_line` loops rather than discarding partial writes (which had been putting
+  half a protocol line on the wire), the transmit buffer went from 1 KB to 4 KB
+  now that logs share it, and the per-100 ms motion position log dropped from
+  `info` to `debug` — it was ~1.2 KB/s of permanent contention on the path a
+  command's reply has to take.
+
+- **The Wi-Fi disconnect notice fired on every pass of a 10 ms machine.** Up to a
+  hundred identical lines a second for as long as Wi-Fi was down, onto the console
+  the diagnostics protocol shares — precisely when somebody would be using it to
+  find out why. Now edge-triggered, and it reports the reconnect too.
+
 ## Changed
 - Replaced unsafe `.unwrap()` `.expect()`, and `panic!()` with `?`.
 - Used `anyhow::Context` to give `?` errors extra context.

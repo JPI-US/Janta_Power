@@ -3,7 +3,13 @@ target = "xtensa-esp32s3-espidf"
 
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
-runner = "espflash flash --monitor --partition-table=partitions.csv"
+# `--before usb-reset` because this board exposes USB Serial/JTAG natively and the
+# firmware claims that peripheral within the first milliseconds of boot. espflash's
+# default DTR/RTS reset only reaches the ROM bootloader while the peripheral is
+# still unclaimed, so without this a board already running this firmware refuses to
+# connect — and presents as "Failed to connect to the device", which reads like a
+# cable or a busy port rather than a timing problem.
+runner = "espflash flash --monitor --partition-table=partitions.csv --before usb-reset"
 rustflags = ["--cfg", "espidf_time64"]
 
 [unstable]

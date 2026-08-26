@@ -16,10 +16,13 @@ partition_table = "partitions.csv"
 members = [
     "crates/drivers/accel-stepper",
     "crates/drivers/rgb_led",
+    "crates/drivers/ssd1306",
     "crates/infrastructure/clock",
+    "crates/infrastructure/diagnostics",
     "crates/infrastructure/network",
     "crates/infrastructure/ota",
     "crates/infrastructure/rtc",
+    "crates/infrastructure/serial_console",
     "crates/infrastructure/wifi",
     "crates/motion",
     "crates/sensors/ds323x",
@@ -30,6 +33,10 @@ members = [
 [workspace.dependencies]
 accel-stepper = { path = "crates/drivers/accel-stepper" }
 anyhow = "1.0.86"
+# Renamed on import: `diagnostics` is too generic a name to read well at a call
+# site in a repo where "diagnostics" also means the MQTT command channel. This
+# crate is specifically the board-level wire protocol.
+board_diagnostics = { package = "diagnostics", path = "crates/infrastructure/diagnostics" }
 crossbeam-channel = "0.5.16"
 base64 = "0.22.1"
 chrono = "0.4.40"
@@ -53,9 +60,11 @@ rgb_led = { path = "crates/drivers/rgb_led" }
 rtc = { path = "crates/infrastructure/rtc" }
 semver = "1.0.26"
 sensors = { path = "crates/sensors/sensors" }
+serial_console = { path = "crates/infrastructure/serial_console" }
 serde = "1"
 serde_json = "1.0.143"
 shared-bus = { git = "https://github.com/Sycrosity/shared-bus", version = "0.4.0" }
+ssd1306_oled = { path = "crates/drivers/ssd1306" }
 wifi = { path = "crates/infrastructure/wifi" }
 
 [[bin]]
@@ -68,6 +77,7 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 anyhow.workspace = true
+board_diagnostics.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 clock.workspace = true
 ds323x.workspace = true
@@ -94,11 +104,13 @@ rgb_led.workspace = true
 rtc.workspace = true
 semver.workspace = true
 sensors.workspace = true
+serial_console.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shared-bus = { workspace = true, features = [
     "std",
 ] }
+ssd1306_oled.workspace = true
 toml = "0.8"
 wifi.workspace = true
 crossbeam-channel.workspace = true

@@ -258,7 +258,18 @@ impl Motion<'_> {
                     let position = self.encoder_ticks_adjusted();
                     let step_pos = self.motor.current_position();
                     let step_rem = self.motor.distance_to_go();
-                    log::info!(
+                    // `debug`, not `info`, and the level is the whole point.
+                    //
+                    // This fires ten times a second for the entire duration of
+                    // every move, and a homing search is thousands of one-degree
+                    // moves — so at `info` it is a permanent ~1.2 KB/s stream. The
+                    // console shares its wire with the board diagnostics protocol,
+                    // where each byte goes through a per-byte mutex, so that
+                    // stream is not merely noise: it is contention on the path a
+                    // command's reply has to take, and it buried the replies.
+                    //
+                    // Raise the log level to `debug` when you want it back.
+                    log::debug!(
                         "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}",
                         position,
                         step_pos,

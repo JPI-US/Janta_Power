@@ -1,5 +1,3 @@
-use embedded_hal::{delay::DelayNs, i2c::I2c};
-use hdc1080::Hdc1080;
 use network::{
     mqtt::Mqtt,
     telemetry::{
@@ -62,21 +60,18 @@ impl TempTier {
     }
 }
 
-/// Read HDC1080 temperature and publish system telemetry using tiered notes.
-pub fn report_system_temperature<I2C, D>(
-    sensor: &mut Hdc1080<I2C, D>,
+/// Publish system telemetry for a temperature reading, using tiered notes.
+///
+/// Takes the reading rather than the sensor, so the caller can hold the sensor
+/// lock for the read alone. Publishing is a network round trip, and holding a
+/// device lock across one blocks every other reader for its duration.
+pub fn report_system_temperature(
+    temp_c: f32,
+    rh: f32,
     mqtt: &mut Mqtt,
     device_id: &str,
     current_time: &str,
-) where
-    I2C: I2c,
-    D: DelayNs,
-{
-    let Ok((temp_c, rh)) = sensor.read() else {
-        log::warn!("HDC1080 read failed; skipping temp telemetry");
-        return;
-    };
-
+) {
     let temp_f = temp_c * 9.0 / 5.0 + 32.0;
     let tier = TempTier::classify(temp_f);
     let notes = tier.notes();
