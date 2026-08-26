@@ -440,7 +440,6 @@ pub enum ConfigValueKind {
     Longitude,
     Altitude,
     TimezoneOffsetHours,
-    Port,
 }
 
 /// One provisioned setting: what the installer calls it, where it lives in NVS,
@@ -489,14 +488,6 @@ pub const CONFIG_KEYS: &[ConfigKey] = &[
     ConfigKey { protocol: "location.longitude", nvs: "tower_longitude", kind: ConfigValueKind::Longitude, secret: false },
     ConfigKey { protocol: "location.altitude", nvs: "tower_altitude", kind: ConfigValueKind::Altitude, secret: false },
     ConfigKey { protocol: "location.timezone_offset_hours", nvs: "tz_offset_h", kind: ConfigValueKind::TimezoneOffsetHours, secret: false },
-    ConfigKey { protocol: "mqtt.broker", nvs: "mqtt_broker", kind: ConfigValueKind::Text, secret: false },
-    ConfigKey { protocol: "mqtt.port", nvs: "mqtt_port", kind: ConfigValueKind::Port, secret: false },
-    ConfigKey { protocol: "mqtt.username", nvs: "mqtt_user", kind: ConfigValueKind::Text, secret: false },
-    ConfigKey { protocol: "mqtt.password", nvs: "mqtt_pass", kind: ConfigValueKind::Text, secret: true },
-    ConfigKey { protocol: "mqtt.topic", nvs: "mqtt_topic", kind: ConfigValueKind::Text, secret: false },
-    ConfigKey { protocol: "customer.full_name", nvs: "cust_name", kind: ConfigValueKind::Text, secret: false },
-    ConfigKey { protocol: "customer.address", nvs: "cust_addr", kind: ConfigValueKind::Text, secret: false },
-    ConfigKey { protocol: "customer.phone", nvs: "cust_phone", kind: ConfigValueKind::Text, secret: false },
 ];
 
 /// Look up a protocol key. `None` means the host sent something we do not provision.
@@ -566,10 +557,6 @@ pub fn validate_config_value(key: &ConfigKey, value: &str) -> Result<(), ConfigE
         ConfigValueKind::TimezoneOffsetHours => {
             let parsed = value.trim().parse::<i32>().map_err(|_| ConfigError::NotANumber)?;
             if (-12..=14).contains(&parsed) { Ok(()) } else { Err(ConfigError::OutOfRange) }
-        }
-        ConfigValueKind::Port => {
-            let parsed = value.trim().parse::<u32>().map_err(|_| ConfigError::NotANumber)?;
-            if (1..=65_535).contains(&parsed) { Ok(()) } else { Err(ConfigError::OutOfRange) }
         }
     }
 }
@@ -1713,10 +1700,15 @@ mod tests {
         assert_eq!(transport.writes, vec!["CMD_RECEIVED", "PONG"]);
     }
 
-    /// The 15 keys `buildEnvironmentEntries` sends in the installer's
+    /// The keys `buildEnvironmentEntries` sends in the installer's
     /// `customerConfig.ts`. If that list changes, this test is what catches it —
     /// otherwise the board answers `ERROR unknown configuration key` for a key the
     /// installer believes it provisioned.
+    ///
+    /// It used to hold fifteen. The eight MQTT and customer-record keys were
+    /// removed because nothing ever read them: the broker and its credentials come
+    /// from the build, and the customer record was written to NVS and never looked
+    /// at again. Provisioning them was work an installer did for no effect.
     const INSTALLER_KEYS: &[&str] = &[
         "device.tower_id",
         "wifi.ssid",
@@ -1725,14 +1717,6 @@ mod tests {
         "location.longitude",
         "location.altitude",
         "location.timezone_offset_hours",
-        "mqtt.broker",
-        "mqtt.port",
-        "mqtt.username",
-        "mqtt.password",
-        "mqtt.topic",
-        "customer.full_name",
-        "customer.address",
-        "customer.phone",
     ];
 
     #[test]
@@ -1792,7 +1776,7 @@ mod tests {
                 current = entry.section();
             }
         }
-        assert_eq!(seen, vec!["device", "wifi", "location", "mqtt", "customer"]);
+        assert_eq!(seen, vec!["device", "wifi", "location"]);
     }
 
     #[test]
@@ -1810,21 +1794,19 @@ mod tests {
         assert_eq!(check("location.timezone_offset_hours", "-6"), Ok(()));
         assert_eq!(check("location.timezone_offset_hours", "15"), Err(ConfigError::OutOfRange));
         assert_eq!(check("location.timezone_offset_hours", "1.5"), Err(ConfigError::NotANumber));
-        assert_eq!(check("mqtt.port", "8883"), Ok(()));
-        assert_eq!(check("mqtt.port", "0"), Err(ConfigError::OutOfRange));
-        assert_eq!(check("mqtt.port", "70000"), Err(ConfigError::OutOfRange));
+
 
         // Text is unconstrained apart from length.
-        assert_eq!(check("customer.address", "12 Any Street, Apt 4"), Ok(()));
+        assert_eq!(check("wifi.ssid", "some site network"), Ok(()));
         let too_long = "x".repeat(CONFIG_VALUE_MAX_BYTES + 1);
-        assert_eq!(check("customer.address", &too_long), Err(ConfigError::TooLong));
+        assert_eq!(check("wifi.ssid", &too_long), Err(ConfigError::TooLong));
 
         // A placeholder read back from the board must never be stored as a secret;
         // the installer omits untouched secrets rather than echoing these.
         assert_eq!(check("wifi.password", SECRET_SET), Err(ConfigError::SecretPlaceholder));
-        assert_eq!(check("mqtt.password", SECRET_UNSET), Err(ConfigError::SecretPlaceholder));
+        assert_eq!(check("wifi.password", SECRET_UNSET), Err(ConfigError::SecretPlaceholder));
         // The same literal is an ordinary value for a field that is not a secret.
-        assert_eq!(check("customer.full_name", SECRET_SET), Ok(()));
+        assert_eq!(check("device.tower_id", SECRET_SET), Ok(()));
     }
 
     #[test]
@@ -1840,7 +1822,7 @@ mod tests {
 
         assert_eq!(staging.len(), 2, "restaging a key must replace, not append");
         assert_eq!(staging.get("wifi.ssid"), Some("second"));
-        assert_eq!(staging.get("mqtt.topic"), None);
+        assert_eq!(staging.get("location.altitude"), None);
 
         assert_eq!(staging.entries().len(), 2);
         staging.clear();
