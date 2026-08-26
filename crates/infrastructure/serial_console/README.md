@@ -33,7 +33,7 @@ use serial_console::{SerialLinePoll, SerialLineRuntime, UsbSerialJtagConsole};
 use std::thread;
 use std::time::Duration;
 
-UsbSerialJtagConsole::install_driver(1024, 1024)?;
+UsbSerialJtagConsole::install_driver(1024, 4096)?;
 
 let mut console = UsbSerialJtagConsole::new();
 let mut runtime = SerialLineRuntime::new();
@@ -58,6 +58,37 @@ The exact error conversion around `install_driver` and `poll` depends on the fir
 - [`src/runtime/main.rs`](../../../src/runtime/main.rs)
 
 Do not repeatedly install the USB Serial/JTAG driver. Install it once before constructing the polling loop. Also yield or sleep when polling returns `Idle`; otherwise a firmware task can busy-spin.
+
+## Sharing the peripheral with ESP-IDF's console
+
+`install_driver` also calls `esp_vfs_usb_serial_jtag_use_driver`, and that half is
+not optional.
+
+On a chip where ESP-IDF mirrors its console onto USB Serial/JTAG — the ESP32-S3
+default, `CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` — the console writes
+directly into the 64-byte hardware FIFO, one byte at a time, with no lock. This
+crate's driver writes the *same* FIFO from its interrupt handler. Two
+unsynchronised writers on one FIFO drop bytes out of the middle of lines:
+`CMD_RECEIVED` arrives as `CMD_RECIVED`, and a host matching whole lines never
+sees an answer.
+
+The console's writer also spins for FIFO space and gives up only after 50 ms
+**per byte**, so under contention a single log line can hold its calling thread
+for seconds.
+
+`esp_vfs_usb_serial_jtag_use_driver` repoints the console at the same
+mutex-protected ring buffer this crate writes to. One writer, one lock, bounded
+waits — and the console stops reading the receive FIFO directly, so nothing races
+for inbound bytes either.
+
+Two consequences worth planning for:
+
+- **Size the transmit buffer for both.** Every log line in the firmware now shares
+  it with protocol output, which is why the example above asks for 4 KB rather
+  than 1 KB.
+- **Keep the log quiet.** A per-100 ms log line is roughly 1.2 KB/s of continuous
+  contention on the path a command's reply takes. Anything at that cadence
+  belongs at `debug`, not `info`.
 
 ## Using Another Serial Peripheral
 

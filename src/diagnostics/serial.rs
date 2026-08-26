@@ -54,7 +54,16 @@ impl DiagnosticIo for ConsoleIo<'_> {
 
 impl SerialDiagnosticsRuntime {
     pub fn new() -> anyhow::Result<Self> {
-        UsbSerialJtagConsole::install_driver(1024, 1024)
+        // Receive is 1 KB: provisioning sends fifteen `SET_ENV` lines back to
+        // back, around 750 bytes if a host does not wait for each reply, so it
+        // has to hold more than one command.
+        //
+        // Transmit is 4 KB, and larger for a reason. `install_driver` also routes
+        // ESP-IDF's console through this driver, so every log line in the
+        // firmware now shares the buffer with protocol output. A `GET_CONFIG`
+        // dump alongside a burst of runtime logging would crowd 1 KB, and a
+        // protocol line that cannot fit is a line the host never sees.
+        UsbSerialJtagConsole::install_driver(1024, 4096)
             .map_err(|err| anyhow!("usb_serial_jtag_driver_install failed: {}", err))?;
         Ok(Self {
             console: UsbSerialJtagConsole::new(),

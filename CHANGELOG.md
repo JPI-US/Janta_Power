@@ -141,6 +141,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The diagnostics console dropped bytes out of the middle of its own lines.**
+  `CMD_RECEIVED` arrived as `CMD_RECIVED`, `RESULT I2C_SCAN` as `RESULT I2_SCAN`.
+  A host resolves commands by matching whole lines, so a mangled `RESULT` is not a
+  failed command — it is a command that never finishes, and the only symptom is a
+  timeout that explains nothing.
+
+  Two writers, one FIFO. ESP-IDF mirrors its console onto USB Serial/JTAG on this
+  chip (`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG`, the ESP32-S3 default) and
+  writes it with `usb_serial_jtag_ll_write_txfifo` — straight into the 64-byte
+  hardware FIFO, a byte at a time, with no lock. The `usb_serial_jtag` driver
+  writes the same FIFO from its interrupt handler. Nothing synchronised them.
+
+  It cost far more than the odd character. The console's writer spins for FIFO
+  space and gives up only after `TX_FLUSH_TIMEOUT_US` — 50 ms **per byte** — so
+  under contention one hundred-character log line can hold its calling thread for
+  seconds. On this firmware that thread is the main loop: the one that services
+  serial, drives the motor and publishes telemetry.
+
+  `install_driver` now also calls `esp_vfs_usb_serial_jtag_use_driver`, which
+  repoints the console at `usb_serial_jtag_write_bytes` — the same
+  mutex-protected ring buffer the diagnostics console writes to. One writer, one
+  lock, bounded waits. It also stops the console reading the receive FIFO
+  directly, so nothing can race for inbound bytes either.
+
+  Three supporting changes:
+
+  - **`write_line` no longer discards partial writes.** A short write means the
+    ring buffer filled part-way through, not that the write failed. Treating it as
+    a failure put *half a protocol line* on the wire, which is worse than sending
+    nothing: the host parses the fragment, fails to match it, and waits out its
+    timeout none the wiser. It now loops to completion against a 100 ms budget.
+  - **Transmit buffer 1 KB to 4 KB.** Every log line now shares it with protocol
+    output.
+  - **The per-100 ms position log dropped from `info` to `debug`.** It fired ten
+    times a second for the whole of every move — a worst-case homing search runs
+    for the better part of an hour — which is a permanent ~1.2 KB/s of contention
+    on the path a reply has to take. Raise the log level when you want it back.
+
 - **Status LED frames were marginal.** `rgb_led` sent T0H 350 ns / T1H 700 ns. A
   WS2812 distinguishes a 1 from a 0 at roughly 500 ns of high time, so 700 ns left
   little margin on a line that is already marginal for another reason: the part

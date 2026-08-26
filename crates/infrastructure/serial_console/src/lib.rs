@@ -1,5 +1,7 @@
 use core::fmt;
 use std::string::String;
+#[cfg(target_os = "espidf")]
+use std::time::Instant;
 use std::vec::Vec;
 
 #[cfg(target_os = "espidf")]
@@ -108,6 +110,33 @@ impl UsbSerialJtagConsole {
         Self
     }
 
+    /// Install the driver and hand ESP-IDF's console over to it.
+    ///
+    /// The second half is not optional, and leaving it out corrupts the wire.
+    ///
+    /// On this chip ESP-IDF's console is mirrored onto USB Serial/JTAG
+    /// (`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG`), and by default it writes
+    /// there with `usb_serial_jtag_ll_write_txfifo` — straight into the 64-byte
+    /// hardware FIFO, one byte at a time, with no lock. The driver installed
+    /// above writes the *same* FIFO from its own interrupt handler, draining a
+    /// ring buffer. Two unsynchronised writers on one FIFO do exactly what you
+    /// would expect: bytes disappear from the middle of lines. `CMD_RECEIVED`
+    /// arrives as `CMD_RECIVED`, `RESULT I2C_SCAN` as `RESULT I2_SCAN`, and a
+    /// host that resolves commands by matching whole lines simply never sees an
+    /// answer.
+    ///
+    /// It is worse than corruption, too. The console's writer spins waiting for
+    /// FIFO space and only gives up after `TX_FLUSH_TIMEOUT_US`, which is 50 ms
+    /// **per byte**. Contended, a single hundred-character log line can hold its
+    /// calling thread for seconds — and in this firmware that thread is the main
+    /// loop, which is also the one that services serial, drives the motor and
+    /// publishes telemetry.
+    ///
+    /// `esp_vfs_usb_serial_jtag_use_driver` repoints the console at
+    /// `usb_serial_jtag_write_bytes`, the same mutex-protected ring buffer this
+    /// crate writes to. One writer, one lock, bounded waits. It also stops the
+    /// console reading the receive FIFO directly, so nothing can race us for
+    /// inbound bytes either.
     #[cfg(target_os = "espidf")]
     pub fn install_driver(
         rx_buffer_size: u32,
@@ -120,12 +149,14 @@ impl UsbSerialJtagConsole {
             };
 
             let err = sys::usb_serial_jtag_driver_install(&mut cfg as *mut _);
-            if err == sys::ESP_OK as i32 {
-                Ok(())
-            } else {
-                Err(UsbSerialJtagError { code: err })
+            if err != sys::ESP_OK as i32 {
+                return Err(UsbSerialJtagError { code: err });
             }
+
+            sys::esp_vfs_usb_serial_jtag_use_driver();
         }
+
+        Ok(())
     }
 
     #[cfg(not(target_os = "espidf"))]
@@ -141,20 +172,47 @@ impl UsbSerialJtagConsole {
     }
 }
 
+/// Longest one line may spend trying to reach the transmit buffer.
+///
+/// The buffer only drains while a USB host is actually reading it, so an
+/// unattended board fills it and stays full. Waiting indefinitely on that would
+/// wedge whichever thread is writing — here, the main loop — so a line that
+/// cannot be delivered inside this budget is abandoned and reported instead.
+#[cfg(target_os = "espidf")]
+const WRITE_LINE_BUDGET_MS: u128 = 100;
+
 impl SerialIo for UsbSerialJtagConsole {
     #[cfg(target_os = "espidf")]
     fn write_line(&mut self, msg: &str) -> Result<(), ()> {
         let mut out = msg.as_bytes().to_vec();
         out.extend_from_slice(b"\r\n");
 
-        unsafe {
-            let written = usb_serial_jtag_write_bytes(out.as_ptr(), out.len() as u32, 1);
-            if written == out.len() as i32 {
-                Ok(())
-            } else {
-                Err(())
+        // Looped, because a short write is not a failure — it means the ring
+        // buffer filled part-way through the line. The previous version treated
+        // it as one and discarded the remainder, which put *half a protocol line*
+        // on the wire. That is worse than sending nothing: the host reads the
+        // fragment, fails to match it, and waits out its timeout none the wiser.
+        let started = Instant::now();
+        let mut sent = 0usize;
+
+        while sent < out.len() {
+            // One tick per byte inside the call, so this paces itself rather than
+            // spinning hot when the buffer is full.
+            let written = unsafe {
+                usb_serial_jtag_write_bytes(out[sent..].as_ptr(), (out.len() - sent) as u32, 1)
+            };
+
+            if written > 0 {
+                sent += written as usize;
+                continue;
+            }
+
+            if started.elapsed().as_millis() >= WRITE_LINE_BUDGET_MS {
+                return Err(());
             }
         }
+
+        Ok(())
     }
 
     #[cfg(not(target_os = "espidf"))]

@@ -256,13 +256,27 @@ impl Motion<'_> {
                     let position = self.encoder_ticks_adjusted();
                     let step_pos = self.motor.current_position();
                     let step_rem = self.motor.distance_to_go();
-                    log::info!(
+                    // `debug`, not `info`, and the level is the whole point.
+                    //
+                    // This fires ten times a second for the entire duration of
+                    // every move, and a worst-case homing search runs for the
+                    // better part of an hour — so at `info` it was a permanent
+                    // ~1.2 KB/s stream on the same USB Serial/JTAG peripheral the
+                    // diagnostics protocol uses. ESP-IDF writes the console
+                    // through that peripheral a byte at a time, taking the
+                    // transmit mutex for each one, so the stream was not merely
+                    // noise: it was continuous contention on the path a command's
+                    // reply has to take, and it buried the replies.
+                    //
+                    // Raise the log level to `debug` when you want it back.
+                    log::debug!(
                         "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}",
                         position,
                         step_pos,
                         step_rem
                     );
-                    // Same cadence as the log above, and on the same peripheral.
+                    // Same cadence as the position log above, on the same
+                    // peripheral — but far cheaper now that the log is quiet.
                     on_tick(MoveTick {
                         encoder_ticks: position,
                         step_position: step_pos,
