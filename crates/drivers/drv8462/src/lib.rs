@@ -329,6 +329,7 @@ where
     /// fails.
     pub fn apply_config(&mut self) -> Result<()> {
         self.sleep.set_high()?;
+        Ets::delay_us(1_000);
 
         self.clear_faults()?;
         self.unlock()?;
@@ -402,7 +403,6 @@ where
         ctrl3 |= 0b011 << 4;
 
         self.write_register(Register::Ctrl3, ctrl3)?;
-        self.clear_faults()?;
 
         Ok(())
     }
@@ -421,7 +421,6 @@ where
         ctrl3 |= 0b110 << 4;
 
         self.write_register(Register::Ctrl3, ctrl3)?;
-        self.clear_faults()?;
 
         Ok(())
     }
@@ -548,7 +547,7 @@ where
         let fault_reg = self.read_register(Register::Fault)?;
 
         Ok(Faults {
-            fault_active: fault_reg & 0x_60 != 0,
+            fault_active: fault_reg & 0x_80 != 0,
             spi_error: fault_reg & 0x_40 != 0,
             undervoltage_lockout: fault_reg & 0x_20 != 0,
             charge_pump_undervoltage: fault_reg & 0x_10 != 0,
