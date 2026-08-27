@@ -441,7 +441,7 @@ where
     /// Returns an error if fault detection, register access, or GPIO control
     /// fails.
     pub fn step_once(&mut self, delay_us: u32) -> Result<bool> {
-        if self.get_fault()?.is_some() {
+        if self.get_faults()?.fault_active {
             return Ok(false);
         }
 
@@ -481,7 +481,7 @@ where
     ///
     /// This method does not intentionally panic for a valid `steps` value.
     pub fn move_steps(&mut self, steps: u32, forward: bool) -> Result<bool> {
-        if self.get_fault()?.is_some() {
+        if self.get_faults()?.fault_active {
             return Ok(false);
         }
 
@@ -513,90 +513,83 @@ where
         Ok(true)
     }
 
-    /// Gets the current DRV8462 fault condition.
+    /// Reads the DRV8462 fault register and returns the currently reported
+    /// fault conditions.
     ///
-    /// The fault register is read and the first matching fault is returned.
-    /// If multiple fault bits are asserted, the priority is:
-    ///
-    /// 1. SPI error
-    /// 2. Undervoltage lockout
-    /// 3. Charge-pump undervoltage
-    /// 4. Over-current
-    /// 5. Stall
-    /// 6. Temperature
-    /// 7. Open load
+    /// Multiple fault conditions may be reported simultaneously. The returned
+    /// [`Faults`] structure contains an individual flag for each fault condition
+    /// represented by the DRV8462 fault register.
     ///
     /// # Returns
     ///
-    /// * `Ok(Some(fault))` if a supported fault is currently asserted.
-    /// * `Ok(None)` if no supported fault is asserted.
+    /// - `Ok(Faults)` - The fault conditions currently reported by the DRV8462.
+    /// - `Err(_)` - An error if the fault register cannot be read.
     ///
     /// # Errors
     ///
-    /// Returns an error if the fault register cannot be read.
-    pub fn get_fault(&mut self) -> Result<Option<Fault>> {
-        // TODO: Better faults
-        let faults = self.read_register(Register::Fault)?;
+    /// Returns an error if communication with the DRV8462 fails while reading the
+    /// fault register.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let faults = driver.get_faults()?;
+    ///
+    /// if faults.spi_error {
+    ///     // Handle SPI communication error.
+    /// }
+    ///
+    /// if faults.over_current {
+    ///     // Handle over-current fault.
+    /// }
+    /// ```
+    pub fn get_faults(&mut self) -> Result<Faults> {
+        let fault_reg = self.read_register(Register::Fault)?;
 
-        if faults & 0x40 != 0 {
-            return Ok(Some(Fault::SpiError));
-        }
-
-        if faults & 0x20 != 0 {
-            return Ok(Some(Fault::UndervoltageLockout));
-        }
-
-        if faults & 0x10 != 0 {
-            return Ok(Some(Fault::ChargePumpUndervoltage));
-        }
-
-        if faults & 0x08 != 0 {
-            return Ok(Some(Fault::OverCurrent));
-        }
-
-        if faults & 0x04 != 0 {
-            return Ok(Some(Fault::Stall));
-        }
-
-        if faults & 0x02 != 0 {
-            return Ok(Some(Fault::Temperature));
-        }
-
-        if faults & 0x01 != 0 {
-            return Ok(Some(Fault::OpenLoad));
-        }
-
-        Ok(None)
+        Ok(Faults {
+            fault_active: fault_reg & 0x_60 != 0,
+            spi_error: fault_reg & 0x_40 != 0,
+            undervoltage_lockout: fault_reg & 0x_20 != 0,
+            charge_pump_undervoltage: fault_reg & 0x_10 != 0,
+            over_current: fault_reg & 0x_8 != 0,
+            stall: fault_reg & 0x_4 != 0,
+            temperature: fault_reg & 0x_2 != 0,
+            open_load: fault_reg & 0x_1 != 0,
+        })
     }
 }
 
 /// Fault conditions reported by the DRV8462.
 ///
-/// The variants correspond to the fault conditions represented by the bits
-/// in the DRV8462 fault register.
+/// Each field corresponds to a fault condition represented by a bit in the
+/// DRV8462 fault register. Multiple fault conditions may be active
+/// simultaneously.
 ///
-/// Multiple fault bits may be asserted simultaneously. [`Drv8462::get_fault`]
-/// returns the first asserted fault according to its documented priority.
+/// Use [`Drv8462::get_faults`] to read and inspect all currently reported
+/// fault conditions.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Fault {
+pub struct Faults {
+    /// `true` fault is active, `false` otherwise.
+    fault_active: bool,
+
     /// SPI communication error.
-    SpiError,
+    spi_error: bool,
 
     /// Undervoltage lockout.
-    UndervoltageLockout,
+    undervoltage_lockout: bool,
 
     /// Charge-pump undervoltage.
-    ChargePumpUndervoltage,
+    charge_pump_undervoltage: bool,
 
     /// Over-current protection fault.
-    OverCurrent,
+    over_current: bool,
 
     /// Motor stall detected.
-    Stall,
+    stall: bool,
 
     /// Temperature fault.
-    Temperature,
+    temperature: bool,
 
     /// Open-load condition detected.
-    OpenLoad,
+    open_load: bool,
 }
