@@ -293,9 +293,7 @@ where
     pub fn write_register(&mut self, reg: Register, value: u8) -> Result<u8> {
         let frame = ((reg as u16) << 8) | value as u16;
 
-        self.unlock()?;
         let response = self.transfer16(frame)?;
-        self.lock()?;
 
         Ok((response & 0xff) as u8)
     }
@@ -333,6 +331,7 @@ where
         self.sleep.set_high()?;
 
         self.clear_faults()?;
+        self.unlock()?;
 
         self.write_register(Register::Ctrl1, self.config.as_ctrl1())?;
         self.write_register(Register::Ctrl2, self.config.as_ctrl2())?;
@@ -365,7 +364,9 @@ where
         ctrl1 &= !(0b1 << 7);
         ctrl1 |= (enable as u8) << 7;
 
+        self.unlock()?;
         self.write_register(Register::Ctrl1, ctrl1)?;
+        self.lock()?;
 
         self.enabled = enable;
 
@@ -380,7 +381,7 @@ where
     fn clear_faults(&mut self) -> Result<()> {
         let mut ctrl3 = self.read_register(Register::Ctrl3)?;
 
-        ctrl3 |= 0b1 << 7;
+        ctrl3 |= 1 << 7;
 
         self.write_register(Register::Ctrl3, ctrl3)?;
 
