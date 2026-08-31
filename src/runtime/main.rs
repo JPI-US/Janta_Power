@@ -1,4 +1,4 @@
-use drv8462::{config::*, Drv8462, Drv8462Hardware};
+use drv8462::{config::*, AutoMicrostepping, Basic, Drv8462, Drv8462Hardware};
 use esp_idf_svc::hal::prelude::Peripherals;
 
 mod app;
@@ -23,25 +23,31 @@ fn main() -> anyhow::Result<()> {
     let mut driver = Drv8462::new(
         Drv8462Hardware {
             spi: peripherals.spi2,
-            sclk: peripherals.pins.gpio41,
-            mosi: peripherals.pins.gpio40,
+            sclk: peripherals.pins.gpio0,
+            mosi: peripherals.pins.gpio38,
             miso: Some(peripherals.pins.gpio39),
-            cs: peripherals.pins.gpio38,
-            sleep: peripherals.pins.gpio36,
-            step: peripherals.pins.gpio35,
-            dir: peripherals.pins.gpio45,
+            cs: peripherals.pins.gpio40,
+            sleep: peripherals.pins.gpio21,
+            step: peripherals.pins.gpio26,
+            dir: peripherals.pins.gpio48,
         },
         Drv8462Config {
-            microstep_mode: MicrostepMode::FullStep100,
-            enable_internal_voltage_reference: true,
-            run_current: 35,
-            auto_microstepping_resolution: ResAuto::TwoFiftySixthStep,
-            enable_auto_microstepping: true,
+            basic: Basic {
+                microstep_mode: MicrostepMode::FullStep100,
+                enable_internal_voltage_reference: true,
+                run_current: 35,
+                ..Default::default()
+            },
+            auto_microstepping: AutoMicrostepping {
+                auto_microstepping_resolution: ResAuto::TwoFiftySixthStep,
+                enable_auto_microstepping: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
     )?;
 
-    driver.move_steps(2_500, true)?;
+    driver.move_steps(100, true)?;
 
     Ok(())
 }
