@@ -308,6 +308,11 @@ where
         self.write_register(Register::Ctrl11, self.config.as_ctrl11())?;
         self.write_register(Register::Ctrl12, self.config.as_ctrl12())?;
         self.write_register(Register::Ctrl13, self.config.as_ctrl13())?;
+        self.write_register(Register::SsCtrl1, self.config.as_ss_ctrl1())?;
+        self.write_register(Register::SsCtrl2, self.config.as_ss_ctrl2())?;
+        self.write_register(Register::SsCtrl3, self.config.as_ss_ctrl3())?;
+        self.write_register(Register::SsCtrl4, self.config.as_ss_ctrl4())?;
+        self.write_register(Register::SsCtrl5, self.config.as_ss_ctrl5())?;
 
         self.lock()?;
 

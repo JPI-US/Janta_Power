@@ -34,4 +34,19 @@ pub enum Register {
 
     /// Control register 13.
     Ctrl13 = 0x10,
+
+    /// Silent step control register 1.
+    SsCtrl1 = 0x31,
+
+    /// Silent step control register 2.
+    SsCtrl2 = 0x32,
+
+    /// Silent step control register 3.
+    SsCtrl3 = 0x33,
+
+    /// Silent step control register 4.
+    SsCtrl4 = 0x34,
+
+    /// Silent step control register 5.
+    SsCtrl5 = 0x35,
 }

@@ -205,6 +205,48 @@ pub struct Drv8462Config {
     ///
     /// Corresponds to the CTRL13 `VREF_INT_EN` field.
     pub enable_internal_voltage_reference: bool,
+
+    /// Controls the silent step current zero cross sampling time.
+    /// Increase the sampling time if current waveform is distorted around zero crossing.
+    pub silent_step_sample_time: SsSmplSel,
+
+    /// Represents the silent step PWM frequency.
+    pub silent_step_frequency: SsPwmFreq,
+
+    /// Represents whether or not silent step decay mode should be on.
+    pub silent_step_enable: bool,
+
+    /// Represents the proportional gain of the silent step PI controller.
+    ///
+    /// Hardware register is only 7 bits wide. Values >= 127 are effectively the same.
+    pub silent_step_proportional_gain: u8,
+
+    /// Represents the integral gain of the silent step PI controller.
+    ///
+    /// Hardware register is only 7 bits wide. Values >= 127 are effectively the same.
+    pub silent_step_integral_gain: u8,
+
+    /// Divider factor for KI. Actual KI = SS_KI / SS_KI_DIV_SEL.
+    pub silent_step_ki_divider_factor: SsDivSel,
+
+    /// Divider factor for KP. Actual KP = SS_KP / SS_KP_DIV_SEL.
+    pub silent_step_kp_divider_factor: SsDivSel,
+
+    /// Programs the frequency at which the device transitions from
+    /// silent step decay mode to another decay mode programmed by
+    /// the DECAY bits. This frequency corresponds to the frequency of
+    /// the sinusoidal current waveform.
+    ///
+    /// Corrects to 1 if set to 0.
+    ///
+    /// 00000001b: 2 Hz
+    ///
+    /// 00000010b: 4 Hz
+    ///
+    /// ............
+    ///
+    /// 11111111b: 510 Hz
+    pub silent_step_transition_frequency: u8,
 }
 
 impl Default for Drv8462Config {
@@ -239,6 +281,14 @@ impl Default for Drv8462Config {
             standstill_fall_time: 0b_0100,
             standstill_delay: 0b_000100,
             enable_internal_voltage_reference: bool::default(),
+            silent_step_sample_time: SsSmplSel::default(),
+            silent_step_frequency: SsPwmFreq::default(),
+            silent_step_enable: false,
+            silent_step_proportional_gain: 0b_0000000,
+            silent_step_integral_gain: 0b_0000000,
+            silent_step_ki_divider_factor: SsDivSel::default(),
+            silent_step_kp_divider_factor: SsDivSel::default(),
+            silent_step_transition_frequency: 0b_00000000,
         }
     }
 }
@@ -311,6 +361,34 @@ impl Drv8462Config {
     /// Serializes the CTRL13 fields to be written to the register.
     pub fn as_ctrl13(&self) -> u8 {
         self.standstill_delay << 2 | (self.enable_internal_voltage_reference as u8) << 1
+    }
+
+    /// Serializes the SS_CTRL1 fields to be written to the register.
+    pub fn as_ss_ctrl1(&self) -> u8 {
+        (self.silent_step_sample_time as u8) << 6
+            | (self.silent_step_frequency as u8) << 3
+            | self.silent_step_enable as u8
+    }
+
+    /// Serializes the SS_CTRL2 fields to be written to the register.
+    pub fn as_ss_ctrl2(&self) -> u8 {
+        self.silent_step_proportional_gain << 6
+    }
+
+    /// Serializes the SS_CTRL3 fields to be written to the register.
+    pub fn as_ss_ctrl3(&self) -> u8 {
+        self.silent_step_integral_gain << 6
+    }
+
+    /// Serializes the SS_CTRL4 fields to be written to the register.
+    pub fn as_ss_ctrl4(&self) -> u8 {
+        (self.silent_step_ki_divider_factor as u8) << 6
+            | (self.silent_step_kp_divider_factor as u8) << 2
+    }
+
+    /// Serializes the SS_CTRL5 fields to be written to the register.
+    pub fn as_ss_ctrl5(&self) -> u8 {
+        self.silent_step_transition_frequency
     }
 }
 
@@ -540,4 +618,51 @@ pub enum ResAuto {
     SixtyFourthStep = 0b_10,
     /// 1/32 step.
     ThirtySecondStep = 0b_11,
+}
+
+#[repr(u8)]
+#[derive(Default, Copy, Clone)]
+/// Silent step current zero crossing time.
+pub enum SsSmplSel {
+    #[default]
+    /// 2 μs.
+    Us2 = 0b_00,
+    /// 3 μs.
+    Us3 = 0b_01,
+    /// 4 μs.
+    Us4 = 0b_10,
+    /// 5 μs.
+    Us5 = 0b_11,
+}
+
+#[repr(u8)]
+#[derive(Default, Copy, Clone)]
+/// Silent step PWM frequency.
+pub enum SsPwmFreq {
+    #[default]
+    Khz25 = 0b_00,
+    Khz33 = 0b_01,
+    Khz42 = 0b_10,
+    Khz50 = 0b_11,
+}
+
+#[repr(u8)]
+#[derive(Default, Copy, Clone)]
+/// Silent step KI/KP divider factor select.
+pub enum SsDivSel {
+    #[default]
+    /// KI OR KP / 32.
+    Div32 = 0b_000,
+    /// KI OR KP / 64.
+    Div64 = 0b_001,
+    /// KI OR KP / 128.
+    Div128 = 0b_010,
+    /// KI OR KP / 256.
+    Div256 = 0b_011,
+    /// KI OR KP / 512.
+    Div512 = 0b_100,
+    /// KI OR KP / 16.
+    Div16 = 0b_101,
+    /// KI OR KP
+    NoDiv = 0b_110,
 }
