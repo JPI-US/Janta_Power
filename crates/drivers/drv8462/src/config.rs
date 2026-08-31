@@ -85,7 +85,7 @@ pub struct Drv8462Config {
     /// Corresponds to the CTRL6 `DIS_SSC` field.
     pub enable_spread_spectrum: bool,
 
-    /// Controls whether to scale to scale the torque count by a factor of 8.
+    /// Controls whether to scale the torque count by a factor of 8.
     /// Corresponds to the CTRL6 `TRQ_SCALE` field.
     pub enable_torque_scaling: bool,
 
@@ -164,7 +164,7 @@ pub struct Drv8462Config {
     /// Controls the time it takes the current to reduce from the run current to the holding
     /// current after TSTSL_DLY time has elapsed.
     ///
-    /// The hardware register is only 4 bits wide. Values >= 15 are effectively the same.
+    /// The hardware register is only 4 bits wide. Values are capped between 0 and 15.
     ///
     /// 0b_000: fall time = 0
     ///
@@ -195,7 +195,7 @@ pub struct Drv8462Config {
     ///
     /// 0b_111111: Delay = 63 x 16 ms = 1.008 s
     ///
-    /// The hardware register is only 6 bits. Values >= 63 are effectively the same.
+    /// The hardware register is only 6 bits. Values are clamped between 1 and 63.
     ///
     /// Corresponds to the CTRL13 `TSTSL_DLY` field.
     pub standstill_delay: u8,
@@ -218,12 +218,12 @@ pub struct Drv8462Config {
 
     /// Represents the proportional gain of the silent step PI controller.
     ///
-    /// Hardware register is only 7 bits wide. Values >= 127 are effectively the same.
+    /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
     pub silent_step_proportional_gain: u8,
 
     /// Represents the integral gain of the silent step PI controller.
     ///
-    /// Hardware register is only 7 bits wide. Values >= 127 are effectively the same.
+    /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
     pub silent_step_integral_gain: u8,
 
     /// Divider factor for KI. Actual KI = SS_KI / SS_KI_DIV_SEL.
@@ -355,29 +355,33 @@ impl Drv8462Config {
 
     /// Serializes the CTRL12 fields to be written to the register.
     pub fn as_ctrl12(&self) -> u8 {
-        (self.standstill_power_saving_mode as u8) << 7 | self.standstill_fall_time << 3
+        let fall_time = self.standstill_fall_time.min(15);
+
+        (self.standstill_power_saving_mode as u8) << 7 | fall_time << 3
     }
 
     /// Serializes the CTRL13 fields to be written to the register.
     pub fn as_ctrl13(&self) -> u8 {
-        self.standstill_delay << 2 | (self.enable_internal_voltage_reference as u8) << 1
+        let delay = self.standstill_delay.clamp(1, 63);
+
+        delay << 2 | (self.enable_internal_voltage_reference as u8) << 1
     }
 
     /// Serializes the SS_CTRL1 fields to be written to the register.
     pub fn as_ss_ctrl1(&self) -> u8 {
-        (self.silent_step_sample_time as u8) << 6
+        (self.silent_step_sample_time as u8) << 7
             | (self.silent_step_frequency as u8) << 3
             | self.silent_step_enable as u8
     }
 
     /// Serializes the SS_CTRL2 fields to be written to the register.
     pub fn as_ss_ctrl2(&self) -> u8 {
-        self.silent_step_proportional_gain << 6
+        self.silent_step_proportional_gain.min(127)
     }
 
     /// Serializes the SS_CTRL3 fields to be written to the register.
     pub fn as_ss_ctrl3(&self) -> u8 {
-        self.silent_step_integral_gain << 6
+        self.silent_step_integral_gain.min(127)
     }
 
     /// Serializes the SS_CTRL4 fields to be written to the register.
@@ -388,7 +392,7 @@ impl Drv8462Config {
 
     /// Serializes the SS_CTRL5 fields to be written to the register.
     pub fn as_ss_ctrl5(&self) -> u8 {
-        self.silent_step_transition_frequency
+        self.silent_step_transition_frequency.max(1)
     }
 }
 
