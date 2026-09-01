@@ -18,3 +18,11 @@ CONFIG_FREERTOS_HZ=1000
 #CONFIG_BT_NIMBLE_EXT_ADV=y
 #CONFIG_BT_NIMBLE_NVS_PERSIST=y
 #CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
+
+# Pin PROJECT_VER to a short, fixed string instead of `git describe`. The
+# `git describe --dirty` output (e.g. "v1.1.4a-73-ge6768e5-dirty") can exceed
+# 24 chars, which overflows the heapless::String<24> that esp-idf-svc's
+# EspOta::get_running_slot() uses to parse the app descriptor's version field
+# (fails with ESP_ERR_INVALID_SIZE, panicking boot validation on `.unwrap()`).
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
+CONFIG_APP_PROJECT_VER="1.1.5"
