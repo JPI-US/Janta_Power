@@ -3,11 +3,11 @@ pub struct AutoMicrostepping {
     /// Controls the resolution for auto microstepping mode.
     ///
     /// Corresponds to the CTRL9 `RES_AUTO` field.
-    pub auto_microstepping_resolution: ResAuto,
+    pub resolution: ResAuto,
 
     /// Controls whether auto microstepping mode is enabled.
     /// Corresponds to the CTRL9 `EN_AUTO` field.
-    pub enable_auto_microstepping: bool,
+    pub enable: bool,
 }
 
 #[repr(u8)]

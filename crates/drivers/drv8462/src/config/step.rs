@@ -3,19 +3,19 @@ pub struct Step {
     /// Enables or disables STEP input filtering as per [`Self::step_frequency_tolerance`].
     ///
     /// Corresponds to the CTRL4 `FRQ_CHG` field.
-    pub enable_step_input_filtering: bool,
+    pub enable_filtering: bool,
 
     /// Programs the filter setting for the STEP input. Controls how much noise to tolerate before
     /// the STEP input is considered outside the expected frequency.
     ///
     /// Corresponds to the CTRL4 `STEP_FRQ_TOL` field.
-    pub step_frequency_tolerance: StepFrqTol,
+    pub frequency_tolerance: StepFrqTol,
 
     /// Controls whether the STEP edge is active on only the rising edge (false) or both
     /// the rising and falling edge (true).
     ///
     /// Corresponds to the CTRL9 `STEP_EDGE` field.
-    pub dual_step_edge: bool,
+    pub dual_edge: bool,
 }
 
 #[repr(u8)]

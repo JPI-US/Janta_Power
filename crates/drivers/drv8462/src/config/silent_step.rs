@@ -2,29 +2,29 @@
 pub struct SilentStep {
     /// Controls the silent step current zero cross sampling time.
     /// Increase the sampling time if current waveform is distorted around zero crossing.
-    pub silent_step_sample_time: SsSmplSel,
+    pub sample_time: SsSmplSel,
 
     /// Represents the silent step PWM frequency.
-    pub silent_step_frequency: SsPwmFreq,
+    pub frequency: SsPwmFreq,
 
     /// Represents whether or not silent step decay mode should be on.
-    pub silent_step_enable: bool,
+    pub enable: bool,
 
     /// Represents the proportional gain of the silent step PI controller.
     ///
     /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
-    pub silent_step_proportional_gain: u8,
+    pub proportional_gain: u8,
 
     /// Represents the integral gain of the silent step PI controller.
     ///
     /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
-    pub silent_step_integral_gain: u8,
+    pub integral_gain: u8,
 
     /// Divider factor for KI. Actual KI = SS_KI / SS_KI_DIV_SEL.
-    pub silent_step_ki_divider_factor: SsDivSel,
+    pub ki_divider_factor: SsDivSel,
 
     /// Divider factor for KP. Actual KP = SS_KP / SS_KP_DIV_SEL.
-    pub silent_step_kp_divider_factor: SsDivSel,
+    pub kp_divider_factor: SsDivSel,
 
     /// Programs the frequency at which the device transitions from
     /// silent step decay mode to another decay mode programmed by
@@ -40,20 +40,20 @@ pub struct SilentStep {
     /// ............
     ///
     /// 11111111b: 510 Hz
-    pub silent_step_transition_frequency: u8,
+    pub transition_frequency: u8,
 }
 
 impl Default for SilentStep {
     fn default() -> Self {
         Self {
-            silent_step_sample_time: SsSmplSel::default(),
-            silent_step_frequency: SsPwmFreq::default(),
-            silent_step_enable: false,
-            silent_step_proportional_gain: 0b_0000000,
-            silent_step_integral_gain: 0b_0000000,
-            silent_step_ki_divider_factor: SsDivSel::default(),
-            silent_step_kp_divider_factor: SsDivSel::default(),
-            silent_step_transition_frequency: 0b_00000000,
+            sample_time: SsSmplSel::default(),
+            frequency: SsPwmFreq::default(),
+            enable: false,
+            proportional_gain: 0b_0000000,
+            integral_gain: 0b_0000000,
+            ki_divider_factor: SsDivSel::default(),
+            kp_divider_factor: SsDivSel::default(),
+            transition_frequency: 0b_00000000,
         }
     }
 }

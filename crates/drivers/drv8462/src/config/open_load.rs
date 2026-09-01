@@ -3,20 +3,20 @@ pub struct OpenLoad {
     /// Enables or disables open load detection faults.
     ///
     /// Corresponds to the CTRL9 `EN_OL` field.
-    pub enable_open_load_detection: bool,
+    pub enable: bool,
 
     /// Controls whether nFAULT is released after latched OL fault is cleared using
     /// CLR_FLT bit or nSLEEP reset pulse, or whether nFAULT is released immediately
     /// after OL fault condition is removed.
     ///
     /// Corresponds to the CTRL9 `OL_MODE` field.
-    pub open_load_immediate_release: bool,
+    pub immediate_release: bool,
 
     /// Controls the time between when an open load is detected and when it is registered
     /// as a fault.
     ///
     /// Corresponds to the CTRL9 `OL_T` field.
-    pub open_load_detection_time: OlT,
+    pub detection_time: OlT,
 }
 
 #[repr(u8)]

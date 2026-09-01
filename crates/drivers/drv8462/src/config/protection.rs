@@ -3,17 +3,17 @@ pub struct Protection {
     /// Sets the time the driver waits to confirm an overcurrent condition before triggering overcurrent protection.
     ///
     /// Corresponds to the CTRL3 `TOCP` field.
-    pub overcurrent_protection_deglitch_time: TOcp,
+    pub overcurrent_deglitch_time: TOcp,
 
     /// Controls whether reaching an overcurrent condition raises a latched fault or auto-retries.
     ///
     /// Corresponds to the CTRL3 `OCP_MODE` field.
-    pub overcurrent_condition_auto_retry: bool,
+    pub overcurrent_auto_retry: bool,
 
     /// Controls whether reaching an overtemperature condition raises a latched fault or auto-retries.
     ///
     /// Corresponds to the CTRL3 `OTSD_MODE` field.
-    pub overtemperature_condition_auto_retry: bool,
+    pub overtemperature_auto_retry: bool,
 
     /// Controls whether overtemperature or undertemperature warnings are reported on `nFAULT`.
     ///

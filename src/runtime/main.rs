@@ -39,8 +39,8 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             },
             auto_microstepping: AutoMicrostepping {
-                auto_microstepping_resolution: ResAuto::TwoFiftySixthStep,
-                enable_auto_microstepping: true,
+                resolution: ResAuto::TwoFiftySixthStep,
+                enable: true,
                 ..Default::default()
             },
             ..Default::default()
