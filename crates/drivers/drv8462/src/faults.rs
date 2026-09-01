@@ -1,14 +1,13 @@
+//! DRV8462 fault representation.
+
 /// Fault conditions reported by the DRV8462.
 ///
-/// Each field corresponds to a fault condition represented by a bit in the
-/// DRV8462 fault register. Multiple fault conditions may be active
-/// simultaneously.
+/// Multiple fault conditions may be active simultaneously.
 ///
-/// Use [`Drv8462::get_faults`] to read and inspect all currently reported
-/// fault conditions.
+/// Use [`Drv8462::get_faults`] to read the currently reported fault conditions.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Faults {
-    /// `true` fault is active, `false` otherwise.
+    /// Whether any fault is currently active.
     pub fault_active: bool,
 
     /// SPI communication error.

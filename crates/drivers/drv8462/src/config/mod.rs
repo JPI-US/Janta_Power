@@ -1,3 +1,5 @@
+//! DRV8462 SPI register config.
+
 pub use auto_microstepping::*;
 pub use basic::*;
 pub use current_regulation::*;
@@ -16,44 +18,36 @@ pub mod silent_step;
 pub mod standstill;
 pub mod step;
 
-#[derive(Copy, Clone)]
-/// Abstraction over the raw DRv8462 config registers. Each struct field maps to a register field on the chip.
-/// For more information on the specifics of each field, see Page 74 of the [datasheet](https://www.ti.com/lit/ds/symlink/drv8452.pdf).
+#[derive(Default, Copy, Clone)]
+/// Configuration for the DRV8462.
+///
+/// Each field maps to one or more fields in the device's configuration
+/// registers. See page 74 of the [datasheet](https://www.ti.com/lit/ds/symlink/drv8462.pdf)
+/// for register details.
 pub struct Drv8462Config {
-    /// Basic settings such as microstepping mode, run current, holding current, etc.
+    /// Basic settings such as microstepping and motor current.
     basic: Basic,
-    /// Settings related to current regulation
-    current_regulation: CurrentRegulation,
-    /// Settings related to on-board protection and fault detection features.
-    protection: Protection,
-    /// Settings related to the step pulse.
-    step: Step,
-    /// Toggle and settings related to open load detection.
-    open_load: (bool, OpenLoad),
-    /// Toggle and settings related to auto microstepping.
-    auto_microstepping: (bool, AutoMicrostepping),
-    /// Toggle and settings related to standstill power saving.
-    standstill: (bool, Standstill),
-    /// Toggle and settings related to silent step.
-    silent_step: (bool, SilentStep),
-}
 
-impl Default for Drv8462Config {
-    fn default() -> Self {
-        Self {
-            basic: Basic::default(),
-            current_regulation: CurrentRegulation::default(),
-            protection: Protection::default(),
-            step: Step::default(),
-            open_load: (false, OpenLoad::default()),
-            auto_microstepping: (false, AutoMicrostepping::default()),
-            standstill: (false, Standstill::default()),
-            silent_step: (false, SilentStep::default()),
-            // enable_stall_detection: bool::default(),
-            // report_stall_detection: bool::default(),
-            // stall_threshold: 0b_000000000011,
-        }
-    }
+    /// Settings for motor current regulation.
+    current_regulation: CurrentRegulation,
+
+    /// Settings for protection and fault detection.
+    protection: Protection,
+
+    /// Settings for the step input.
+    step: Step,
+
+    /// Settings for open-load detection and whether it is enabled.
+    open_load: (bool, OpenLoad),
+
+    /// Settings for automatic microstepping and whether it is enabled.
+    auto_microstepping: (bool, AutoMicrostepping),
+
+    /// Settings for standstill power saving and whether it is enabled.
+    standstill: (bool, Standstill),
+
+    /// Settings for SilentStep operation and whether it is enabled.
+    silent_step: (bool, SilentStep),
 }
 
 impl Drv8462Config {
@@ -63,12 +57,8 @@ impl Drv8462Config {
 
     /// Serializes the CTRL1 fields to be written to the register.
     ///
-    /// # Note:
-    ///
-    /// This always set the `EN_OUT` value in bit index 7 to 0, which will
-    /// disable output when written. If you don't want to disable output,
-    /// Re-enable the chip output after writing (recommended) or set this bit
-    /// set this bit high yourself before writing.
+    /// `EN_OUT` is always cleared, disabling the output when written.
+    /// Re-enable the output after writing or set bit 7 manually before writing.
     pub fn as_ctrl1(&self) -> u8 {
         (self.current_regulation.output_rise_fall_time as u8) << 6
             | (self.current_regulation.time_off as u8) << 3
@@ -165,112 +155,48 @@ impl Drv8462Config {
     }
 
     /// Configures the basic driver settings.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`Basic`) - Basic driver configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn configure_basic(mut self, config: Basic) -> Self {
         self.basic = config;
         self
     }
 
     /// Configures the current regulation settings.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`CurrentRegulation`) - Current regulation configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn configure_current_regulation(mut self, config: CurrentRegulation) -> Self {
         self.current_regulation = config;
         self
     }
 
     /// Configures the driver protection settings.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`Protection`) - Driver protection configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn configure_protection(mut self, config: Protection) -> Self {
         self.protection = config;
         self
     }
 
     /// Configures the step input settings.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`Step`) - Step input configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn configure_step(mut self, config: Step) -> Self {
         self.step = config;
         self
     }
 
     /// Enables and configures open-load detection.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`OpenLoad`) - Open-load detection configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn enable_open_load_detection(mut self, config: OpenLoad) -> Self {
         self.open_load = (true, config);
         self
     }
 
     /// Enables and configures automatic microstepping.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`AutoMicrostepping`) - Automatic microstepping configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn enable_auto_microstepping(mut self, config: AutoMicrostepping) -> Self {
         self.auto_microstepping = (true, config);
         self
     }
 
     /// Enables and configures standstill power saving.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`Standstill`) - Standstill power-saving configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn enable_standstill_power_saving(mut self, config: Standstill) -> Self {
         self.standstill = (true, config);
         self
     }
 
     /// Enables and configures SilentStep operation.
-    ///
-    /// # Arguments
-    ///
-    /// - `config` (`SilentStep`) - SilentStep configuration.
-    ///
-    /// # Returns
-    ///
-    /// The updated driver configuration.
     pub fn enable_silent_step(mut self, config: SilentStep) -> Self {
         self.silent_step = (true, config);
         self

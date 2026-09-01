@@ -1,102 +1,114 @@
-#[derive(Clone, Copy)]
+//! Config settings pertaining to SilentStep operation.
+
+#[derive(Default, Clone, Copy)]
+/// Config settings pertaining to SilentStep operation.
 pub struct SilentStep {
-    /// Controls the silent step current zero cross sampling time.
-    /// Increase the sampling time if current waveform is distorted around zero crossing.
+    /// Controls the SilentStep current zero-crossing sampling time.
+    ///
+    /// Corresponds to the SS_CTRL1 `SS_SMPL_SEL` field.
     pub sample_time: SsSmplSel,
 
-    /// Represents the silent step PWM frequency.
+    /// Controls the SilentStep PWM frequency.
+    ///
+    /// Corresponds to the SS_CTRL1 `SS_PWM_FREQ` field.
     pub frequency: SsPwmFreq,
 
-    /// Represents the proportional gain of the silent step PI controller.
+    /// Controls the proportional gain of the SilentStep PI controller.
     ///
-    /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
+    /// Values are clamped to the 7-bit hardware range of 0 to 127.
+    ///
+    /// Corresponds to the SS_CTRL2 `SS_KP` field.
     pub proportional_gain: u8,
 
-    /// Represents the integral gain of the silent step PI controller.
+    /// Controls the integral gain of the SilentStep PI controller.
     ///
-    /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
+    /// Values are clamped to the 7-bit hardware range of 0 to 127.
+    ///
+    /// Corresponds to the SS_CTRL3 `SS_KI` field.
     pub integral_gain: u8,
 
-    /// Divider factor for KI. Actual KI = SS_KI / SS_KI_DIV_SEL.
+    /// Selects the divider factor for the integral gain.
+    ///
+    /// Actual KI = `SS_KI / SS_KI_DIV_SEL`.
+    ///
+    /// Corresponds to the SS_CTRL4 `SS_KI_DIV_SEL` field.
     pub ki_divider_factor: SsDivSel,
 
-    /// Divider factor for KP. Actual KP = SS_KP / SS_KP_DIV_SEL.
+    /// Selects the divider factor for the proportional gain.
+    ///
+    /// Actual KP = `SS_KP / SS_KP_DIV_SEL`.
+    ///
+    /// Corresponds to the SS_CTRL4 `SS_KP_DIV_SEL` field.
     pub kp_divider_factor: SsDivSel,
 
-    /// Programs the frequency at which the device transitions from
-    /// silent step decay mode to another decay mode programmed by
-    /// the DECAY bits. This frequency corresponds to the frequency of
-    /// the sinusoidal current waveform.
+    /// Controls the frequency at which SilentStep transitions to the
+    /// configured decay mode.
     ///
-    /// Corrects to 1 if set to 0.
+    /// The value is corrected to 1 if set to 0.
     ///
-    /// 00000001b: 2 Hz
-    ///
-    /// 00000010b: 4 Hz
-    ///
-    /// ............
-    ///
-    /// 11111111b: 510 Hz
+    /// Corresponds to the SS_CTRL5 `SS_TRANS_FREQ` field.
     pub transition_frequency: u8,
-}
-
-impl Default for SilentStep {
-    fn default() -> Self {
-        Self {
-            sample_time: SsSmplSel::default(),
-            frequency: SsPwmFreq::default(),
-            proportional_gain: 0b_0000000,
-            integral_gain: 0b_0000000,
-            ki_divider_factor: SsDivSel::default(),
-            kp_divider_factor: SsDivSel::default(),
-            transition_frequency: 0b_00000000,
-        }
-    }
 }
 
 #[repr(u8)]
 #[derive(Default, Copy, Clone)]
-/// Silent step current zero crossing time.
+/// SilentStep current zero-crossing sampling time.
 pub enum SsSmplSel {
-    #[default]
     /// 2 μs.
+    #[default]
     Us2 = 0b_00,
+
     /// 3 μs.
     Us3 = 0b_01,
+
     /// 4 μs.
     Us4 = 0b_10,
+
     /// 5 μs.
     Us5 = 0b_11,
 }
 
 #[repr(u8)]
 #[derive(Default, Copy, Clone)]
-/// Silent step PWM frequency.
+/// SilentStep PWM frequency.
 pub enum SsPwmFreq {
+    /// 25 kHz.
     #[default]
     Khz25 = 0b_00,
+
+    /// 33 kHz.
     Khz33 = 0b_01,
+
+    /// 42 kHz.
     Khz42 = 0b_10,
+
+    /// 50 kHz.
     Khz50 = 0b_11,
 }
 
 #[repr(u8)]
 #[derive(Default, Copy, Clone)]
-/// Silent step KI/KP divider factor select.
+/// SilentStep KI/KP divider factor.
 pub enum SsDivSel {
+    /// KI or KP / 32.
     #[default]
-    /// KI OR KP / 32.
     Div32 = 0b_000,
-    /// KI OR KP / 64.
+
+    /// KI or KP / 64.
     Div64 = 0b_001,
-    /// KI OR KP / 128.
+
+    /// KI or KP / 128.
     Div128 = 0b_010,
-    /// KI OR KP / 256.
+
+    /// KI or KP / 256.
     Div256 = 0b_011,
-    /// KI OR KP / 512.
+
+    /// KI or KP / 512.
     Div512 = 0b_100,
-    /// KI OR KP / 16.
+
+    /// KI or KP / 16.
     Div16 = 0b_101,
-    /// KI OR KP
+
+    /// KI or KP with no division.
     NoDiv = 0b_110,
 }

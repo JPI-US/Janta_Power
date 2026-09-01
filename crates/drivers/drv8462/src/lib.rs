@@ -23,36 +23,32 @@ pub mod registers;
 /// # Examples
 ///
 /// ```ignore
-/// fn main() -> anyhow::Result<()> {
-///     esp_idf_svc::sys::link_patches();
+/// let driver_hardware = Drv8462Hardware {
+///     spi: peripherals.spi2,
+///     sclk: peripherals.pins.gpio0,
+///     mosi: peripherals.pins.gpio38,
+///     miso: Some(peripherals.pins.gpio39),
+///     cs: peripherals.pins.gpio40,
+///     sleep: peripherals.pins.gpio21,
+///     step: peripherals.pins.gpio26,
+///     dir: peripherals.pins.gpio48,
+/// };
 ///
-///     let peripherals = Peripherals::take().unwrap();
+/// let driver_config = Drv8462Config::new()
+///     .configure_basic(Basic {
+///         microstep_mode: MicrostepMode::FullStep100,
+///         enable_internal_voltage_reference: true,
+///         run_current: 35,
+///         ..Default::default()
+///     })
+///     .enable_auto_microstepping(AutoMicrostepping {
+///         resolution: ResAuto::TwoFiftySixthStep,
+///         ..Default::default()
+///     });
 ///
-///     let mut driver = Drv8462::new(
-///         Drv8462Hardware {
-///             spi: peripherals.spi2,
-///             sclk: peripherals.pins.gpio41,
-///             mosi: peripherals.pins.gpio40,
-///             miso: Some(peripherals.pins.gpio39),
-///             cs: peripherals.pins.gpio38,
-///             sleep: peripherals.pins.gpio36,
-///             step: peripherals.pins.gpio35,
-///             dir: peripherals.pins.gpio45,
-///         },
-///         Drv8462Config {
-///             microstep_mode: MicrostepMode::FullStep100,
-///             enable_internal_voltage_reference: true,
-///             run_current: 35,
-///             auto_microstepping_resolution: ResAuto::TwoFiftySixthStep,
-///             enable_auto_microstepping: true,
-///             ..Default::default()
-///         },
-///     )?;
+/// let mut driver = Drv8462::new(driver_hardware, driver_config)?;
 ///
-///     driver.move_steps(2_500, true)?;
-///
-///     Ok(())
-/// }
+/// driver.move_steps(100, true)?;
 /// ```
 pub struct Drv8462<'d, SLP, STP, DIR, CS>
 where
@@ -70,13 +66,13 @@ where
     /// Sleep control GPIO.
     sleep: PinDriver<'d, SLP, Output>,
 
-    /// DRV8462 step input GPIO.
+    /// Step input GPIO.
     step: PinDriver<'d, STP, Output>,
 
-    /// DRV8462 direction input GPIO.
+    /// Direction input GPIO.
     dir: PinDriver<'d, DIR, Output>,
 
-    /// Configuration used to initialize the DRV8462 registers.
+    /// Configuration used for the DRV8462 registers.
     config: Drv8462Config,
 
     /// Tracks the requested driver enable state.
@@ -120,13 +116,13 @@ where
     /// SPI chip-select pin.
     pub cs: CS,
 
-    /// DRV8462 sleep control pin.
+    /// Sleep control pin.
     pub sleep: SLP,
 
-    /// DRV8462 step input pin.
+    /// Step input pin.
     pub step: STP,
 
-    /// DRV8462 direction input pin.
+    /// Direction input pin.
     pub dir: DIR,
 }
 
@@ -139,18 +135,12 @@ where
 {
     /// Creates and initializes a DRV8462 driver.
     ///
-    /// The DRV8462 is initially configured to be awake with disabled outputs.
-    ///
-    /// # Arguments
-    ///
-    /// * `hardware` - SPI peripheral and GPIO resources connected to the
-    ///   DRV8462. see [`Drv8462Hardware`].
-    /// * `config` - Initial DRV8462 register configuration. See [`Drv8462Config`]
+    /// The driver starts awake with its outputs disabled.
     ///
     /// # Errors
     ///
-    /// Returns an error if SPI or GPIO initialization fails, or if
-    /// communication with the DRV8462 fails while applying the configuration.
+    /// Returns an error if SPI or GPIO initialization fails, or if applying
+    /// the initial configuration fails.
     ///
     /// # Examples
     ///
@@ -214,14 +204,6 @@ where
 
     /// Transfers one 16-bit SPI frame.
     ///
-    /// # Arguments
-    ///
-    /// * `value` - 16-bit SPI frame to transmit.
-    ///
-    /// # Returns
-    ///
-    /// The 16-bit frame returned by the DRV8462.
-    ///
     /// # Errors
     ///
     /// Returns an error if chip-select control or the SPI transfer fails.
@@ -242,18 +224,11 @@ where
 
     /// Writes an 8-bit value to a DRV8462 register.
     ///
-    /// # Arguments
-    ///
-    /// * `reg` - Register to write.
-    /// * `value` - Value to write to the register.
-    ///
-    /// # Returns
-    ///
-    /// The low byte returned by the DRV8462 during the SPI transaction.
+    /// Returns the low byte received during the transaction.
     ///
     /// # Errors
     ///
-    /// Returns an error if unlocking, SPI communication, or locking fails.
+    /// Returns an error if the SPI transfer fails.
     pub fn write_register(&mut self, reg: Register, value: u8) -> Result<u8> {
         let frame = ((reg as u16) << 8) | value as u16;
 
@@ -264,17 +239,9 @@ where
 
     /// Reads an 8-bit value from a DRV8462 register.
     ///
-    /// # Arguments
-    ///
-    /// * `reg` - Register to read.
-    ///
-    /// # Returns
-    ///
-    /// The current 8-bit register value returned by the device.
-    ///
     /// # Errors
     ///
-    /// Returns an error if the SPI transaction fails.
+    /// Returns an error if the SPI transfer fails.
     pub fn read_register(&mut self, reg: Register) -> Result<u8> {
         let frame = (1 << 14) | ((reg as u16) << 8);
 
@@ -285,11 +252,11 @@ where
 
     /// Applies the configured DRV8462 register values.
     ///
-    /// This sets the device to be not sleeping, with outputs disabled.
+    /// The device is awakened and its outputs remain disabled.
     ///
     /// # Errors
     ///
-    /// Returns an error if a GPIO operation, register read, or register write
+    /// Returns an error if GPIO control, register access, or configuration
     /// fails.
     pub fn apply_config(&mut self) -> Result<()> {
         self.sleep.set_high()?;
@@ -321,13 +288,9 @@ where
 
     /// Enables or disables the motor driver.
     ///
-    /// # Arguments
-    ///
-    /// * `enable` - `true` to enable the driver, `false` to disable it.
-    ///
     /// # Errors
     ///
-    /// Returns an error if `CTRL1` cannot be read or written.
+    /// Returns an error if the CTRL1 register cannot be read or written.
     pub fn set_enabled(&mut self, enable: bool) -> Result<()> {
         let mut ctrl1 = self.read_register(Register::Ctrl1)?;
 
@@ -345,9 +308,7 @@ where
 
     /// Clears the DRV8462 fault state.
     ///
-    /// Clear faults after handling a fault condition. Faults that are still active
-    /// after being cleared may be reported again. Output will not be given to the
-    /// motor if there is an active fault.
+    /// Active faults may be reported again after being cleared.
     fn clear_faults(&mut self) -> Result<()> {
         let mut ctrl3 = self.read_register(Register::Ctrl3)?;
 
@@ -358,13 +319,11 @@ where
         Ok(())
     }
 
-    /// Unlocks all registers and allows them to be written to.
-    ///
-    /// [`lock`] the registers again after writing.
+    /// Unlocks all writable registers.
     ///
     /// # Errors
     ///
-    /// Returns an error if `CTRL3` cannot be read or written.
+    /// Returns an error if the CTRL3 register cannot be read or written.
     fn unlock(&mut self) -> Result<()> {
         let mut ctrl3 = self.read_register(Register::Ctrl3)?;
 
@@ -376,13 +335,11 @@ where
         Ok(())
     }
 
-    /// Locks all registers and bars them from being written to.
-    ///
-    /// [`unlock`] the register to be able to write it.
+    /// Locks all writable registers.
     ///
     /// # Errors
     ///
-    /// Returns an error if `CTRL3` cannot be read or written.
+    /// Returns an error if the CTRL3 register cannot be read or written.
     fn lock(&mut self) -> Result<()> {
         let mut ctrl3 = self.read_register(Register::Ctrl3)?;
 
@@ -396,14 +353,8 @@ where
 
     /// Generates one step pulse if there is no active fault.
     ///
-    /// # Arguments
-    ///
-    /// * `delay_us` - Delay, in microseconds, after the step pulse.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(true)` if the step pulse was generated.
-    /// * `Ok(false)` if an active fault prevented the step.
+    /// Returns `true` if the pulse was generated, or `false` if an active
+    /// fault prevented the step.
     ///
     /// # Errors
     ///
@@ -429,26 +380,15 @@ where
 
     /// Moves the motor by generating a sequence of step pulses.
     ///
-    /// The motor will accelerate and decelerate linearly. Motion stops if a
+    /// The motor accelerates and decelerates linearly. Motion stops if a
     /// fault occurs.
     ///
-    /// # Arguments
-    ///
-    /// * `steps` - Number of step pulses to generate.
-    /// * `forward` - `true` to move one direction, `false` to move the other.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(true)` if the requested motion completed.
-    /// * `Ok(false)` if an active fault prevented motion.
+    /// Returns `true` if the requested motion completed, or `false` if an
+    /// active fault prevented motion.
     ///
     /// # Errors
     ///
     /// Returns an error if GPIO or SPI communication fails.
-    ///
-    /// # Panics
-    ///
-    /// This method does not intentionally panic for a valid `steps` value.
     pub fn move_steps(&mut self, steps: u32, forward: bool) -> Result<bool> {
         if self.get_faults()?.fault_active {
             return Ok(false);
@@ -482,26 +422,17 @@ where
         Ok(true)
     }
 
-    /// Reads the DRV8462 fault register and returns the currently reported
-    /// fault conditions.
+    /// Reads the DRV8462 fault register.
     ///
-    /// Multiple fault conditions may be reported simultaneously. The returned
-    /// [`Faults`] structure contains an individual flag for each fault condition
-    /// represented by the DRV8462 fault register.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(Faults)` - The fault conditions currently reported by the DRV8462.
-    /// - `Err(_)` - An error if the fault register cannot be read.
+    /// Multiple fault conditions may be reported simultaneously.
     ///
     /// # Errors
     ///
-    /// Returns an error if communication with the DRV8462 fails while reading the
-    /// fault register.
+    /// Returns an error if the fault register cannot be read.
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// let faults = driver.get_faults()?;
     ///
     /// if faults.spi_error {

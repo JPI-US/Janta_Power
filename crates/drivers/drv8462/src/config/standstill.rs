@@ -1,40 +1,21 @@
+//! Config settings pertaining to standstill power saving mode.
+
 #[derive(Clone, Copy)]
+/// Config settings pertaining to standstill power saving mode.
 pub struct Standstill {
-    /// Controls the time it takes the current to reduce from the run current to the holding
-    /// current after TSTSL_DLY time has elapsed.
+    /// Controls how quickly the current falls from run current to holding current.
     ///
-    /// The hardware register is only 4 bits wide. Values are capped between 0 and 15.
-    ///
-    /// 0b_000: fall time = 0
-    ///
-    /// 0b_0001: fall time for each current step = 1 ms
-    ///
-    /// ............
-    ///
-    /// 0b_0100: fall time for each current step = 4 ms
-    ///
-    /// ............
-    ///
-    /// 0b_1111: fall time for each current step = 15 ms
+    /// Each step takes `fall_time` milliseconds. Values are clamped to the
+    /// 4-bit hardware range of 0 to 15.
     ///
     /// Corresponds to the CTRL12 `TSTSL_FALL` field.
     pub fall_time: u8,
 
-    /// Controls the delay between last STEP pulse and activation of standstill power saving mode.
+    /// Controls the delay between the last STEP pulse and activation of
+    /// standstill power saving mode.
     ///
-    /// 0b_000000: Reserved
-    ///
-    /// 0b_000001: Delay = 1 x 16 ms = 16 ms
-    ///
-    /// ............
-    ///
-    /// 0b_000100: Delay = 4 x 16 ms = 64 ms
-    ///
-    /// ............
-    ///
-    /// 0b_111111: Delay = 63 x 16 ms = 1.008 s
-    ///
-    /// The hardware register is only 6 bits. Values are clamped between 1 and 63.
+    /// Each unit represents 16 ms. Values are clamped to the hardware range
+    /// of 1 to 63.
     ///
     /// Corresponds to the CTRL13 `TSTSL_DLY` field.
     pub delay: u8,
