@@ -15,3 +15,4 @@ MCU = "esp32s3"
 # Note: this variable is not used by the pio builder (`cargo build --features pio`)
 ESP_IDF_VERSION = "v5.2.2"
 LD_LIBRARY_PATH = "/usr/lib64:/usr/lib"
+PIP_NO_CACHE_DIR = "1" #Windows OS fix
