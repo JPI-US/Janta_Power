@@ -1,10 +1,5 @@
 #[derive(Clone, Copy)]
 pub struct Standstill {
-    /// Determines whether the driver will enter a low-power state when completely idle.
-    ///
-    /// Corresponds to the CTRL11 `EN_STSL` field.
-    pub power_saving_mode: bool,
-
     /// Controls the time it takes the current to reduce from the run current to the holding
     /// current after TSTSL_DLY time has elapsed.
     ///
@@ -48,7 +43,6 @@ pub struct Standstill {
 impl Default for Standstill {
     fn default() -> Self {
         Self {
-            power_saving_mode: bool::default(),
             fall_time: 0b_0100,
             delay: 0b_000100,
         }

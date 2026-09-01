@@ -7,9 +7,6 @@ pub struct SilentStep {
     /// Represents the silent step PWM frequency.
     pub frequency: SsPwmFreq,
 
-    /// Represents whether or not silent step decay mode should be on.
-    pub enable: bool,
-
     /// Represents the proportional gain of the silent step PI controller.
     ///
     /// Hardware register is only 7 bits wide. Values are clamped between 0 and 127.
@@ -48,7 +45,6 @@ impl Default for SilentStep {
         Self {
             sample_time: SsSmplSel::default(),
             frequency: SsPwmFreq::default(),
-            enable: false,
             proportional_gain: 0b_0000000,
             integral_gain: 0b_0000000,
             ki_divider_factor: SsDivSel::default(),

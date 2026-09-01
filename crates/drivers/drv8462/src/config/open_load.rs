@@ -1,10 +1,5 @@
 #[derive(Default, Clone, Copy)]
 pub struct OpenLoad {
-    /// Enables or disables open load detection faults.
-    ///
-    /// Corresponds to the CTRL9 `EN_OL` field.
-    pub enable: bool,
-
     /// Controls whether nFAULT is released after latched OL fault is cleared using
     /// CLR_FLT bit or nSLEEP reset pulse, or whether nFAULT is released immediately
     /// after OL fault condition is removed.
