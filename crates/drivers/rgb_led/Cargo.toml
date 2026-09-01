@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.86"
-esp-idf-svc = "0.51"
-log = "=0.4.22"
-rgb = "0.8.29"
+anyhow.workspace = true
+esp-idf-svc.workspace = true
+log.workspace = true
+rgb.workspace = true

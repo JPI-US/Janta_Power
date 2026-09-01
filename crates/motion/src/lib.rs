@@ -1,29 +1,33 @@
+use core::ops::Not;
+
+use network::telemetry::Component;
+
 pub mod motion {
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
+    use std::time::Instant;
 
     use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
-    use astronav::coords::noaa_sun::NOAASun;
-    use chrono::{Datelike, Local, Timelike};
+    use anyhow::Result;
+    use chrono::Local;
     use clock::Clock;
+    use encoder::ENC_TICKS_PER_DEG;
     use esp_idf_svc::{
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
     };
-    use network::mqtt::Mqtt;
-    use ota::OtaUpdater;
+    use log::{info, warn};
+    use network::telemetry::Component;
     use quadrature_encoder::{IncrementalEncoder, QuadStep, Rotary};
     use semver::Version;
-    use wifi::wifi::{Wifi, WifiState};
+
+    use crate::{
+        Direction,
+        MotionEvent::{self},
+    };
 
     // Focused motion modules.
     mod encoder;
     mod homing;
     mod move_exec;
-
-    use encoder::ENC_TICKS_PER_DEG;
 
     // Build-time constants generated from .env.
     include!(concat!(env!("OUT_DIR"), "/constants.rs"));
@@ -31,12 +35,9 @@ pub mod motion {
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
-    /// Interval between republishes of a critical error while the device is
-    /// wedged (mirrors `src/runtime/infra/telemetry.rs::CRITICAL_REPUBLISH_INTERVAL`).
-    const CRITICAL_REPUBLISH_INTERVAL: Duration = Duration::from_secs(900);
-
     // Keep step math in one place.
-    pub(crate) const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
+    // TODO: This should be in switchboard i think
+    pub const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
 
     #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
@@ -46,12 +47,13 @@ pub mod motion {
         EncoderGuarded,
     }
 
-    #[derive(Debug, PartialEq, Copy, Clone)]
+    #[derive(Debug, PartialEq, Clone)]
     pub enum MoveOutcome {
         Completed,
         AbortedPowerMissing,
         AbortedStall,
         AbortedOvershoot,
+        AbortedErrorLoop(Component, String, String),
     }
 
     #[derive(Copy, Clone, Debug, PartialEq)]
@@ -65,65 +67,64 @@ pub mod motion {
     }
 
     pub struct Motion<'a> {
-        location: f32,
-        motion_mode: MotionMode,
-        speed: f32,
-        acceleration: u16,
-        motor: Driver,
-        motor_device:
+        pub location: f32,
+        pub motion_mode: MotionMode,
+        pub previous_motion_mode: MotionMode,
+        pub speed: f32,
+        pub acceleration: u16,
+        pub motor: Driver,
+        pub motor_device:
             StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
-        motor_clock: OperatingSystemClock,
-        // Legacy field kept for compatibility.
-        #[allow(dead_code)] // TODO: Remove #[allow(dead_code)]
-        prev_balance: i32,
-        relay: PinDriver<'a, Gpio17, Output>,
-        lmsw: PinDriver<'a, Gpio14, Input>,
-        encoder: IncrementalEncoder<
+        pub motor_clock: OperatingSystemClock,
+        pub relay: PinDriver<'a, Gpio17, Output>,
+        pub lmsw: PinDriver<'a, Gpio14, Input>,
+        pub encoder: IncrementalEncoder<
             Rotary,
             PinDriver<'a, Gpio10, Input>,
             PinDriver<'a, Gpio11, Input>,
             QuadStep,
         >,
         // Encoder zero is a software offset: adjusted = raw - offset.
-        encoder_zero_offset: i32,
+        pub encoder_zero_offset: i32,
         // Limit-switch debounce state (active-low switch).
-        lmsw_last_state_pressed: bool,
-        lmsw_last_change: Instant,
-        lmsw_zeroed_this_press: bool,
+        pub lmsw_last_state_pressed: bool,
+        pub lmsw_last_change: Instant,
+        pub lmsw_zeroed_this_press: bool,
         // captured when the limit switch is hit (before we re-zero).
-        last_home_error_ticks: Option<i32>,
+        pub last_home_error_ticks: Option<i32>,
 
         // Stall detector state.
-        motor_power_on: bool,
-        stall_detection_enabled: bool,
-        stall_last_check: Instant,
-        stall_step_pos_at_last_enc_change: i64,
-        stall_last_enc_ticks_seen: i32,
-        stall_reported: bool,
-        stall_consecutive: u8,
+        pub motor_power_on: bool,
+        pub stall_detection_enabled: bool,
+        pub stall_last_check: Instant,
+        pub stall_step_pos_at_last_enc_change: i64,
+        pub stall_last_enc_ticks_seen: i32,
+        pub stall_reported: bool,
+        pub stall_consecutive: u8,
 
         // Ratio-based stall detection state (EncoderGuarded mode only).
-        stall_check_start_encoder_ticks: i32,
-        stall_check_start_step_pos: i64,
-        stall_check_last_interval_step: i64,
+        pub stall_check_start_encoder_ticks: i32,
+        pub stall_check_start_step_pos: i64,
+        pub stall_check_last_interval_step: i64,
 
         // Encoder overshoot protection state (EncoderGuarded mode only).
-        overshoot_enc_start: Option<i32>,
-        overshoot_expected_ticks: Option<i64>,
+        pub overshoot_enc_start: Option<i32>,
+        pub overshoot_expected_ticks: Option<i64>,
 
         // Last attempted move outcome, consumed by `take_last_move_outcome`.
-        last_move_outcome: Option<MoveOutcome>,
+        pub last_move_outcome: Option<MoveOutcome>,
 
         // Tracking soft limits.
-        soft_limits_enabled: bool,
-        soft_limit_min_deg: f32,
-        soft_limit_max_deg: f32,
+        pub soft_limits_enabled: bool,
+        pub soft_limit_min_deg: f32,
+        pub soft_limit_max_deg: f32,
 
         // During homing, overshoot checks are disabled.
-        is_homing: bool,
+        pub is_homing: bool,
+        pub need_rehome: bool,
 
-        relay_active_level: ActiveLevel,
-        limit_switch_active_level: ActiveLevel,
+        pub relay_active_level: ActiveLevel,
+        pub limit_switch_active_level: ActiveLevel,
     }
 
     // Direction and step wiring notes:
@@ -139,11 +140,12 @@ pub mod motion {
             encoder_b_pin: Gpio11,
             relay_active_level: ActiveLevel,
             limit_switch_active_level: ActiveLevel,
-        ) -> Motion<'a> {
-            let step = PinDriver::output(step_pin).unwrap();
-            let direction = PinDriver::output(direction_pin).unwrap();
+        ) -> Result<Motion<'a>> {
+            let step = PinDriver::output(step_pin)?;
+            let direction = PinDriver::output(direction_pin)?;
+
             // Relay is active-low: boot with relay OFF.
-            let mut relay = PinDriver::output(relay_pin).unwrap();
+            let mut relay = PinDriver::output(relay_pin)?;
             relay.set_high().unwrap_or_default();
 
             let encoder_a = PinDriver::input(encoder_a_pin).unwrap();
@@ -162,15 +164,15 @@ pub mod motion {
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
-            Motion {
+            Ok(Motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
+                previous_motion_mode: MotionMode::EncoderGuarded,
                 speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
                 acceleration: DEFAULT_ACCEL_STEPS_PER_S2,
                 motor: Driver::new(),
                 motor_device: StepAndDirection::new(step, direction),
                 motor_clock: OperatingSystemClock::new(),
-                prev_balance: 0,
                 relay,
                 lmsw,
                 encoder,
@@ -202,10 +204,11 @@ pub mod motion {
                 soft_limit_max_deg: 290.0,
 
                 is_homing: false,
+                need_rehome: false,
 
                 relay_active_level,
                 limit_switch_active_level,
-            }
+            })
         }
 
         pub fn update_position(&mut self, location: f32) {
@@ -247,7 +250,7 @@ pub mod motion {
         }
 
         #[inline]
-        pub(crate) fn relay_on(&mut self) {
+        pub fn relay_on(&mut self) {
             // Active-low: LOW = ON
             if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_low().unwrap_or_default();
@@ -259,7 +262,7 @@ pub mod motion {
         }
 
         #[inline]
-        pub(crate) fn relay_off(&mut self) {
+        pub fn relay_off(&mut self) {
             // Active-low: HIGH = OFF
             if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_high().unwrap_or_default();
@@ -290,16 +293,15 @@ pub mod motion {
         /// Called from the two sunset-time homing sites inside
         /// `set_tower_position`. If no drift was captured this run, logs a
         /// warning and returns without publishing.
-        fn report_home_error_ticks<T: NvsPartitionId>(
+        pub fn report_home_error_ticks<T: NvsPartitionId>(
             &mut self,
-            mqtt: &mut Mqtt,
             nvs: &mut EspNvs<T>,
-            device_id: &str,
+            _device_id: &str,
             persist_nvs: bool,
-        ) {
+        ) -> Option<MotionEvent> {
             let Some(home_error_ticks) = self.take_last_home_error_ticks() else {
                 log::warn!("No home_error_ticks captured on this homing run");
-                return;
+                return None;
             };
 
             let error_deg = home_error_ticks as f32 / ENC_TICKS_PER_DEG;
@@ -330,18 +332,6 @@ pub mod motion {
                 )
             };
 
-            let now = Local::now()
-                .format(network::telemetry::TIME_FORMAT)
-                .to_string();
-            let payload = network::telemetry::EncoderErrorTicks {
-                current_time: &now,
-                encoder_error_ticks: home_error_ticks,
-                category,
-                result: &result,
-            };
-            let topic = network::telemetry::topic::data_encoder_error_ticks(device_id);
-            let _ = network::telemetry::publish_json(mqtt, &topic, &payload);
-
             if persist_nvs {
                 match nvs.set_i32(NVS_KEY_HOME_ERROR_TICKS, home_error_ticks) {
                     Ok(()) => log::info!("Stored home_error_ticks in NVS: {}", home_error_ticks),
@@ -350,261 +340,56 @@ pub mod motion {
             } else {
                 log::warn!("NVS persist disabled: skipping home_error_ticks store");
             }
+
+            let now = Local::now()
+                .format(network::telemetry::TIME_FORMAT)
+                .to_string();
+            let payload = network::telemetry::EncoderErrorTicks {
+                current_time: now,
+                encoder_error_ticks: home_error_ticks,
+                category,
+                result,
+            };
+
+            let event = MotionEvent::HomeErrorTicks(serde_json::to_string(&payload).unwrap());
+
+            Some(event)
         }
 
-        pub fn set_tower_position<I2C, T>(
-            &mut self,
-            ctx: TowerPositionCtx<'_, '_, I2C, T>,
-            location: f32,
-            _balance: i32,
-        ) -> bool
-        where
-            I2C: embedded_hal::i2c::I2c,
-            T: NvsPartitionId,
-        {
-            self.update_position(location);
-            log::info!("{},", ctx.clock.after_sunrise());
-            if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
-                // If already at home, keep encoder zeroed before daytime tracking.
-                self.force_zero_if_limit_switch_pressed();
-                // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
-                // (same instant as settimeofday after RTC/NTP) so h/m/s match tz_offset_h.
-                let now = Local::now();
-                let timezone_hours = (now.offset().local_minus_utc() as f32) / 3600.0;
-                let sun = NOAASun {
-                    year: now.year() as u16,
-                    doy: now.ordinal() as u16,
-                    long: ctx.clock.get_longitude() as f32,
-                    lat: ctx.clock.get_latitude() as f32,
-                    timezone: timezone_hours,
-                    hour: now.hour() as u8,
-                    min: now.minute() as u8,
-                    sec: now.second() as u8,
-                };
-                let rtc_naive = ctx.clock.get_date_time();
-                log::info!(
-                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
-                    sun.year,
-                    sun.doy,
-                    sun.lat,
-                    sun.long,
-                    timezone_hours,
-                    sun.hour,
-                    sun.min,
-                    sun.sec
-                );
-                log::info!(
-                    "NOAA time cross-check: Local::now={} | DS3231 UTC naive={}",
-                    now.format("%Y-%m-%d %H:%M:%S %:z"),
-                    rtc_naive
-                );
-                log::info!("Tracking in progress");
-                let angle_offset_raw = sun.azimuth_in_deg() - (location as f64);
-
-                // Clamp daytime target heading to soft limits.
-                let target_raw = (location as f64) + angle_offset_raw;
-                let target_clamped = if self.soft_limits_enabled {
-                    let min = self.soft_limit_min_deg as f64;
-                    let max = self.soft_limit_max_deg as f64;
-                    if target_raw < min {
-                        log::warn!(
-                            "SOFT_LIMIT clamp: target_raw={:.2} < min={:.2} -> clamping",
-                            target_raw,
-                            min
-                        );
-                        min
-                    } else if target_raw > max {
-                        log::warn!(
-                            "SOFT_LIMIT clamp: target_raw={:.2} > max={:.2} -> clamping",
-                            target_raw,
-                            max
-                        );
-                        max
-                    } else {
-                        target_raw
-                    }
-                } else {
-                    target_raw
-                };
-
-                let angle_offset = target_clamped - (location as f64);
-                log::info!("Actual Location: {}", location);
-                log::info!(
-                    "Angle Offset: {} (raw_offset={} target_raw={} target_clamped={})",
-                    angle_offset,
-                    angle_offset_raw,
-                    target_raw,
-                    target_clamped
-                );
-                log::info!("Sun Angle: {}", sun.azimuth_in_deg());
-                // Daytime tracking: no move in deadband, otherwise step by offset.
-                if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
-                    self.relay_off();
-                    return true;
-                }
-
-                self.relay_on();
-                log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
-                let steps = (angle_offset / 360.0) * STEPS_PER_REV;
-                log::info!("Steps Needed: {}", steps as i64);
-                let move_outcome = self.move_by(steps as i64);
-                if move_outcome != MoveOutcome::Completed {
-                    self.relay_off();
-                    log::warn!("Tracking move aborted: {:?}", move_outcome);
-                    // Return true so main does NOT persist heading/snapshot for a move that did not happen.
-                    return true;
-                }
-                self.update_position((location as f64 + angle_offset) as f32);
-                self.relay_off();
-
-                let tower_angle = location as f64 + angle_offset;
-                let payload = network::telemetry::Angle {
-                    current_time: &ctx.formatted_time,
-                    tower_angle,
-                };
-                let topic = network::telemetry::topic::data_angle(ctx.device_id);
-                let _ = network::telemetry::publish_json(ctx.mqtt, &topic, &payload);
-
-                false
-            } else {
-                // Sunset Operation
-                if (location - HOME_HEADING_DEG).abs() < 0.01 {
-                    // Verify home physically when heading says home.
-
-                    if self.lmsw_active() {
-                        log::warn!(
-                            "Heading near home but limit switch not pressed; verifying home by homing CCW"
-                        );
-                        let ok = self.find_limit_switch_ccw();
-                        if ok {
-                            log::info!("Home verification homing succeeded");
-                            self.report_home_error_ticks(
-                                ctx.mqtt,
-                                ctx.nvs,
-                                ctx.device_id,
-                                ctx.persist_nvs,
-                            );
-                        } else {
-                            log::error!(
-                                "Home verification failed: limit switch could not be found"
-                            );
-                            loop {
-                                let now = Local::now()
-                                    .format(network::telemetry::TIME_FORMAT)
-                                    .to_string();
-                                let _ = network::telemetry::publish_error(
-                                    ctx.mqtt,
-                                    ctx.device_id,
-                                    &now,
-                                    network::telemetry::Component::LimitSwitch,
-                                    "Limit switch not found during sunset home verification",
-                                    "Heading indicated home at sunset but the limit switch did not confirm; re-verification homing sweep failed.",
-                                );
-                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
-                            }
-                        }
-                    }
-
-                    log::info!("At sleep position");
-                    // Ensure encoder ticks are truly 0 at home while we sleep.
-                    self.force_zero_if_limit_switch_pressed();
-
-                    let mut last_check = Instant::now();
-                    let check_interval = Duration::from_secs(2 * 60 * 60);
-
-                    while ctx.clock.after_sunset() || !ctx.clock.after_sunrise() {
-                        if ctx.clock.after_sunrise() && !ctx.clock.after_sunset() {
-                            log::info!("Sunrise detected, exiting sleep loop");
-                            break;
-                        }
-                        if ctx.allow_ota && last_check.elapsed() >= check_interval {
-                            log::info!("2 hours elapsed, checking for OTA");
-
-                            log::info!("Current wifi state: {:?}", ctx.wifi.state());
-                            if ctx.wifi.state() == WifiState::Disconnected {
-                                let _ = ctx.wifi.reconnect_if_disconnected();
-                            }
-
-                            thread::sleep(Duration::from_secs(3));
-                            let mut updater = OtaUpdater::new_ota(
-                                ctx.current_version.clone(),
-                                ctx.mqtt,
-                                ctx.device_id,
-                                Some("device1A"),
-                                Some("device1A"),
-                            )
-                            .expect("Failed to create OTA adapter instance");
-
-                            thread::sleep(Duration::from_secs(3));
-                            let run_compare = updater.run_version_compare(ctx.nvs);
-
-                            match run_compare {
-                                Ok(_) => log::info!("Version compare succeeded"),
-                                Err(e) => {
-                                    log::error!("Version compare failed: {:?}", e);
-                                }
-                            }
-
-                            last_check = Instant::now();
-                        } else if !ctx.allow_ota && last_check.elapsed() >= check_interval {
-                            log::info!("OTA disabled: skipping periodic OTA check");
-                            last_check = Instant::now();
-                        }
-                        log::info!("Still waiting for sunrise...");
-                        std::thread::sleep(std::time::Duration::from_secs(600));
-                    }
-
-                    true
-                } else {
-                    log::info!("Moving to sleep position...");
-                    let limit_sw_status = self.find_limit_switch_ccw();
-                    match limit_sw_status {
-                        true => {
-                            log::info!("Limit switch has returned true");
-                            self.report_home_error_ticks(
-                                ctx.mqtt,
-                                ctx.nvs,
-                                ctx.device_id,
-                                ctx.persist_nvs,
-                            );
-                        }
-                        false => {
-                            log::error!(
-                                "Limit switch has returned false, limit switch could not be found"
-                            );
-                            loop {
-                                let now = Local::now()
-                                    .format(network::telemetry::TIME_FORMAT)
-                                    .to_string();
-                                let _ = network::telemetry::publish_error(
-                                    ctx.mqtt,
-                                    ctx.device_id,
-                                    &now,
-                                    network::telemetry::Component::LimitSwitch,
-                                    "Limit switch not found during move-to-sleep homing",
-                                    "End-of-day homing sweep failed to locate the limit switch.",
-                                );
-                                thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
-                            }
-                        }
-                    }
-                    log::info!("Tower has reached sleep position");
-
-                    false
-                }
+        pub fn detect_stepper_transition(&mut self) {
+            if self.motion_mode == MotionMode::StepperOnly
+                && self.previous_motion_mode != MotionMode::StepperOnly
+            {
+                info!("Motion mode switched to StepperOnly - re-homing required");
+                self.need_rehome = true;
             }
+            self.previous_motion_mode = self.motion_mode;
+        }
+
+        pub fn is_rehome_pending(&mut self) -> anyhow::Result<bool> {
+            if !(self.need_rehome && self.motion_mode == MotionMode::StepperOnly) {
+                return Ok(false);
+            }
+
+            const HOMING_DIRECTION: Direction = Direction::Ccw;
+            match HOMING_DIRECTION {
+                Direction::Cw => {
+                    warn!("CW homing requested, but firmware is only configured for CCW. Performing CCW home.");
+                }
+                Direction::Ccw => {}
+            };
+
+            Ok(true)
         }
     }
 
-    pub struct TowerPositionCtx<'ctx, 'wifi, I2C, T>
+    pub struct TowerPositionCtx<'ctx, I2C, T>
     where
         I2C: embedded_hal::i2c::I2c,
         T: NvsPartitionId,
     {
         pub clock: &'ctx mut Clock<I2C>,
-        pub mqtt: &'ctx mut Mqtt,
         pub nvs: &'ctx mut EspNvs<T>,
-        pub wifi: &'ctx mut Wifi<'wifi>,
         pub current_version: Version,
         pub formatted_time: String,
         pub persist_nvs: bool,
@@ -613,4 +398,43 @@ pub mod motion {
     }
 }
 
-pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
+pub enum MotionEvent {
+    Angle(String),
+    HomeErrorTicks(String),
+    ErrorLoop(Component, String, String),
+    CheckForOTA,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Direction {
+    Cw,
+    Ccw,
+}
+
+impl Not for Direction {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Direction::Cw => Direction::Ccw,
+            Direction::Ccw => Direction::Cw,
+        }
+    }
+}
+
+impl Direction {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Direction::Cw => "CW",
+            Direction::Ccw => "CCW",
+        }
+    }
+
+    /// Returns degrees with sign applied (CW positive, CCW negative).
+    pub const fn apply_to_deg(&self, deg: f32) -> f32 {
+        match self {
+            Direction::Cw => deg,
+            Direction::Ccw => -deg,
+        }
+    }
+}

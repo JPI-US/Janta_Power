@@ -5,6 +5,7 @@ pub mod timezone;
 
 use std::{thread, time::Duration};
 
+use anyhow::{anyhow, Result};
 use ds323x::{DateTimeAccess, Datelike, Ds323x, NaiveDate, NaiveDateTime, Timelike};
 use esp_idf_svc::{
     hal::i2c::I2cDriver,
@@ -37,8 +38,8 @@ impl Rtc {
     ///
     /// `force_ntp`: skip trusting RTC on this boot (always run SNTP and write RTC), e.g. bring-up
     /// when you know the battery-backed clock is garbage.
-    pub fn init(&mut self, wifi: &Wifi, tz: &str, force_ntp: bool) {
-        timezone::set_timezone(tz);
+    pub fn init(&mut self, wifi: &Wifi, tz: &str, force_ntp: bool) -> Result<()> {
+        timezone::set_timezone(tz)?;
 
         if !force_ntp {
             if let Some(rtc_time) = self.read() {
@@ -48,11 +49,11 @@ impl Rtc {
                         "System time restored from RTC — local time: {}",
                         timezone::local_time()
                     );
-                    return;
+                    return Ok(());
                 }
                 warn!("RTC time outside sane range — falling back to NTP.");
             } else {
-                warn!("RTC read failed — falling back to NTP.");
+                warn!("RTC read failed 	— falling back to NTP.");
             }
         } else {
             info!("Skipping RTC read — forced NTP (policy); will sync and write RTC from SNTP.");
@@ -61,25 +62,31 @@ impl Rtc {
         match wifi.state() {
             WifiState::Connected(_) => {
                 info!("WiFi connected — attempting NTP sync...");
-                self.sync_ntp();
+                self.sync_ntp()?;
             }
             WifiState::Disconnected => {
-                panic!("Unrecoverable: RTC invalid and WiFi disconnected — cannot determine time.");
+                return Err(anyhow!(
+                    "Unrecoverable: RTC invalid and WiFi disconnected — cannot determine time."
+                ));
             }
             WifiState::Connecting => {
                 warn!("WiFi still connecting — waiting before NTP attempt...");
                 thread::sleep(Duration::from_secs(5));
                 match wifi.state() {
-                    WifiState::Connected(_) => self.sync_ntp(),
-                    _ => panic!(
+                    WifiState::Connected(_) => self.sync_ntp()?,
+                    _ => {
+                        return Err(anyhow!(
                         "Unrecoverable: RTC invalid and WiFi unavailable — cannot determine time."
-                    ),
+                    ))
+                    }
                 }
             }
-        }
+        };
+
+        Ok(())
     }
 
-    fn sync_ntp(&mut self) {
+    fn sync_ntp(&mut self) -> Result<()> {
         thread::sleep(Duration::from_secs(10));
 
         let ntp = match EspSntp::new_default() {
@@ -88,7 +95,7 @@ impl Rtc {
                 n
             }
             Err(e) => {
-                panic!("Failed to start SNTP: {:?}", e);
+                return Err(anyhow!("Failed to start SNTP: {:?}", e));
             }
         };
 
@@ -101,7 +108,7 @@ impl Rtc {
             let status = ntp.get_sync_status();
 
             if status == SyncStatus::Completed {
-                let utc_now = timezone::utc_now();
+                let utc_now = timezone::utc_now()?;
                 self.write(utc_now);
                 Self::set_system_time(utc_now);
                 info!(
@@ -117,9 +124,9 @@ impl Rtc {
                     "NTP sync failed after {}s — status: {:?}",
                     NTP_TIMEOUT_SECS, status
                 );
-                panic!(
+                return Err(anyhow!(
                     "Unrecoverable: RTC invalid and NTP sync timed out — cannot determine time."
-                );
+                ));
             }
 
             info!(
@@ -129,6 +136,8 @@ impl Rtc {
             );
             thread::sleep(Duration::from_secs(1));
         }
+
+        Ok(())
     }
 
     /// Read the current datetime from the RTC chip (always stored as UTC)
@@ -182,15 +191,26 @@ impl Rtc {
         self.device.temperature().ok()
     }
 
-    pub fn reset(&mut self, year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) {
+    pub fn reset(
+        &mut self,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+        sec: u32,
+    ) -> Result<()> {
         let datetime = NaiveDate::from_ymd_opt(year, month, day)
-            .expect("Invalid date")
+            .ok_or_else(|| anyhow!("invalid date"))?
             .and_hms_opt(hour, min, sec)
-            .expect("Invalid time");
+            .ok_or_else(|| anyhow!("invalid time"))?;
 
-        match self.device.set_datetime(&datetime) {
-            Ok(_) => info!("RTC hard reset to UTC: {}", datetime),
-            Err(e) => error!("RTC reset failed: {:?}", e),
-        }
+        self.device
+            .set_datetime(&datetime)
+            .map_err(|e| anyhow!("RTC reset failed: {e:?}"))?;
+
+        info!("RTC hard reset to UTC: {}", datetime);
+
+        Ok(())
     }
 }

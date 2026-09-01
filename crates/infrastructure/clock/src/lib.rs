@@ -1,6 +1,7 @@
 pub mod clock {
     use core::option::Option::None;
 
+    use astronav::coords::noaa_sun::NOAASun;
     use chrono::prelude::*;
     use ds323x::{DateTimeAccess, Ds323x, Rtcc};
 
@@ -57,38 +58,37 @@ pub mod clock {
         }
 
         /// Method to get the hours
-        pub fn get_hour(&mut self) -> u8 {
-            let hour = self.rtc.hours().unwrap();
+        pub fn get_hour(&mut self) -> Result<u8, ds323x::Error> {
+            let hour = self.rtc.hours()?;
             match hour {
-                ds323x::Hours::AM(h) => h,
-                ds323x::Hours::PM(h) => h + 11,
-                ds323x::Hours::H24(h) => h,
+                ds323x::Hours::AM(h) | ds323x::Hours::H24(h) => Ok(h),
+                ds323x::Hours::PM(h) => Ok(h + 11),
             }
         }
 
         /// Method to get the minutes
-        pub fn get_minutes(&mut self) -> u8 {
-            self.rtc.minutes().unwrap()
+        pub fn get_minutes(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.minutes()
         }
 
         /// Method to get the seconds
-        pub fn get_seconds(&mut self) -> u8 {
-            self.rtc.seconds().unwrap()
+        pub fn get_seconds(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.seconds()
         }
 
         /// Method to get the day
-        pub fn get_day(&mut self) -> u32 {
-            self.rtc.date().unwrap().ordinal()
+        pub fn get_day(&mut self) -> Result<u32, ds323x::Error> {
+            Ok(self.rtc.date()?.ordinal())
         }
 
         /// Method to get the day
-        pub fn get_month(&mut self) -> u8 {
-            self.rtc.month().unwrap()
+        pub fn get_month(&mut self) -> Result<u8, ds323x::Error> {
+            self.rtc.month()
         }
 
         /// Method to get the day
-        pub fn get_year(&mut self) -> u16 {
-            self.rtc.year().unwrap()
+        pub fn get_year(&mut self) -> Result<u16, ds323x::Error> {
+            self.rtc.year()
         }
 
         /// Method to get the longitude
@@ -112,35 +112,76 @@ pub mod clock {
         }
 
         /// Method for returning a datetime string
-        pub fn get_date_time(&mut self) -> NaiveDateTime {
-            self.rtc.datetime().unwrap()
+        pub fn get_date_time(&mut self) -> Result<NaiveDateTime, ds323x::Error> {
+            self.rtc.datetime()
         }
 
-        fn rtc_now_utc(&mut self) -> DateTime<Utc> {
-            DateTime::<Utc>::from_naive_utc_and_offset(self.get_date_time(), Utc)
+        fn rtc_now_utc(&mut self) -> Result<DateTime<Utc>, ds323x::Error> {
+            Ok(DateTime::<Utc>::from_naive_utc_and_offset(
+                self.get_date_time()?,
+                Utc,
+            ))
         }
 
         /// Method for returning a boolean for if it is after sunrsie today
-        pub fn after_sunrise(&mut self) -> bool {
+        pub fn after_sunrise(&mut self) -> Result<bool, ds323x::Error> {
             if let Some(sunrise) = self.sunrise_times() {
-                self.rtc_now_utc() >= sunrise.with_timezone(&Utc)
+                Ok(self.rtc_now_utc()? >= sunrise.with_timezone(&Utc))
             } else {
-                false // Return false if sunrise is None
+                Ok(false) // Return false if sunrise is None
             }
         }
 
         /// Method for returning a boolean for if it is after sunset today
-        pub fn after_sunset(&mut self) -> bool {
+        pub fn after_sunset(&mut self) -> Result<bool, ds323x::Error> {
             if let Some(sunset) = self.sunset_times() {
-                self.rtc_now_utc() >= sunset.with_timezone(&Utc)
+                Ok(self.rtc_now_utc()? >= sunset.with_timezone(&Utc))
             } else {
-                false // Return false if sunset is None
+                Ok(false) // Return false if sunset is None
             }
         }
 
         ///Returns a unix timestamp based on the current date time provided
-        pub fn datetime_to_unix_timestamp(&mut self) -> i64 {
-            self.rtc_now_utc().timestamp()
+        pub fn datetime_to_unix_timestamp(&mut self) -> Result<i64, ds323x::Error> {
+            Ok(self.rtc_now_utc()?.timestamp())
+        }
+
+        pub fn noaa_sun(&mut self) -> NOAASun {
+            let now = Local::now();
+
+            // NOAA expects local civil date/time + tz offset. DS3231 holds UTC; use libc local time
+            // (same instant as settimeofday after RTC/NTP) so h/m/s match tz_offset_h.
+            let timezone = (now.offset().local_minus_utc() as f32) / 3600.0;
+
+            let sun = NOAASun {
+                year: now.year() as u16,
+                doy: now.ordinal() as u16,
+                long: self.get_longitude() as f32,
+                lat: self.get_latitude() as f32,
+                timezone,
+                hour: now.hour() as u8,
+                min: now.minute() as u8,
+                sec: now.second() as u8,
+            };
+
+            log::info!(
+                    "NOAA inputs: year={} doy={} lat={:.6} long={:.6} tz_offset_h={:.3} | h={} m={} s={} (Local civil, libc TZ)",
+                    sun.year,
+                    sun.doy,
+                    sun.lat,
+                    sun.long,
+                    timezone,
+                    sun.hour,
+                    sun.min,
+                    sun.sec
+                );
+            log::info!(
+                "NOAA time cross-check: Local::now={} | DS3231 UTC naive={:?}",
+                now.format("%Y-%m-%d %H:%M:%S %:z"),
+                self.get_date_time()
+            );
+
+            sun
         }
     }
 }

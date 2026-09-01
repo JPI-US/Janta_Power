@@ -1,6 +1,6 @@
+use ::motion::motion::MotionMode;
 use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
 use log::{info, warn};
-use motion::MotionMode;
 
 // NVS keys used by runtime state.
 pub const NVS_KEY_TRACKING_MODE: &str = "tracking_mode";
