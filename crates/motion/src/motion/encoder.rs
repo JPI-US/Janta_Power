@@ -1,6 +1,7 @@
 // Encoder helpers for Motion.
 
 use anyhow::{Context, Result};
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 
 use super::{
     Motion, MoveOutcome, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
@@ -10,7 +11,17 @@ use super::{
 // Output-shaft encoder calibration from build-time constants.
 pub(super) const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
 
-impl Motion<'_> {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB> Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     // CW is positive; 0 ticks is limit-switch home after zeroing.
     pub fn encoder_ticks_adjusted(&self) -> i32 {
         self.encoder.position() - self.encoder_zero_offset

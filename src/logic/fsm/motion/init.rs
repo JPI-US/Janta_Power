@@ -1,4 +1,5 @@
 use clock::Clock;
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
@@ -19,18 +20,61 @@ use crate::{
 const POWER_ON: bool = true;
 const PERSIST_NVS: bool = true;
 
-impl InitialState<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {}
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    InitialState<
+        FSMAddress,
+        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+        FSMCommand,
+        FSMState,
+    > for MotionInit
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
+}
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionInit
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
         // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
         // defaults are (re)written into NVS on every boot, so updating `.env` and

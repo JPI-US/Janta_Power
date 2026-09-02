@@ -4,6 +4,7 @@ use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{State, StateResult},
 };
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use log::error;
 use motion::Direction;
 
@@ -19,10 +20,36 @@ pub(crate) enum MaintenanceAction {
     Idle,
 }
 
-pub(crate) fn perform_maintenance_transition(
+pub(crate) fn perform_maintenance_transition<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-    return_to: Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>,
-) -> Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState>>> {
+    return_to: Box<
+        dyn State<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    >,
+) -> Option<
+    Box<
+        dyn State<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    >,
+>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     Some(Box::new(MotionMaintenance {
         action: check_maintenance(mailbox)?,
         return_to: Some(return_to),
@@ -40,16 +67,42 @@ pub(crate) fn check_maintenance(
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenance {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionMaintenance<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         bulletin.update(|state| {
             state.maintenance_mode = true;
         });

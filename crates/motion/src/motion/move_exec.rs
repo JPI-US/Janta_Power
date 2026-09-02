@@ -3,13 +3,25 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 
 use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
     INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
 };
+use crate::Component;
 
-impl Motion<'_> {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB> Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     pub fn init(&mut self) {
         self.motor.set_max_speed(self.speed);
         self.motor.set_speed(self.speed);
@@ -116,8 +128,19 @@ impl Motion<'_> {
         let mut t0 = Instant::now();
         loop {
             if self.motor.is_running() {
-                let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
-                let _ = self.encoder.poll();
+                if let Err(e) = self.motor.poll(&mut self.motor_device, &self.motor_clock) {
+                    log::error!("Stepper poll failed: {:?}", e);
+
+                    let pos = self.motor.current_position();
+                    self.motor.set_current_position(pos);
+                    self.relay_off();
+
+                    return Ok(MoveOutcome::AbortedErrorLoop(
+                        Component::Motor,
+                        "stepper".into(),
+                        e.to_string(),
+                    ));
+                }
 
                 // Immediate abort when power is missing (EncoderGuarded only).
                 if self.motion_mode == MotionMode::EncoderGuarded && !self.motor_power_on {

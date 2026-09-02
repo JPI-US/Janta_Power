@@ -3,7 +3,10 @@ use std::time::{Duration, Instant};
 
 use ::network::telemetry;
 use anyhow::anyhow;
-use esp_idf_svc::nvs::{EspNvs, NvsPartitionId};
+use esp_idf_svc::{
+    hal::gpio::{InputPin, OutputPin},
+    nvs::{EspNvs, NvsPartitionId},
+};
 use log::warn;
 use motion::{
     motion::{Motion, MotionMode, MoveOutcome},
@@ -49,14 +52,25 @@ impl EncoderFaultRecovery {
         self.mode_switched_daily = value;
     }
 
-    pub fn on_move_outcome<T: NvsPartitionId>(
+    pub fn on_move_outcome<NVS, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
         &mut self,
         outcome: MoveOutcome,
         cfg: &EncoderRecoverySwitches,
-        _motion: &mut Motion<'_>,
-        _nvs: &mut EspNvs<T>,
+        _motion: &mut Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+        _nvs: &mut EspNvs<NVS>,
         _persist_nvs: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        NVS: NvsPartitionId,
+        SLP: OutputPin,
+        STP: OutputPin,
+        DIR: OutputPin,
+        CS: OutputPin,
+        RLY: OutputPin,
+        LMSW: InputPin + OutputPin,
+        ENCA: InputPin,
+        ENCB: InputPin,
+    {
         if self.mode_switched_daily {
             return Ok(());
         }
@@ -72,12 +86,23 @@ impl EncoderFaultRecovery {
     }
 
     /// Returns `Ok(true)` if the caller should `continue` the outer loop (fault still active).
-    pub fn tick<T: NvsPartitionId>(
+    pub fn tick<NVS, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
         &mut self,
-        ctx: &mut EncoderTickContext<'_, T>,
-        motion: &mut Motion<'_>,
+        ctx: &mut EncoderTickContext<'_, NVS>,
+        motion: &mut Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         actual_heading: &mut f32,
-    ) -> anyhow::Result<EncoderFaultRecoveryTickRes> {
+    ) -> anyhow::Result<EncoderFaultRecoveryTickRes>
+    where
+        NVS: NvsPartitionId,
+        SLP: OutputPin,
+        STP: OutputPin,
+        DIR: OutputPin,
+        CS: OutputPin,
+        RLY: OutputPin,
+        LMSW: InputPin + OutputPin,
+        ENCA: InputPin,
+        ENCB: InputPin,
+    {
         if self.mode_switched_daily {
             return Ok(EncoderFaultRecoveryTickRes {
                 fault_still_active: false,
@@ -209,23 +234,34 @@ impl EncoderFaultRecovery {
             }
             Direction::Ccw => {}
         };
-        return Ok(EncoderFaultRecoveryTickRes {
+        Ok(EncoderFaultRecoveryTickRes {
             fault_still_active: false,
             should_rehome: true,
             telemetry_component: None,
             telemetry_message: None,
             telemetry_notes: None,
-        });
+        })
     }
 
     /// Switch to StepperOnly for the rest of the day after repeated probe failures.
-    fn switch_to_stepper_only_daily<T: NvsPartitionId>(
+    fn switch_to_stepper_only_daily<NVS, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
         &mut self,
-        motion: &mut Motion<'_>,
-        nvs: &mut EspNvs<T>,
+        motion: &mut Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+        nvs: &mut EspNvs<NVS>,
         persist_nvs: bool,
         _device_id: &str,
-    ) -> anyhow::Result<(telemetry::Component, String, String)> {
+    ) -> anyhow::Result<(telemetry::Component, String, String)>
+    where
+        NVS: NvsPartitionId,
+        SLP: OutputPin,
+        STP: OutputPin,
+        DIR: OutputPin,
+        CS: OutputPin,
+        RLY: OutputPin,
+        LMSW: InputPin + OutputPin,
+        ENCA: InputPin,
+        ENCB: InputPin,
+    {
         motion.set_motion_mode(MotionMode::StepperOnly);
 
         let current_date = rtc::timezone::local_time().format("%Y-%m-%d").to_string();

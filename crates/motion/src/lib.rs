@@ -5,13 +5,14 @@ use network::telemetry::Component;
 pub mod motion {
     use std::time::Instant;
 
-    use accel_stepper::{Driver, OperatingSystemClock, StepAndDirection};
+    use accel_stepper::{Driver, OperatingSystemClock};
     use anyhow::Result;
     use chrono::Local;
     use clock::Clock;
+    use drv8462::Drv8462;
     use encoder::ENC_TICKS_PER_DEG;
     use esp_idf_svc::{
-        hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
+        hal::gpio::{Input, InputPin, Output, OutputPin, PinDriver, Pull},
         nvs::*,
     };
     use log::{info, warn};
@@ -66,22 +67,31 @@ pub mod motion {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
 
-    pub struct Motion<'a> {
+    pub struct Motion<'a, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    where
+        SLP: OutputPin,
+        STP: OutputPin,
+        DIR: OutputPin,
+        CS: OutputPin,
+        RLY: OutputPin,
+        LMSW: InputPin,
+        ENCA: InputPin,
+        ENCB: InputPin,
+    {
         pub location: f32,
         pub motion_mode: MotionMode,
         pub previous_motion_mode: MotionMode,
         pub speed: f32,
         pub acceleration: u16,
         pub motor: Driver,
-        pub motor_device:
-            StepAndDirection<PinDriver<'a, Gpio15, Output>, PinDriver<'a, Gpio16, Output>>,
+        pub motor_device: Drv8462<'a, SLP, STP, DIR, CS>,
         pub motor_clock: OperatingSystemClock,
-        pub relay: PinDriver<'a, Gpio17, Output>,
-        pub lmsw: PinDriver<'a, Gpio14, Input>,
+        pub relay: PinDriver<'a, RLY, Output>,
+        pub lmsw: PinDriver<'a, LMSW, Input>,
         pub encoder: IncrementalEncoder<
             Rotary,
-            PinDriver<'a, Gpio10, Input>,
-            PinDriver<'a, Gpio11, Input>,
+            PinDriver<'a, ENCA, Input>,
+            PinDriver<'a, ENCB, Input>,
             QuadStep,
         >,
         // Encoder zero is a software offset: adjusted = raw - offset.
@@ -130,20 +140,26 @@ pub mod motion {
     // Direction and step wiring notes:
     // - CW controls direction pin
     // - CCW steps by convention in this wiring
-    impl Motion<'_> {
+    impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB> Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    where
+        SLP: OutputPin,
+        STP: OutputPin,
+        DIR: OutputPin,
+        CS: OutputPin,
+        RLY: OutputPin,
+        LMSW: InputPin + OutputPin,
+        ENCA: InputPin,
+        ENCB: InputPin,
+    {
         pub fn new<'a>(
-            step_pin: Gpio15,
-            direction_pin: Gpio16,
-            relay_pin: Gpio17,
-            limit_switch_pin: Gpio14,
-            encoder_a_pin: Gpio10,
-            encoder_b_pin: Gpio11,
-            relay_active_level: ActiveLevel,
+            motor_device: Drv8462<'a, SLP, STP, DIR, CS>,
+            relay_pin: RLY,
+            encoder_a_pin: ENCA,
+            encoder_b_pin: ENCB,
+            limit_switch_pin: LMSW,
             limit_switch_active_level: ActiveLevel,
-        ) -> Result<Motion<'a>> {
-            let step = PinDriver::output(step_pin)?;
-            let direction = PinDriver::output(direction_pin)?;
-
+            relay_active_level: ActiveLevel,
+        ) -> Result<Motion<'a, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>> {
             // Relay is active-low: boot with relay OFF.
             let mut relay = PinDriver::output(relay_pin)?;
             relay.set_high().unwrap_or_default();
@@ -153,16 +169,11 @@ pub mod motion {
 
             let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
             match limit_switch_active_level {
-                ActiveLevel::ActiveHigh => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
-                    .unwrap_or_default(),
-                ActiveLevel::ActiveLow => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
-                    .unwrap_or_default(),
+                ActiveLevel::ActiveHigh => lmsw.set_pull(Pull::Down).unwrap_or_default(),
+                ActiveLevel::ActiveLow => lmsw.set_pull(Pull::Up).unwrap_or_default(),
             }
 
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
-
             let now = Instant::now();
             Ok(Motion {
                 location: 0.0,
@@ -171,7 +182,7 @@ pub mod motion {
                 speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
                 acceleration: DEFAULT_ACCEL_STEPS_PER_S2,
                 motor: Driver::new(),
-                motor_device: StepAndDirection::new(step, direction),
+                motor_device,
                 motor_clock: OperatingSystemClock::new(),
                 relay,
                 lmsw,

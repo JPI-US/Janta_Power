@@ -1,5 +1,6 @@
 //! SPI firmware control for the Texas Instruments DRV8462 stepper motor driver.
 
+use accel_stepper::{Device, StepContext};
 use anyhow::Result;
 use esp_idf_svc::hal::{
     delay::Ets,
@@ -11,6 +12,7 @@ use esp_idf_svc::hal::{
         SpiAnyPins, SpiDeviceDriver, SpiDriver,
     },
 };
+use log::error;
 
 pub use crate::{config::*, faults::*, registers::*};
 
@@ -111,7 +113,7 @@ where
     pub mosi: MOSI,
 
     /// SPI MISO pin.
-    pub miso: Option<MISO>,
+    pub miso: MISO,
 
     /// SPI chip-select pin.
     pub cs: CS,
@@ -172,7 +174,7 @@ where
             hardware.spi,
             hardware.sclk,
             hardware.mosi,
-            hardware.miso,
+            Some(hardware.miso),
             &DriverConfig::new(),
         )?;
 
@@ -360,38 +362,11 @@ where
     ///
     /// Returns an error if fault detection, register access, or GPIO control
     /// fails.
-    pub fn step_once(&mut self, delay_us: u32) -> Result<bool> {
-        if self.get_faults()?.fault_active {
-            return Ok(false);
-        }
-
-        self.set_enabled(true)?;
-
-        self.step.set_high()?;
-        Ets::delay_us(2);
-
-        self.step.set_low()?;
-        Ets::delay_us(delay_us);
-
-        self.set_enabled(false)?;
-
-        Ok(true)
-    }
-
-    /// Moves the motor by generating a sequence of step pulses.
-    ///
-    /// The motor accelerates and decelerates linearly. Motion stops if a
-    /// fault occurs.
-    ///
-    /// Returns `true` if the requested motion completed, or `false` if an
-    /// active fault prevented motion.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if GPIO or SPI communication fails.
-    pub fn move_steps(&mut self, steps: u32, forward: bool) -> Result<bool> {
-        if self.get_faults()?.fault_active {
-            return Ok(false);
+    pub fn step_once(&mut self, forward: bool) -> Result<()> {
+        let faults = self.get_faults()?;
+        if faults.fault_active {
+            error!("Fault active: {:?}", faults);
+            return Ok(());
         }
 
         if forward {
@@ -400,26 +375,13 @@ where
             self.dir.set_low()?;
         }
 
-        Ets::delay_us(20);
+        self.step.set_high()?;
+        Ets::delay_us(2);
 
-        let start_delay = 20_000;
-        let min_delay = 5_000;
-        let accel_steps = (steps / 4).min(1000);
+        self.step.set_low()?;
+        Ets::delay_us(2);
 
-        for i in 0..steps {
-            let delay = if i < accel_steps {
-                start_delay - ((start_delay - min_delay) * i / accel_steps)
-            } else if i > steps - accel_steps {
-                let remaining = steps - i;
-                start_delay - ((start_delay - min_delay) * remaining / accel_steps)
-            } else {
-                min_delay
-            };
-
-            self.step_once(delay)?;
-        }
-
-        Ok(true)
+        Ok(())
     }
 
     /// Reads the DRV8462 fault register.
@@ -456,5 +418,23 @@ where
             temperature: fault_reg & 0x_2 != 0,
             open_load: fault_reg & 0x_1 != 0,
         })
+    }
+}
+
+impl<'a, SLP, STP, DIR, CS> Device for Drv8462<'a, SLP, STP, DIR, CS>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+{
+    type Error = anyhow::Error;
+
+    fn step(&mut self, ctx: &StepContext) -> Result<(), Self::Error> {
+        match ctx.position {
+            0 => self.step_once(false),
+            1 => self.step_once(true),
+            _ => unreachable!("Step context position should always be 0 or 1"),
+        }
     }
 }

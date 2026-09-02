@@ -4,6 +4,7 @@ use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{State, StateResult},
 };
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use motion::{
     motion::{calculate_steps, MotionMode},
     Direction, MotionEvent,
@@ -34,16 +35,42 @@ const HOME_HEADING_VERIFY_EPS_DEG: f32 = 0.01;
 const HOMING_DIRECTION: Direction = Direction::Ccw;
 const PERSIST_NVS: bool = true;
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHoming {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionBeginHoming
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         if let Some(state) = perform_maintenance_transition(mailbox, Box::new(MotionBeginHoming)) {
             return Ok(StateResult::Running(state));
         }
@@ -118,16 +145,42 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionHoming
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         if let Some(state) = perform_maintenance_transition(
             mailbox,
             Box::new(MotionHoming {
@@ -182,19 +235,14 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         }
 
         // Report error ticks
-        if let Some(error_ticks) = ctx.motion.report_home_error_ticks(
+        if let Some(MotionEvent::HomeErrorTicks(data)) = ctx.motion.report_home_error_ticks(
             &mut ctx.nvs,
             ctx.switchboard.device_id,
             ctx.switchboard.effects.persist_nvs,
         ) {
-            match error_ticks {
-                MotionEvent::HomeErrorTicks(data) => {
-                    let serialized = serde_json::to_string(&data)?;
-                    let topic = topic::data_encoder_error_ticks(ctx.switchboard.device_id);
-                    mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
-                }
-                _ => {}
-            }
+            let serialized = serde_json::to_string(&data)?;
+            let topic = topic::data_encoder_error_ticks(ctx.switchboard.device_id);
+            mailbox.send(FSMAddress::Network, MqttPublishJson(serialized, topic))?;
         }
 
         Ok(StateResult::Running(Box::new(MotionTracking)))

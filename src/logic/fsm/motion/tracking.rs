@@ -5,6 +5,7 @@ use ::fsm::{
     state::{State, StateResult},
 };
 use chrono::{DateTime, Local};
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use log::{error, info, warn};
 use motion::{
     motion::{MotionMode, MoveOutcome, STEPS_PER_REV},
@@ -36,10 +37,20 @@ pub(crate) struct TrackingRes {
     pub(crate) outcome: Option<MoveOutcome>,
 }
 
-pub(crate) fn run_tracking(
-    ctx: &mut MotionContext,
+pub(crate) fn run_tracking<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-) -> anyhow::Result<TrackingRes> {
+) -> anyhow::Result<TrackingRes>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     if !ctx.switchboard.runtime.tracking.enabled {
         info!("Tracking disabled");
         return Ok(TrackingRes {
@@ -67,10 +78,20 @@ pub(crate) fn run_tracking(
     Ok(res)
 }
 
-pub(crate) fn tracking_tick(
-    ctx: &mut MotionContext,
+pub(crate) fn tracking_tick<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
     mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-) -> anyhow::Result<TrackingRes> {
+) -> anyhow::Result<TrackingRes>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     let res = set_tower_position(ctx, ctx.actual_heading)?;
 
     // Persist only after completed moves.
@@ -138,7 +159,19 @@ pub(crate) fn tracking_tick(
 }
 
 /// Build the encoder-recovery config from the switchboard.
-pub(crate) fn encoder_recovery_cfg(ctx: &mut MotionContext) -> EncoderRecoverySwitches {
+pub(crate) fn encoder_recovery_cfg<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+) -> EncoderRecoverySwitches
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     EncoderRecoverySwitches {
         enabled: ctx.switchboard.runtime.encoder_recovery.enabled,
         probe_interval_secs: ctx.switchboard.runtime.encoder_recovery.probe_interval_secs,
@@ -151,9 +184,19 @@ pub(crate) fn encoder_recovery_cfg(ctx: &mut MotionContext) -> EncoderRecoverySw
     }
 }
 
-pub(crate) fn run_encoder_fault(
-    ctx: &mut MotionContext,
-) -> anyhow::Result<EncoderFaultRecoveryTickRes> {
+pub(crate) fn run_encoder_fault<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+) -> anyhow::Result<EncoderFaultRecoveryTickRes>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     let cfg = encoder_recovery_cfg(ctx);
 
     let mut tick_ctx = EncoderTickContext {
@@ -171,7 +214,19 @@ pub(crate) fn run_encoder_fault(
     Ok(fault_active)
 }
 
-pub(crate) fn sync_motion_mode_from_nvs(ctx: &mut MotionContext, stepper_switch_log: &str) {
+pub(crate) fn sync_motion_mode_from_nvs<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+    stepper_switch_log: &str,
+) where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     let mode = SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS)
         .load_tracking_mode_or_init(MotionMode::EncoderGuarded);
     if mode != ctx.motion.motion_mode {
@@ -190,10 +245,20 @@ pub(crate) struct SetTowerPositionRes {
     message: Option<MotionEvent>,
 }
 
-pub(crate) fn set_tower_position(
-    ctx: &mut MotionContext,
+pub(crate) fn set_tower_position<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
     location: f32,
-) -> anyhow::Result<SetTowerPositionRes> {
+) -> anyhow::Result<SetTowerPositionRes>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     let is_daytime = match (
         ctx.clock.as_mut().unwrap().after_sunrise(),
         ctx.clock.as_mut().unwrap().after_sunset(),
@@ -293,11 +358,11 @@ pub(crate) fn set_tower_position(
             tower_angle,
         };
 
-        return Ok(SetTowerPositionRes {
+        Ok(SetTowerPositionRes {
             tracking_done: true,
             should_rehome: false,
             message: Some(MotionEvent::Angle(serde_json::to_string(&payload).unwrap())),
-        });
+        })
     } else {
         // Sunset Operation
         if (location - HOME_HEADING_DEG).abs() < 0.01 {
@@ -327,15 +392,27 @@ pub(crate) fn set_tower_position(
 
         log::info!("Moving to sleep position...");
 
-        return Ok(SetTowerPositionRes {
+        Ok(SetTowerPositionRes {
             tracking_done: false,
             should_rehome: true,
             message: None,
-        });
+        })
     }
 }
 
-pub(crate) fn daily_reset(ctx: &mut MotionContext, local_time: &DateTime<Local>) {
+pub(crate) fn daily_reset<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>(
+    ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+    local_time: &DateTime<Local>,
+) where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     let reset_occurred = check_daily_encoder_reset(&mut ctx.nvs, local_time, PERSIST_NVS);
     if reset_occurred {
         ctx.motion.motion_mode = SnapshotStore::new(&mut ctx.nvs, PERSIST_NVS)
@@ -350,16 +427,42 @@ pub(crate) fn daily_reset(ctx: &mut MotionContext, local_time: &DateTime<Local>)
     }
 }
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionTracking
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         mailbox.send(
             FSMAddress::Network,
             FSMCommand::UpdateNetworkMotionContext(ctx.motion.motion_mode, ctx.actual_heading),
@@ -436,17 +539,15 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionTracking {
             return Ok(StateResult::Running(Box::new(MotionBeginHoming)));
         }
 
-        if let Some(outcome) = outcome {
-            if let MoveOutcome::AbortedErrorLoop(component, message, notes) = outcome {
-                error!("Catastrophic tracking error; manual intervention required");
-                return Ok(StateResult::Running(Box::new(MotionErrorLoop {
-                    component,
-                    message,
-                    notes,
-                })));
-            }
+        if let Some(MoveOutcome::AbortedErrorLoop(component, message, notes)) = outcome {
+            error!("Catastrophic tracking error; manual intervention required");
+            return Ok(StateResult::Running(Box::new(MotionErrorLoop {
+                component,
+                message,
+                notes,
+            })));
         }
 
-        return Ok(StateResult::Hold);
+        Ok(StateResult::Hold)
     }
 }

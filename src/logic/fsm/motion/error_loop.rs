@@ -5,6 +5,7 @@ use ::fsm::{
     state::{State, StateResult},
 };
 use chrono::Local;
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use network::telemetry::{topic, ErrorLog, Severity};
 
 use crate::logic::fsm::{
@@ -14,16 +15,42 @@ use crate::logic::fsm::{
     FSMState,
 };
 
-impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionErrorLoop {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    State<FSMAddress, MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>, FSMCommand, FSMState>
+    for MotionErrorLoop
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     fn process(
         &mut self,
-        ctx: &mut MotionContext,
+        ctx: &mut MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
         _bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
-            Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
+            Box<
+                dyn State<
+                        FSMAddress,
+                        MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                        FSMCommand,
+                        FSMState,
+                    > + Send,
+            >,
         >,
-    ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+    ) -> anyhow::Result<
+        StateResult<
+            FSMAddress,
+            MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+            FSMCommand,
+            FSMState,
+        >,
+    > {
         let now = Local::now()
             .format(network::telemetry::TIME_FORMAT)
             .to_string();

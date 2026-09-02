@@ -1,7 +1,11 @@
 use anyhow::{anyhow, Context, Result};
+use drv8462::{
+    AutoMicrostepping, Basic, Drv8462, Drv8462Config, Drv8462Hardware, MicrostepMode, ResAuto,
+    SilentStep, SsDivSel, SsPwmFreq, SsSmplSel,
+};
 use esp_idf_svc::hal::{
     delay::Ets,
-    gpio::{Gpio4, Gpio5, Gpio6},
+    gpio::{Gpio10, Gpio11, Gpio14, Gpio21, Gpio4, Gpio40, Gpio45, Gpio46, Gpio48, Gpio5, Gpio6},
     i2c::{I2cConfig, I2cDriver},
     modem::Modem,
     prelude::*,
@@ -23,7 +27,7 @@ pub struct PeripheralMap<'a> {
     pub led: Led<'a>,
 
     /// Motion control peripherals.
-    pub motion: Motion<'a>,
+    pub motion: Motion<'a, Gpio21, Gpio45, Gpio48, Gpio40, Gpio46, Gpio14, Gpio10, Gpio11>,
 
     /// Cellular modem peripheral.
     pub modem: Modem,
@@ -70,16 +74,48 @@ impl PeripheralMap<'_> {
         // status led
         let led = Led::new(peripherals.pins.gpio7, peripherals.rmt.channel0)?;
 
-        // motion (motor, encoder, relay, limit switch)
+        // Motor driver setup
+        let motor_hardware = Drv8462Hardware {
+            spi: peripherals.spi2,
+            sclk: peripherals.pins.gpio0,
+            mosi: peripherals.pins.gpio38,
+            miso: peripherals.pins.gpio39,
+            cs: peripherals.pins.gpio40,
+            sleep: peripherals.pins.gpio21,
+            step: peripherals.pins.gpio45,
+            dir: peripherals.pins.gpio48,
+        };
+
+        let motor_config = Drv8462Config::new()
+            .configure_basic(Basic {
+                microstep_mode: MicrostepMode::TwoFiftySixthStep,
+                enable_internal_voltage_reference: true,
+                run_current: 45,
+                ..Default::default()
+            })
+            .enable_auto_microstepping(AutoMicrostepping {
+                resolution: ResAuto::TwoFiftySixthStep,
+            })
+            .enable_silent_step(SilentStep {
+                sample_time: SsSmplSel::Us2,
+                frequency: SsPwmFreq::Khz50,
+                proportional_gain: 64,
+                integral_gain: 64,
+                ki_divider_factor: SsDivSel::Div32,
+                kp_divider_factor: SsDivSel::Div32,
+                transition_frequency: 1,
+            });
+        let mut motor_device = Drv8462::new(motor_hardware, motor_config)?;
+        motor_device.set_enabled(true)?;
+
         let motion = Motion::new(
-            peripherals.pins.gpio15,
-            peripherals.pins.gpio16,
-            peripherals.pins.gpio17,
-            peripherals.pins.gpio14,
-            peripherals.pins.gpio10,
-            peripherals.pins.gpio11,
-            relay_active_level,
+            motor_device,
+            peripherals.pins.gpio46, // relay
+            peripherals.pins.gpio10, // encoder a
+            peripherals.pins.gpio11, // encoder b
+            peripherals.pins.gpio14, // limit switch
             limit_switch_active_level,
+            relay_active_level,
         )?;
 
         let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {

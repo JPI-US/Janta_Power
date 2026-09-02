@@ -3,8 +3,13 @@ use core::option::Option::None;
 use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use clock::Clock;
-use esp_idf_hal::i2c::I2cDriver;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use esp_idf_svc::{
+    hal::{
+        gpio::{InputPin, OutputPin},
+        i2c::I2cDriver,
+    },
+    nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault},
+};
 use fsm::state::State;
 use log::{info, warn};
 use motion::motion::{Motion, MotionMode};
@@ -32,8 +37,18 @@ pub mod maintenance;
 pub mod moving;
 pub mod tracking;
 
-pub struct MotionContext {
-    motion: Motion<'static>,
+pub struct MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
+    motion: Motion<'static, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
     switchboard: Switchboard,
     nvs: EspNvs<NvsDefault>,
     i2c_bus: &'static BusManager<std::sync::Mutex<I2cDriver<'static>>>,
@@ -45,9 +60,20 @@ pub struct MotionContext {
     clock: Option<Clock<I2cProxy<'static, std::sync::Mutex<I2cDriver<'static>>>>>,
 }
 
-impl MotionContext {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+    MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     pub fn new(
-        motion: Motion<'static>,
+        motion: Motion<'static, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
         switchboard: Switchboard,
         nvs_partition: EspDefaultNvsPartition,
         i2c_bus: &'static BusManager<std::sync::Mutex<I2cDriver<'static>>>,
@@ -92,10 +118,29 @@ pub struct MotionErrorLoop {
     notes: String,
 }
 pub struct MotionTracking;
-pub struct MotionMaintenance {
+pub struct MotionMaintenance<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     action: MaintenanceAction,
-    return_to:
-        Option<Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send + 'static>>,
+    return_to: Option<
+        Box<
+            dyn State<
+                    FSMAddress,
+                    MotionContext<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>,
+                    FSMCommand,
+                    FSMState,
+                > + Send
+                + 'static,
+        >,
+    >,
 }
 
 /// Reset daily encoder mode at day rollover.

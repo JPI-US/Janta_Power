@@ -2,9 +2,21 @@
 
 use std::time::{Duration, Instant};
 
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
+
 use super::Motion;
 
-impl Motion<'_> {
+impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB> Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
+where
+    SLP: OutputPin,
+    STP: OutputPin,
+    DIR: OutputPin,
+    CS: OutputPin,
+    RLY: OutputPin,
+    LMSW: InputPin + OutputPin,
+    ENCA: InputPin,
+    ENCB: InputPin,
+{
     // Retrieve and clear the most recent home error.
     pub fn take_last_home_error_ticks(&mut self) -> Option<i32> {
         self.last_home_error_ticks.take()

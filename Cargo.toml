@@ -36,6 +36,7 @@ base64 = "0.22.1"
 chrono = "0.4.40"
 clock = { path = "crates/infrastructure/clock" }
 dotenv = "0.15"
+drv8462 = { path = "crates/drivers/drv8462" }
 ds323x = { path = "crates/sensors/ds323x" }
 embedded-hal = "1.0.0"
 embedded-svc = "0.28.0"
@@ -72,6 +73,7 @@ anyhow.workspace = true
 chrono = { workspace = true, features = ["clock"] }
 clock.workspace = true
 ds323x.workspace = true
+drv8462.workspace = true
 embedded-hal.workspace = true
 embedded-svc.workspace = true
 esp-idf-hal = { version = "0.45", default-features = false, features = [

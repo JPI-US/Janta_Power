@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0"
-esp-idf-svc = { version = "0.51", features = [
+anyhow.workspace = true
+accel-stepper.workspace = true
+esp-idf-svc = { workspace = true, features = [
     "critical-section",
     "embassy-time-driver",
     "embassy-sync",
 ] }
+log.workspace = true

@@ -510,8 +510,10 @@ checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 name = "drv8462"
 version = "0.1.0"
 dependencies = [
+ "accel-stepper",
  "anyhow",
  "esp-idf-svc",
+ "log",
 ]
 
 [[package]]
@@ -1172,6 +1174,7 @@ dependencies = [
  "chrono",
  "clock",
  "dotenv",
+ "drv8462",
  "ds323x",
  "embedded-hal 1.0.0",
  "esp-idf-svc",
@@ -1860,6 +1863,7 @@ dependencies = [
  "clock",
  "crossbeam-channel",
  "dotenv",
+ "drv8462",
  "ds323x",
  "embedded-hal 1.0.0",
  "embedded-svc",
