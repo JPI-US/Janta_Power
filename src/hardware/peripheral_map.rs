@@ -105,8 +105,7 @@ impl PeripheralMap<'_> {
                 kp_divider_factor: SsDivSel::Div32,
                 transition_frequency: 1,
             });
-        let mut motor_device = Drv8462::new(motor_hardware, motor_config)?;
-        motor_device.set_enabled(true)?;
+        let motor_device = Drv8462::new(motor_hardware, motor_config)?;
 
         let motion = Motion::new(
             motor_device,

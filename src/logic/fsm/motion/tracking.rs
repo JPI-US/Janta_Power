@@ -315,7 +315,7 @@ where
         log::info!("Sun Angle: {}", sun.azimuth_in_deg());
         // Daytime tracking: no move in deadband, otherwise step by offset.
         if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
-            ctx.motion.relay_off();
+            ctx.motion.disable()?;
 
             return Ok(SetTowerPositionRes {
                 tracking_done: true,
@@ -324,7 +324,7 @@ where
             });
         }
 
-        ctx.motion.relay_on();
+        ctx.motion.enable()?;
 
         log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
         let steps = (angle_offset / 360.0) * STEPS_PER_REV;
@@ -332,7 +332,7 @@ where
         // TODO: Either remove the motion_moving state or force these functions to abide by it
         if let Ok(move_outcome) = ctx.motion.move_by(steps as i64) {
             if move_outcome != MoveOutcome::Completed {
-                ctx.motion.relay_off();
+                ctx.motion.disable()?;
                 log::warn!("Tracking move aborted: {:?}", move_outcome);
                 // Return true so main does NOT persist heading/snapshot for a move that did not happen.
                 return Ok(SetTowerPositionRes {
@@ -345,7 +345,7 @@ where
 
         ctx.motion
             .update_position((location as f64 + angle_offset) as f32);
-        ctx.motion.relay_off();
+        ctx.motion.disable()?;
 
         let tower_angle = location as f64 + angle_offset;
 

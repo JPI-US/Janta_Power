@@ -261,7 +261,10 @@ pub mod motion {
         }
 
         #[inline]
-        pub fn relay_on(&mut self) {
+        pub fn enable(&mut self) -> Result<()> {
+            self.motor_device.set_enabled(true)?;
+
+            // TODO: Relay code should be deleted once relays are removed from the board
             // Active-low: LOW = ON
             if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_low().unwrap_or_default();
@@ -270,10 +273,15 @@ pub mod motion {
             else {
                 self.relay.set_high().unwrap_or_default();
             }
+
+            Ok(())
         }
 
         #[inline]
-        pub fn relay_off(&mut self) {
+        pub fn disable(&mut self) -> Result<()> {
+            self.motor_device.set_enabled(false)?;
+
+            // TODO: Relay code should be deleted once relays are removed from the board
             // Active-low: HIGH = OFF
             if self.relay_active_level == ActiveLevel::ActiveLow {
                 self.relay.set_high().unwrap_or_default();
@@ -282,6 +290,8 @@ pub mod motion {
             else {
                 self.relay.set_low().unwrap_or_default();
             }
+
+            Ok(())
         }
 
         pub fn lmsw_active(&self) -> bool {

@@ -34,7 +34,7 @@ where
 
     pub fn move_by(&mut self, location: i64) -> Result<MoveOutcome> {
         // Start move.
-        self.relay_on();
+        self.enable()?;
         log::info!("Relay ON - Starting motor movement");
 
         // Reset stall baselines for this move.
@@ -73,7 +73,7 @@ where
         let outcome = self.run().context("Failed to run motor")?;
 
         // End move.
-        self.relay_off();
+        self.disable()?;
         log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
 
         self.last_move_outcome = Some(outcome.clone());
@@ -82,7 +82,7 @@ where
 
     pub fn move_by_ticks(&mut self, location: i64) -> Result<MoveOutcome> {
         // Start move in tick space.
-        self.relay_on();
+        self.enable()?;
         log::info!("Relay ON - Starting motor movement (ticks)");
 
         let now = Instant::now();
@@ -117,7 +117,7 @@ where
         let outcome = self.run().context("Failed to run motor")?;
 
         // End move.
-        self.relay_off();
+        self.disable()?;
         log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
 
         self.last_move_outcome = Some(outcome.clone());
@@ -133,7 +133,7 @@ where
 
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos);
-                    self.relay_off();
+                    self.disable()?;
 
                     return Ok(MoveOutcome::AbortedErrorLoop(
                         Component::Motor,
@@ -147,7 +147,7 @@ where
                     log::warn!("MOVE_ABORT power_missing=true: stopping motor immediately");
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos); // hard stop
-                    self.relay_off(); // Turn relay OFF on abort
+                    self.disable()?; // Turn relay OFF on abort
                     return Ok(MoveOutcome::AbortedPowerMissing);
                 }
 
@@ -186,7 +186,7 @@ where
                         log::error!("MOVE_ABORT stall_confirmed=true: stopping motor immediately");
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos); // hard stop
-                        self.relay_off(); // Turn relay OFF on stall abort
+                        self.disable()?; // Turn relay OFF on stall abort
                         return Ok(MoveOutcome::AbortedStall);
                     }
 
@@ -214,7 +214,7 @@ where
                             );
                             let pos = self.motor.current_position();
                             self.motor.set_current_position(pos); // hard stop
-                            self.relay_off(); // Turn relay OFF on stall abort
+                            self.disable()?; // Turn relay OFF on stall abort
                             return Ok(MoveOutcome::AbortedStall);
                         }
 
@@ -256,7 +256,7 @@ where
                         );
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos);
-                        self.relay_off();
+                        self.disable()?;
                         self.overshoot_enc_start = None;
                         self.overshoot_expected_ticks = None;
                         return Ok(MoveOutcome::AbortedOvershoot);
@@ -273,7 +273,7 @@ where
                     );
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos);
-                    self.relay_off();
+                    self.disable()?;
                     return Ok(MoveOutcome::Completed);
                 }
 
