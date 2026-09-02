@@ -363,11 +363,7 @@ where
     /// Returns an error if fault detection, register access, or GPIO control
     /// fails.
     pub fn step_once(&mut self, forward: bool) -> Result<()> {
-        let faults = self.get_faults()?;
-        if faults.fault_active {
-            error!("Fault active: {:?}", faults);
-            return Ok(());
-        }
+        self.get_faults()?;
 
         if forward {
             self.dir.set_high()?;
@@ -390,7 +386,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if the fault register cannot be read.
+    /// Returns an error if the fault register cannot be read or if active faults are read.
     ///
     /// # Examples
     ///
@@ -405,11 +401,12 @@ where
     ///     // Handle over-current fault.
     /// }
     /// ```
-    pub fn get_faults(&mut self) -> Result<Faults> {
+    pub fn get_faults(&mut self) -> Result<()> {
         let fault_reg = self.read_register(Register::Fault)?;
 
-        Ok(Faults {
-            fault_active: fault_reg & 0x_80 != 0,
+        let fault_active = fault_reg & 0x_80 != 0;
+
+        let faults = Faults {
             spi_error: fault_reg & 0x_40 != 0,
             undervoltage_lockout: fault_reg & 0x_20 != 0,
             charge_pump_undervoltage: fault_reg & 0x_10 != 0,
@@ -417,7 +414,13 @@ where
             stall: fault_reg & 0x_4 != 0,
             temperature: fault_reg & 0x_2 != 0,
             open_load: fault_reg & 0x_1 != 0,
-        })
+        };
+
+        if fault_active {
+            Err(anyhow::Error::new(faults))
+        } else {
+            Ok(())
+        }
     }
 }
 

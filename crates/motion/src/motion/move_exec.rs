@@ -9,7 +9,6 @@ use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
     INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
 };
-use crate::Component;
 
 impl<SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB> Motion<'_, SLP, STP, DIR, CS, RLY, LMSW, ENCA, ENCB>
 where
@@ -134,12 +133,6 @@ where
                     let pos = self.motor.current_position();
                     self.motor.set_current_position(pos);
                     self.disable()?;
-
-                    return Ok(MoveOutcome::AbortedErrorLoop(
-                        Component::Motor,
-                        "stepper".into(),
-                        e.to_string(),
-                    ));
                 }
 
                 // Immediate abort when power is missing (EncoderGuarded only).
