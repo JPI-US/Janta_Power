@@ -32,3 +32,6 @@ AmazonRootCA1.pem
 
 # Explanation files:
 CODE_EXPLANATION.md
+
+# graphify knowledge graph output
+graphify-out/

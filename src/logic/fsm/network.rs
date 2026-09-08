@@ -37,7 +37,6 @@ use crate::{
 const PERSIST_NVS: bool = true;
 const FORCE_NTP_SKIP_RTC: bool = false;
 const ALLOW_BOOT_VALIDATION: bool = true;
-const DEFAULT_VERSION: &str = "1.1.5";
 
 pub struct NetworkContext {
     nvs: EspNvs<NvsDefault>,
@@ -403,18 +402,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for BootValidation 
 
         info!("Beginning boot validation");
 
-        let mut version_buf = [0u8; 32];
-
-        if PERSIST_NVS {
-            ctx.nvs.set_str("version", DEFAULT_VERSION)?;
-        }
-
-        let current_version = ctx
-            .nvs
-            .get_str("version", &mut version_buf)?
-            .map(|s| s.trim().parse::<Version>())
-            .transpose()?
-            .unwrap_or(Version::parse(DEFAULT_VERSION)?);
+        let current_version = Version::parse(ctx.switchboard.default_version)?;
 
         ctx.current_version = Some(current_version.clone());
 

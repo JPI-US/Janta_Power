@@ -243,9 +243,6 @@ impl<'a> OtaUpdater<'a> {
                     // Stash the version we're leaving so the post-reboot boot
                     // flow can publish `logs/firmware_update` with both versions.
                     nvs.set_str("prev_version", &self.current_version.to_string())?;
-
-                    info!("Saving new version to nvs!");
-                    nvs.set_str("version", &remote_version.to_string())?;
                     nvs.set_u8("first_boot", 1)?;
 
                     // Note: no MQTT publish here. The `firmware_update` success

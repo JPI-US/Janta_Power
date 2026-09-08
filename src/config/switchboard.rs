@@ -224,7 +224,7 @@ pub const fn normal() -> Switchboard {
         tracking_loop_sleep_secs: 300,
         ota_check_delay_secs: 3,
 
-        default_version: "1.0.4",
+        default_version: env!("CARGO_PKG_VERSION"),
         heading_tag: "heading",
 
         enc_snapshot_version: 1,
