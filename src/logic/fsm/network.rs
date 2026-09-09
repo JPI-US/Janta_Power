@@ -118,6 +118,8 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
         if PERSIST_NVS {
+            info!("PERSIST_NVS enabled, resetting wifi credentials to .env defaults");
+
             match ctx
                 .nvs
                 .set_str("wifi_ssid", ctx.switchboard.default_wifi_ssid)
@@ -134,6 +136,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
                 Err(e) => error!("Wifi password not updated {:?}", e),
             };
 
+            info!("PERSIST_NVS enabled, resetting timezone credentials to .env defaults");
             match ctx
                 .nvs
                 .set_str("tz_posix", ctx.switchboard.default_tz_posix)
@@ -146,23 +149,33 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
         let mut ssid_buf = [0u8; 64];
         let mut pass_buf = [0u8; 64];
 
-        let ssid = match ctx.nvs.get_str("wifi_ssid", &mut ssid_buf) {
-            Ok(Some(ssid)) => ssid,
-            Ok(None) => ctx.switchboard.default_wifi_ssid,
-            Err(e) => {
-                error!("Failed to read WiFi SSID: {e:?}; falling back to default");
-                ctx.switchboard.default_wifi_ssid
+        let ssid = match ctx.nvs.get_str("wifi_ssid", &mut ssid_buf)? {
+            Some(s) => s.to_string(),
+            None => {
+                info!("No wifi ssid in NVS, seeding default");
+                ctx.nvs
+                    .set_str("wifi_ssid", ctx.switchboard.default_wifi_ssid)?;
+                ctx.switchboard.default_wifi_ssid.to_string()
             }
         };
 
-        let pass = match ctx.nvs.get_str("wifi_pass", &mut pass_buf) {
-            Ok(Some(pass)) => pass,
-            Ok(None) => ctx.switchboard.default_wifi_pass,
-            Err(e) => {
-                error!("Failed to read WiFi password: {e:?}; falling back to default");
-                ctx.switchboard.default_wifi_pass
+        let pass = match ctx.nvs.get_str("wifi_pass", &mut pass_buf)? {
+            Some(s) => s.to_string(),
+            None => {
+                info!("No wifi password in NVS, seeding default");
+                ctx.nvs
+                    .set_str("wifi_pass", ctx.switchboard.default_wifi_pass)?;
+                ctx.switchboard.default_wifi_pass.to_string()
             }
         };
+
+        let mut tz_buf = [0u8; 96];
+
+        if ctx.nvs.get_str("tz_posix", &mut tz_buf)?.is_none() {
+            info!("No tz_posix in NVS, seeding default");
+            ctx.nvs
+                .set_str("tz_posix", ctx.switchboard.default_tz_posix)?;
+        }
 
         let modem = ctx
             .modem
@@ -179,7 +192,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
             .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to get partition"))?;
 
-        let wifi = Wifi::new(modem, sysloop, partition, ssid, pass)
+        let wifi = Wifi::new(modem, sysloop, partition, &ssid, &pass)
             .context("Failed to initialize WiFi")?;
 
         ctx.wifi = Some(wifi);
