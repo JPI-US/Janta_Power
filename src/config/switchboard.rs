@@ -197,6 +197,15 @@ pub struct Switchboard {
     pub default_ota_updater: &'static str,
     pub default_ota_password: &'static str,
 
+    // Motor defaults
+    pub microsteps: f64,
+    pub gear_reduction: f64,
+    pub slew_bearing: f32,
+    pub default_max_speed_steps_per_s: f32,
+    pub default_accel_steps_per_s2: u16,
+    pub steps_per_rev: f64,
+    pub enc_ticks_per_rev: f64,
+
     // Nested (Phase 0: present for parity; unused until later phases)
     pub boot: BootSwitches,
     pub runtime: RuntimeSwitches,
@@ -216,6 +225,12 @@ pub const fn normal() -> Switchboard {
     } else {
         ActiveLevel::ActiveLow
     };
+
+    let microsteps = 25_600.0;
+    let gear_reduction = 50.0;
+    let slew_bearing = 84.0;
+
+    let steps_per_rev = microsteps * gear_reduction * (slew_bearing as f64);
 
     Switchboard {
         device_id: crate::config::constants::DEVICE_ID,
@@ -242,6 +257,14 @@ pub const fn normal() -> Switchboard {
 
         default_tower_latitude: crate::config::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::config::constants::TOWER_LONGITUDE,
+
+        microsteps,
+        gear_reduction,
+        slew_bearing,
+        default_max_speed_steps_per_s: 43_000.0,
+        default_accel_steps_per_s2: 20_000,
+        steps_per_rev,
+        enc_ticks_per_rev: 348_323.0,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {

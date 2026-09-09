@@ -42,10 +42,9 @@ impl Motion<'_> {
 
         // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
-            use super::{ENC_TICKS_PER_REV, STEPS_PER_REV};
             self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
-            let expected_ticks =
-                ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
+            let expected_ticks = ((location.abs() as f64 / self.steps_per_rev)
+                * self.enc_ticks_per_rev as f64) as i64;
             self.overshoot_expected_ticks = Some(expected_ticks);
         } else {
             self.overshoot_enc_start = None;

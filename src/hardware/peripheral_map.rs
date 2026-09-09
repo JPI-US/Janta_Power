@@ -52,6 +52,10 @@ impl PeripheralMap<'_> {
     pub fn new(
         relay_active_level: ActiveLevel,
         limit_switch_active_level: ActiveLevel,
+        steps_per_rev: f64,
+        enc_ticks_per_rev: f64,
+        speed: f32,
+        acceleration: u16,
     ) -> Result<Self> {
         let peripherals = Peripherals::take().context("Failed to take peripherals")?;
 
@@ -80,6 +84,10 @@ impl PeripheralMap<'_> {
             peripherals.pins.gpio11,
             relay_active_level,
             limit_switch_active_level,
+            speed,
+            acceleration,
+            steps_per_rev,
+            enc_ticks_per_rev,
         )?;
 
         let temperature_sensor = match Hdc1080::new(i2c_bus.acquire_i2c(), Ets) {

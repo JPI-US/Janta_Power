@@ -7,7 +7,7 @@ use ::fsm::{
 use chrono::{DateTime, Local};
 use log::{error, info, warn};
 use motion::{
-    motion::{MotionMode, MoveOutcome, STEPS_PER_REV},
+    motion::{MotionMode, MoveOutcome},
     Direction, MotionEvent,
 };
 use network::{telemetry, telemetry::topic};
@@ -262,7 +262,8 @@ pub(crate) fn set_tower_position(
         ctx.motion.relay_on();
 
         log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
-        let steps = (angle_offset / 360.0) * STEPS_PER_REV;
+        let steps = ctx.motion.calculate_steps(angle_offset);
+
         log::info!("Steps Needed: {}", steps as i64);
         // TODO: Either remove the motion_moving state or force these functions to abide by it
         if let Ok(move_outcome) = ctx.motion.move_by(steps as i64) {

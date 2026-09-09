@@ -4,10 +4,7 @@ use ::fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{State, StateResult},
 };
-use motion::{
-    motion::{calculate_steps, MotionMode},
-    Direction, MotionEvent,
-};
+use motion::{motion::MotionMode, Direction, MotionEvent};
 use network::telemetry::{topic, Component};
 
 use crate::{
@@ -97,7 +94,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionBeginHomin
 
             return Ok(StateResult::Running(Box::new(MotionHoming {
                 stall_prev,
-                steps_left: calculate_steps(-350.0),
+                steps_left: ctx.motion.calculate_steps(-350.0),
             })));
         } else if should_home_by_mode {
             log::warn!("Homing skipped: HOMING_ENABLED=false");
@@ -139,7 +136,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         }
 
         if self.steps_left < 0 && !ctx.motion.lmsw_active() {
-            let steps = calculate_steps(-1.0);
+            let steps = ctx.motion.calculate_steps(-1.0);
 
             return Ok(StateResult::Running(Box::new(MotionMoving { steps })));
         }

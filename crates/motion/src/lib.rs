@@ -35,10 +35,6 @@ pub mod motion {
     // ESP-IDF NVS key names are limited to 15 characters.
     const NVS_KEY_HOME_ERROR_TICKS: &str = "home_err_ticks";
 
-    // Keep step math in one place.
-    // TODO: This should be in switchboard i think
-    pub const STEPS_PER_REV: f64 = MICROSTEPS * GEAR_REDUCTION * SLEW_BEARING;
-
     #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum MotionMode {
         // Stepper-only movement (open-loop).
@@ -60,10 +56,6 @@ pub mod motion {
     pub enum ActiveLevel {
         ActiveLow,
         ActiveHigh,
-    }
-
-    pub fn calculate_steps(offset_deg: f32) -> i64 {
-        ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
 
     pub struct Motion<'a> {
@@ -125,6 +117,9 @@ pub mod motion {
 
         pub relay_active_level: ActiveLevel,
         pub limit_switch_active_level: ActiveLevel,
+
+        pub steps_per_rev: f64,
+        pub enc_ticks_per_rev: f64,
     }
 
     // Direction and step wiring notes:
@@ -140,6 +135,10 @@ pub mod motion {
             encoder_b_pin: Gpio11,
             relay_active_level: ActiveLevel,
             limit_switch_active_level: ActiveLevel,
+            speed: f32,
+            acceleration: u16,
+            steps_per_rev: f64,
+            enc_ticks_per_rev: f64,
         ) -> Result<Motion<'a>> {
             let step = PinDriver::output(step_pin)?;
             let direction = PinDriver::output(direction_pin)?;
@@ -168,8 +167,6 @@ pub mod motion {
                 location: 0.0,
                 motion_mode: MotionMode::EncoderGuarded,
                 previous_motion_mode: MotionMode::EncoderGuarded,
-                speed: DEFAULT_MAX_SPEED_STEPS_PER_S,
-                acceleration: DEFAULT_ACCEL_STEPS_PER_S2,
                 motor: Driver::new(),
                 motor_device: StepAndDirection::new(step, direction),
                 motor_clock: OperatingSystemClock::new(),
@@ -208,6 +205,12 @@ pub mod motion {
 
                 relay_active_level,
                 limit_switch_active_level,
+
+                speed,
+                acceleration,
+
+                steps_per_rev,
+                enc_ticks_per_rev,
             })
         }
 
@@ -380,6 +383,10 @@ pub mod motion {
             };
 
             Ok(true)
+        }
+
+        pub fn calculate_steps(&self, offset_deg: f64) -> i64 {
+            ((offset_deg / 360.0) * self.steps_per_rev) as i64
         }
     }
 
