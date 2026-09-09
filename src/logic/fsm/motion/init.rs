@@ -3,7 +3,7 @@ use fsm::{
     postal::{bulletin::Bulletin, mailbox::Mailbox},
     state::{InitialState, State, StateResult},
 };
-use log::{error, info};
+use log::info;
 use motion::motion::MotionMode;
 
 use crate::{
@@ -31,52 +31,10 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
-        // Tower location — seeded from `TOWER_LATITUDE` / `TOWER_LONGITUDE` in
-        // `.env` via `Switchboard`. When `PERSIST_NVS` is on, the switchboard
-        // defaults are (re)written into NVS on every boot, so updating `.env` and
-        // reflashing updates the tower coordinates on the next boot.
-        let tower_latitude: f64 = ctx.switchboard.default_tower_latitude;
-
-        if PERSIST_NVS {
-            match ctx
-                .nvs
-                .set_str("tower_latitude", &tower_latitude.to_string())
-            {
-                Ok(_) => info!("Tower latitude has been updated"),
-                Err(e) => error!("Tower latitude was not updated {:?}", e),
-            };
-        }
-
-        let tower_longitude: f64 = ctx.switchboard.default_tower_longitude;
-
-        if PERSIST_NVS {
-            match ctx
-                .nvs
-                .set_str("tower_longitude", &tower_longitude.to_string())
-            {
-                Ok(_) => info!("Tower longitude has been updated"),
-                Err(e) => error!("Tower longitude was not updated {:?}", e),
-            };
-        }
-
-        let mut lat_buf = [0u8; 64];
-        let mut lon_buf = [0u8; 64];
-
-        let latitude = ctx
-            .nvs
-            .get_str("tower_latitude", &mut lat_buf)?
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0.0);
-
-        let longitude = ctx
-            .nvs
-            .get_str("tower_longitude", &mut lon_buf)?
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0.0);
-
-        let altitude: f64 = 0.0;
+        // Tower location — read directly from `TOWER_LATITUDE` / `TOWER_LONGITUDE`from switchboard
+        let latitude: f64 = ctx.switchboard.default_tower_latitude;
+        let longitude: f64 = ctx.switchboard.default_tower_longitude;
+        let altitude: f64 = ctx.switchboard.default_tower_altitude;
 
         info!(
             "Retrieved latitude: {}, and longitude: {}",

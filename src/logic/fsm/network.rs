@@ -33,8 +33,6 @@ use crate::{
     services::{commands, transport},
 };
 
-// TODO: Remove const
-const PERSIST_NVS: bool = true;
 const FORCE_NTP_SKIP_RTC: bool = false;
 const ALLOW_BOOT_VALIDATION: bool = true;
 
@@ -117,8 +115,8 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, NetworkContext, FSMCommand, FSMState>> {
-        if PERSIST_NVS {
-            info!("PERSIST_NVS enabled, resetting wifi credentials to .env defaults");
+        if ctx.switchboard.reset_nvs_credentials {
+            info!("RESET_NVS_CREDENTIALS enabled, resetting wifi credentials to .env defaults");
 
             match ctx
                 .nvs
@@ -136,7 +134,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for WifiInitialize 
                 Err(e) => error!("Wifi password not updated {:?}", e),
             };
 
-            info!("PERSIST_NVS enabled, resetting timezone credentials to .env defaults");
+            info!("RESET_NVS_CREDENTIALS enabled, resetting timezone credentials to .env defaults");
             match ctx
                 .nvs
                 .set_str("tz_posix", ctx.switchboard.default_tz_posix)

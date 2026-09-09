@@ -186,6 +186,9 @@ pub struct Switchboard {
     pub home_heading_deg: f32,
 
     // Defaults currently written into NVS on boot
+    /// If true, force-resets `wifi_ssid`/`wifi_pass`/`tz_posix` in NVS back to
+    /// their `.env` defaults on every boot; build default from `RESET_NVS_CREDENTIALS` in `.env`.
+    pub reset_nvs_credentials: bool,
     pub default_wifi_ssid: &'static str,
     pub default_wifi_pass: &'static str,
     /// POSIX `TZ` string for libc (`setenv` + `tzset`); build default from `TZ_POSIX` in `.env`.
@@ -194,6 +197,7 @@ pub struct Switchboard {
     // Tower defaults
     pub default_tower_latitude: f64,
     pub default_tower_longitude: f64,
+    pub default_tower_altitude: f64,
     pub default_ota_updater: &'static str,
     pub default_ota_password: &'static str,
 
@@ -248,6 +252,7 @@ pub const fn normal() -> Switchboard {
         enc_home_tol_ticks: 50,
         home_heading_deg: crate::config::constants::HOME_HEADING_DEG,
 
+        reset_nvs_credentials: crate::config::constants::RESET_NVS_CREDENTIALS,
         default_wifi_ssid: crate::config::constants::WIFI_SSID,
         default_wifi_pass: crate::config::constants::WIFI_PASSWORD,
         default_tz_posix: crate::config::constants::TZ_POSIX,
@@ -257,6 +262,7 @@ pub const fn normal() -> Switchboard {
 
         default_tower_latitude: crate::config::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::config::constants::TOWER_LONGITUDE,
+        default_tower_altitude: crate::config::constants::TOWER_ALTITUDE,
 
         microsteps,
         gear_reduction,

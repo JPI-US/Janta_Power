@@ -95,6 +95,12 @@ fn generate_constants() {
     constants.push_str(&get_env("WIFI_PASSWORD", "@Powerfuture22", "str"));
     constants.push('\n');
 
+    // NVS credential reset — force wifi_ssid/wifi_pass/tz_posix back to the
+    // above .env defaults on every boot.
+    constants.push_str("// NVS credential reset\n");
+    constants.push_str(&get_env("RESET_NVS_CREDENTIALS", "true", "bool"));
+    constants.push('\n');
+
     // Device identity (used as MQTT topic prefix: `tower/{device_id}/...`).
     // AWS IoT Core handles broker auth via TLS client certs, so no username /
     // password is plumbed here.
@@ -114,6 +120,7 @@ fn generate_constants() {
     constants.push_str("// Tower location defaults\n");
     constants.push_str(&get_env("TOWER_LATITUDE", "32.797868", "f64"));
     constants.push_str(&get_env("TOWER_LONGITUDE", "-96.835597", "f64"));
+    constants.push_str(&get_env("TOWER_ALTITUDE", "0.0", "f64"));
     constants.push('\n');
 
     fs::write(&constants_path, constants).expect("Failed to write constants.rs");
