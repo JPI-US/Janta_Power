@@ -182,8 +182,6 @@ pub struct Switchboard {
     pub nvs_key_enc_snapshot_version: &'static str,
     pub nvs_key_enc_ticks_adj: &'static str,
     pub enc_home_tol_ticks: i32,
-    /// Heading in degrees at limit switch (home); used by encoder recovery.
-    pub home_heading_deg: f32,
 
     // Defaults currently written into NVS on boot
     /// If true, force-resets `wifi_ssid`/`wifi_pass`/`tz_posix` in NVS back to
@@ -201,14 +199,33 @@ pub struct Switchboard {
     pub default_ota_updater: &'static str,
     pub default_ota_password: &'static str,
 
-    // Motor defaults
-    pub microsteps: f64,
-    pub gear_reduction: f64,
+    // Motor constants
+    pub microsteps: f32,
+    pub gear_reduction: f32,
     pub slew_bearing: f32,
     pub default_max_speed_steps_per_s: f32,
     pub default_accel_steps_per_s2: u16,
-    pub steps_per_rev: f64,
-    pub enc_ticks_per_rev: f64,
+    pub steps_per_rev: f32,
+
+    // Encoder constants
+    pub enc_ticks_per_rev: f32,
+    pub enc_ticks_per_deg: f32,
+    pub encoder_probe_steps: i64,
+
+    // Stall detection constants
+    pub max_steps_without_enc_change: i32,
+    pub encoder_stall_min_ticks: i32,
+    pub encoder_stall_check_interval_steps: i32,
+
+    // Tracking constants
+    pub tracking_deadband_deg: f32,
+    // Heading in degrees at limit switch (home); used by encoder recovery.
+    pub home_heading_deg: f32,
+    pub home_error_acceptable_deg: f32,
+
+    // Encoder overshoot protection (safety)
+    pub encoder_overshoot_tolerance_ticks: i32,
+    pub encoder_probe_min_ticks: i32,
 
     // Nested (Phase 0: present for parity; unused until later phases)
     pub boot: BootSwitches,
@@ -234,7 +251,10 @@ pub const fn normal() -> Switchboard {
     let gear_reduction = 50.0;
     let slew_bearing = 84.0;
 
-    let steps_per_rev = microsteps * gear_reduction * (slew_bearing as f64);
+    let steps_per_rev = microsteps * gear_reduction * slew_bearing;
+
+    let enc_ticks_per_rev = 348_323.0;
+    let enc_ticks_per_deg = enc_ticks_per_rev / 360.0;
 
     Switchboard {
         device_id: crate::config::constants::DEVICE_ID,
@@ -250,7 +270,6 @@ pub const fn normal() -> Switchboard {
         nvs_key_enc_snapshot_version: "enc_snapshot_v",
         nvs_key_enc_ticks_adj: "enc_ticks_adj",
         enc_home_tol_ticks: 50,
-        home_heading_deg: crate::config::constants::HOME_HEADING_DEG,
 
         reset_nvs_credentials: crate::config::constants::RESET_NVS_CREDENTIALS,
         default_wifi_ssid: crate::config::constants::WIFI_SSID,
@@ -270,7 +289,21 @@ pub const fn normal() -> Switchboard {
         default_max_speed_steps_per_s: 43_000.0,
         default_accel_steps_per_s2: 20_000,
         steps_per_rev,
-        enc_ticks_per_rev: 348_323.0,
+
+        enc_ticks_per_rev,
+        enc_ticks_per_deg,
+        encoder_probe_steps: 50_000,
+
+        max_steps_without_enc_change: 120_000,
+        encoder_stall_min_ticks: 200,
+        encoder_stall_check_interval_steps: 120_000,
+
+        tracking_deadband_deg: 5.0,
+        home_heading_deg: 50.0,
+        home_error_acceptable_deg: 2.5,
+
+        encoder_overshoot_tolerance_ticks: 30_000,
+        encoder_probe_min_ticks: 85,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {
@@ -296,15 +329,15 @@ pub const fn normal() -> Switchboard {
             encoder_recovery: EncoderRecoverySwitches {
                 enabled: true,
                 probe_interval_secs: 180,
-                probe_steps: crate::config::constants::ENCODER_PROBE_STEPS,
+                probe_steps: 50_000,
                 max_drift_deg: 15.0,
                 rehome_dir: Direction::Cw,
             },
             guardrails: GuardrailsSwitches {
                 stall_detection_enabled: true,
                 soft_limits_enabled: true,
-                soft_limit_min_deg: crate::config::constants::SOFT_LIMIT_MIN_DEG,
-                soft_limit_max_deg: crate::config::constants::SOFT_LIMIT_MAX_DEG,
+                soft_limit_min_deg: 50.0,
+                soft_limit_max_deg: 300.0,
             },
             commands_enabled: true,
             relay_active_level,

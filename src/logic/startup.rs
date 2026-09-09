@@ -63,6 +63,14 @@ pub fn startup() -> anyhow::Result<StartupContext> {
         switchboard.enc_ticks_per_rev,
         switchboard.default_max_speed_steps_per_s,
         switchboard.default_accel_steps_per_s2,
+        switchboard.enc_ticks_per_deg,
+        switchboard.home_error_acceptable_deg,
+        switchboard.max_steps_without_enc_change,
+        switchboard.encoder_stall_check_interval_steps,
+        switchboard.encoder_stall_min_ticks,
+        switchboard.encoder_overshoot_tolerance_ticks,
+        switchboard.encoder_probe_steps,
+        switchboard.encoder_probe_min_ticks,
     )?;
 
     peripherals.led.display_none()?;

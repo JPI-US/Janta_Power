@@ -4,10 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use super::{
-    Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
-    INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
-};
+use super::{Motion, MotionMode, MoveOutcome, INVERT_MOTOR_DIRECTION};
 
 impl Motion<'_> {
     pub fn init(&mut self) {
@@ -43,8 +40,8 @@ impl Motion<'_> {
         // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
-            let expected_ticks = ((location.abs() as f64 / self.steps_per_rev)
-                * self.enc_ticks_per_rev as f64) as i64;
+            let expected_ticks = ((location.abs() as f32 / self.steps_per_rev)
+                * self.enc_ticks_per_rev as f32) as i32;
             self.overshoot_expected_ticks = Some(expected_ticks);
         } else {
             self.overshoot_enc_start = None;
@@ -67,7 +64,7 @@ impl Motion<'_> {
         Ok(outcome)
     }
 
-    pub fn move_by_ticks(&mut self, location: i64) -> Result<MoveOutcome> {
+    pub fn move_by_ticks(&mut self, location: i32) -> Result<MoveOutcome> {
         // Start move in tick space.
         self.relay_on();
         log::info!("Relay ON - Starting motor movement (ticks)");
@@ -100,7 +97,7 @@ impl Motion<'_> {
         } else {
             location
         };
-        self.motor.move_by(signed_steps);
+        self.motor.move_by(signed_steps as i64);
         let outcome = self.run().context("Failed to run motor")?;
 
         // End move.
@@ -144,7 +141,8 @@ impl Motion<'_> {
 
                     let steps_since_enc_change =
                         (step_pos - self.stall_step_pos_at_last_enc_change).abs();
-                    let stalled = steps_since_enc_change >= MAX_STEPS_WITHOUT_ENC_CHANGE;
+                    let stalled =
+                        steps_since_enc_change >= self.max_steps_without_enc_change as i64;
 
                     if stalled && !self.stall_reported {
                         log::warn!(
@@ -153,7 +151,7 @@ impl Motion<'_> {
                             steps_since_enc_change,
                             step_pos,
                             enc_pos,
-                            MAX_STEPS_WITHOUT_ENC_CHANGE
+                            self.max_steps_without_enc_change
                         );
                         self.stall_reported = true;
                     }
@@ -177,16 +175,16 @@ impl Motion<'_> {
                     let total_steps_moved =
                         (current_step_pos - self.stall_check_start_step_pos).abs();
 
-                    if total_steps_moved >= ENCODER_STALL_CHECK_INTERVAL_STEPS {
+                    if total_steps_moved >= self.encoder_stall_check_interval_steps as i64 {
                         let encoder_ticks_moved =
                             (current_encoder_ticks - self.stall_check_start_encoder_ticks).abs();
 
-                        if encoder_ticks_moved < ENCODER_STALL_MIN_TICKS {
+                        if encoder_ticks_moved < self.encoder_stall_min_ticks {
                             log::error!(
                                 "MOVE_ABORT ratio_stall_detected: total_steps={} encoder_ticks={} (minimum required={})",
                                 total_steps_moved,
                                 encoder_ticks_moved,
-                                ENCODER_STALL_MIN_TICKS
+                                self.encoder_stall_min_ticks
                             );
                             let pos = self.motor.current_position();
                             self.motor.set_current_position(pos); // hard stop
@@ -211,7 +209,6 @@ impl Motion<'_> {
                     && self.overshoot_enc_start.is_some()
                     && self.overshoot_expected_ticks.is_some()
                 {
-                    use super::ENCODER_OVERSHOOT_TOLERANCE_TICKS;
                     let enc_start = self
                         .overshoot_enc_start
                         .ok_or_else(|| anyhow::anyhow!("overshoot_enc_start not initialized"))?;
@@ -220,15 +217,15 @@ impl Motion<'_> {
                     let expected = self.overshoot_expected_ticks.ok_or_else(|| {
                         anyhow::anyhow!("overshoot_expected_ticks not initialized")
                     })?;
-                    let tolerance = ENCODER_OVERSHOOT_TOLERANCE_TICKS;
+                    let tolerance = self.encoder_overshoot_tolerance_ticks;
 
-                    if enc_delta > expected + tolerance {
+                    if enc_delta > (expected + tolerance) as i64 {
                         log::error!(
                             "MOVE_ABORT overshoot_detected: enc_delta={} expected={} tolerance={} (exceeded by {})",
                             enc_delta,
                             expected,
                             tolerance,
-                            enc_delta - expected - tolerance
+                            enc_delta - (expected - tolerance) as i64
                         );
                         let pos = self.motor.current_position();
                         self.motor.set_current_position(pos);

@@ -46,35 +46,6 @@ fn generate_constants() {
     constants.push_str(&get_env("LIMIT_SWITCH_ACTIVE_HIGH", "false", "bool"));
     constants.push('\n');
 
-    // Encoder Constants
-    constants.push_str("// Encoder Constants\n");
-    constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
-    constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
-    constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
-    constants.push('\n');
-
-    // Stall Detection
-    constants.push_str("// Stall Detection\n");
-    constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "u64"));
-    constants.push('\n');
-
-    // Tracking Constants
-    constants.push_str("// Tracking Constants\n");
-    constants.push_str(&get_env("TRACKING_DEADBAND_DEG", "5.0", "f32"));
-    constants.push_str(&get_env("HOME_HEADING_DEG", "90.0", "f32"));
-    constants.push('\n');
-
-    // Soft Limits
-    constants.push_str("// Soft Limits (Safety Guardrails)\n");
-    constants.push_str(&get_env("SOFT_LIMIT_MIN_DEG", "0.0", "f32"));
-    constants.push_str(&get_env("SOFT_LIMIT_MAX_DEG", "285.0", "f32"));
-    constants.push('\n');
-
-    // Encoder Overshoot Protection
-    constants.push_str("// Encoder Overshoot Protection (Safety)\n");
-    constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "750", "i64"));
-    constants.push('\n');
-
     // Operational Mode (as string constants for runtime conversion)
     constants.push_str("// Operational Mode\n");
     let profile = std::env::var("ACTIVE_PROFILE").unwrap_or_else(|_| "Normal".to_string());

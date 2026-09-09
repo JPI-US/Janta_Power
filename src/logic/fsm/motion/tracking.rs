@@ -13,7 +13,6 @@ use motion::{
 use network::{telemetry, telemetry::topic};
 
 use crate::{
-    config::constants::{HOME_HEADING_DEG, TRACKING_DEADBAND_DEG},
     logic::{
         encoder_fault::{EncoderFaultRecoveryTickRes, EncoderRecoverySwitches, EncoderTickContext},
         fsm::{
@@ -249,7 +248,7 @@ pub(crate) fn set_tower_position(
         );
         log::info!("Sun Angle: {}", sun.azimuth_in_deg());
         // Daytime tracking: no move in deadband, otherwise step by offset.
-        if angle_offset.abs() <= TRACKING_DEADBAND_DEG as f64 {
+        if angle_offset.abs() <= ctx.switchboard.tracking_deadband_deg as f64 {
             ctx.motion.relay_off();
 
             return Ok(SetTowerPositionRes {
@@ -261,7 +260,10 @@ pub(crate) fn set_tower_position(
 
         ctx.motion.relay_on();
 
-        log::info!("Tracking move (|offset| > {}°)", TRACKING_DEADBAND_DEG);
+        log::info!(
+            "Tracking move (|offset| > {}°)",
+            ctx.switchboard.tracking_deadband_deg
+        );
         let steps = ctx.motion.calculate_steps(angle_offset);
 
         log::info!("Steps Needed: {}", steps as i64);
@@ -301,7 +303,7 @@ pub(crate) fn set_tower_position(
         });
     } else {
         // Sunset Operation
-        if (location - HOME_HEADING_DEG).abs() < 0.01 {
+        if (location - ctx.switchboard.home_heading_deg).abs() < 0.01 {
             // Verify home physically when heading says home.
             if !ctx.motion.lmsw_active() {
                 log::warn!(

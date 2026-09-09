@@ -45,35 +45,6 @@ fn generate_constants() {
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
     constants.push('\n');
 
-    // Encoder Constants
-    constants.push_str("// Encoder Constants\n");
-    constants.push_str(&get_env("ENC_TICKS_PER_REV", "348323.0", "f32"));
-    constants.push_str(&get_env("ENCODER_PROBE_STEPS", "50000", "i64"));
-    constants.push_str(&get_env("ENCODER_PROBE_MIN_TICKS", "80", "i32"));
-    constants.push('\n');
-
-    // Stall Detection
-    constants.push_str("// Stall Detection\n");
-    constants.push_str(&get_env("MAX_STEPS_WITHOUT_ENC_CHANGE", "20000", "i64"));
-    constants.push_str(&get_env("ENCODER_OVERSHOOT_TOLERANCE_TICKS", "800", "i64"));
-    constants.push_str(&get_env("ENCODER_STALL_MIN_TICKS", "200", "i32"));
-    constants.push_str(&get_env(
-        "ENCODER_STALL_CHECK_INTERVAL_STEPS",
-        "120000",
-        "i64",
-    ));
-    constants.push('\n');
-
-    // Tracking Constants
-    constants.push_str("// Tracking Constants\n");
-    constants.push_str(&get_env("TRACKING_DEADBAND_DEG", "5.0", "f32"));
-    constants.push_str(&get_env("HOME_HEADING_DEG", "90.0", "f32"));
-    // Absolute threshold (in degrees) below which sunset homing drift is
-    // reported as `acceptable`. Outside the band it is classified as either
-    // `undershoot` (positive drift) or `overshoot` (negative drift).
-    constants.push_str(&get_env("HOME_ERROR_ACCEPTABLE_DEG", "2.5", "f32"));
-    constants.push('\n');
-
     // Timezone is DST-aware via runtime libc TZ/tzset (owned by runtime crate).
     // Motion reads local time via `chrono::Local`; no build-time offset needed.
 

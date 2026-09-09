@@ -9,7 +9,6 @@ pub mod motion {
     use anyhow::Result;
     use chrono::Local;
     use clock::Clock;
-    use encoder::ENC_TICKS_PER_DEG;
     use esp_idf_svc::{
         hal::gpio::{Gpio10, Gpio11, Gpio14, Gpio15, Gpio16, Gpio17, Input, Output, PinDriver},
         nvs::*,
@@ -101,7 +100,7 @@ pub mod motion {
 
         // Encoder overshoot protection state (EncoderGuarded mode only).
         pub overshoot_enc_start: Option<i32>,
-        pub overshoot_expected_ticks: Option<i64>,
+        pub overshoot_expected_ticks: Option<i32>,
 
         // Last attempted move outcome, consumed by `take_last_move_outcome`.
         pub last_move_outcome: Option<MoveOutcome>,
@@ -118,8 +117,16 @@ pub mod motion {
         pub relay_active_level: ActiveLevel,
         pub limit_switch_active_level: ActiveLevel,
 
-        pub steps_per_rev: f64,
-        pub enc_ticks_per_rev: f64,
+        pub steps_per_rev: f32,
+        pub enc_ticks_per_rev: f32,
+        pub enc_ticks_per_deg: f32,
+        pub home_error_acceptable_deg: f32,
+        pub max_steps_without_enc_change: i32,
+        pub encoder_stall_check_interval_steps: i32,
+        pub encoder_stall_min_ticks: i32,
+        pub encoder_overshoot_tolerance_ticks: i32,
+        pub encoder_probe_steps: i64,
+        pub encoder_probe_min_ticks: i32,
     }
 
     // Direction and step wiring notes:
@@ -137,8 +144,16 @@ pub mod motion {
             limit_switch_active_level: ActiveLevel,
             speed: f32,
             acceleration: u16,
-            steps_per_rev: f64,
-            enc_ticks_per_rev: f64,
+            steps_per_rev: f32,
+            enc_ticks_per_rev: f32,
+            enc_ticks_per_deg: f32,
+            home_error_acceptable_deg: f32,
+            max_steps_without_enc_change: i32,
+            encoder_stall_check_interval_steps: i32,
+            encoder_stall_min_ticks: i32,
+            encoder_overshoot_tolerance_ticks: i32,
+            encoder_probe_steps: i64,
+            encoder_probe_min_ticks: i32,
         ) -> Result<Motion<'a>> {
             let step = PinDriver::output(step_pin)?;
             let direction = PinDriver::output(direction_pin)?;
@@ -211,6 +226,14 @@ pub mod motion {
 
                 steps_per_rev,
                 enc_ticks_per_rev,
+                enc_ticks_per_deg,
+                home_error_acceptable_deg,
+                max_steps_without_enc_change,
+                encoder_stall_check_interval_steps,
+                encoder_stall_min_ticks,
+                encoder_overshoot_tolerance_ticks,
+                encoder_probe_steps,
+                encoder_probe_min_ticks,
             })
         }
 
@@ -307,8 +330,8 @@ pub mod motion {
                 return None;
             };
 
-            let error_deg = home_error_ticks as f32 / ENC_TICKS_PER_DEG;
-            let (category, result) = if error_deg > HOME_ERROR_ACCEPTABLE_DEG {
+            let error_deg = home_error_ticks as f32 / self.enc_ticks_per_deg;
+            let (category, result) = if error_deg > self.home_error_acceptable_deg {
                 (
                     network::telemetry::EncoderErrorCategory::Undershoot,
                     format!(
@@ -316,7 +339,7 @@ pub mod motion {
                         error_deg, home_error_ticks
                     ),
                 )
-            } else if error_deg < -HOME_ERROR_ACCEPTABLE_DEG {
+            } else if error_deg < -self.home_error_acceptable_deg {
                 (
                     network::telemetry::EncoderErrorCategory::Overshoot,
                     format!(
@@ -386,7 +409,7 @@ pub mod motion {
         }
 
         pub fn calculate_steps(&self, offset_deg: f64) -> i64 {
-            ((offset_deg / 360.0) * self.steps_per_rev) as i64
+            ((offset_deg / 360.0) * self.steps_per_rev as f64) as i64
         }
     }
 

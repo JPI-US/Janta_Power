@@ -8,7 +8,6 @@ use motion::{motion::MotionMode, Direction, MotionEvent};
 use network::telemetry::{topic, Component};
 
 use crate::{
-    config::constants::HOME_HEADING_DEG,
     logic::fsm::{
         motion::{
             maintenance::perform_maintenance_transition, MotionBeginHoming, MotionContext,
@@ -164,7 +163,7 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionHoming {
         }
 
         if self.steps_left < 0 {
-            ctx.motion.update_position(HOME_HEADING_DEG);
+            ctx.motion.update_position(ctx.switchboard.home_heading_deg);
             ctx.motion.force_zero_if_limit_switch_pressed();
         }
 

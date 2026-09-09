@@ -2,13 +2,7 @@
 
 use anyhow::{Context, Result};
 
-use super::{
-    Motion, MoveOutcome, ENCODER_PROBE_MIN_TICKS, ENCODER_PROBE_STEPS,
-    ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS, ENC_TICKS_PER_REV,
-};
-
-// Output-shaft encoder calibration from build-time constants.
-pub(super) const ENC_TICKS_PER_DEG: f32 = ENC_TICKS_PER_REV / 360.0;
+use super::{Motion, MoveOutcome};
 
 impl Motion<'_> {
     // CW is positive; 0 ticks is limit-switch home after zeroing.
@@ -30,14 +24,14 @@ impl Motion<'_> {
     /// - The limit switch (home) corresponds to `home_heading_deg`
     /// - Positive encoder ticks correspond to increasing heading CW
     pub fn heading_from_encoder_ticks(&self, home_heading_deg: f32) -> f32 {
-        let deg = (self.encoder_ticks_adjusted() as f32) / ENC_TICKS_PER_DEG;
+        let deg = self.encoder_ticks_adjusted() as f32 / self.enc_ticks_per_deg;
         (home_heading_deg + deg).rem_euclid(360.0)
     }
 
     /// Convert a degrees delta into expected encoder ticks (output shaft).
     /// Positive degrees correspond to positive encoder ticks (CW).
     pub fn encoder_ticks_for_deg(&self, deg: f32) -> i32 {
-        (deg * ENC_TICKS_PER_DEG).round() as i32
+        (deg * self.enc_ticks_per_deg).round() as i32
     }
 
     /// Diagnostic probe: move and verify encoder ticks changed.
@@ -56,11 +50,11 @@ impl Motion<'_> {
         let encoder_ticks_moved = (end_ticks - start_ticks).abs();
 
         // Probe threshold is intentionally looser than runtime stall checks.
-        let min_expected_ticks = if probe_steps.abs() == ENCODER_PROBE_STEPS {
-            ENCODER_PROBE_MIN_TICKS
+        let min_expected_ticks = if probe_steps.abs() == self.encoder_probe_steps {
+            self.encoder_probe_min_ticks
         } else {
-            ((probe_steps.abs() as f64 / ENCODER_STALL_CHECK_INTERVAL_STEPS as f64)
-                * ENCODER_STALL_MIN_TICKS as f64)
+            ((probe_steps.abs() as f64 / self.encoder_stall_check_interval_steps as f64)
+                * self.encoder_stall_min_ticks as f64)
                 .ceil() as i32
         };
 
