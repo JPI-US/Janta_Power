@@ -1,10 +1,6 @@
-//use std::io::{Read, Write};
 use std::{result::Result::Ok, thread, time::Duration};
 
-use anyhow::Context;
-// use ota::OtaPartition; // hypothetical struct from ota crate
-use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+use anyhow::{Context, Result};
 use embedded_svc::http::client::{Client as HttpClient, Method};
 use esp_idf_svc::{
     http::client::{Configuration as HttpConfiguration, EspHttpConnection},
@@ -16,177 +12,151 @@ use esp_idf_svc::{
 use log::*;
 use network::mqtt::Mqtt;
 use semver::Version;
-use serde_json::Value; // for Basic Auth header
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub struct OtaUpdater<'a> {
     current_version: Version,
-    #[allow(dead_code)]
     mqtt_client: &'a mut Mqtt,
-    device_id: &'a str,
     client: HttpClient<EspHttpConnection>,
-    username: Option<String>,
-    password: Option<String>,
-    #[allow(dead_code)]
-    default_headers: Vec<(&'static str, &'static str)>,
 }
 
 impl<'a> OtaUpdater<'a> {
-    pub fn new_ota(
-        current_version: Version,
-        mqtt_client: &'a mut Mqtt,
-        device_id: &'a str,
-        username: Option<&str>,
-        password: Option<&str>,
-    ) -> Result<Self> {
+    pub fn new_ota(current_version: Version, mqtt_client: &'a mut Mqtt) -> Result<Self> {
         let config = EspHttpConnection::new(&HttpConfiguration {
-            buffer_size: Some(1024),
+            buffer_size: Some(4096),    // response side
+            buffer_size_tx: Some(4096), // request side — presigned S3 URLs are long
             timeout: Some(Duration::from_secs(60)),
             crt_bundle_attach: Some(esp_crt_bundle_attach),
             use_global_ca_store: true,
             ..Default::default()
-        })
-        .context("Failed to create OTA Updater")?;
+        })?;
 
         let client = HttpClient::wrap(config);
 
         Ok(Self {
             current_version,
             mqtt_client,
-            device_id,
             client,
-            username: username.map(|s| s.to_string()),
-            password: password.map(|s| s.to_string()),
-            default_headers: vec![("User-Agent", "ESP32-Rust-Client/1.0")],
         })
     }
 
-    // Build authorization header if username/password provided
-    fn build_auth_header(&self) -> Option<(String, String)> {
-        if let (Some(u), Some(p)) = (&self.username, &self.password) {
-            let credentials = format!("{}:{}", u, p);
-            let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-            Some(("authorization".into(), format!("Basic {}", encoded)))
-        } else {
-            None
+    // Requests the next pending AWS IoT Job over MQTT and waits for the
+    // response. Returns Ok(None) if there's no pending job (device already
+    // up to date, or nothing has been targeted at it).
+    fn get_pending_job(&mut self) -> Result<Option<(String, Value)>> {
+        let thing_name = self.mqtt_client.thing_name.clone();
+        let request_topic = format!("$aws/things/{}/jobs/$next/get", thing_name);
+        let accepted_topic = format!("$aws/things/{}/jobs/$next/get/accepted", thing_name);
+        let rejected_topic = format!("$aws/things/{}/jobs/$next/get/rejected", thing_name);
+
+        self.mqtt_client.subscribe(&accepted_topic)?;
+        self.mqtt_client.subscribe(&rejected_topic)?;
+
+        // Give the broker a moment to register the subscriptions before we
+        // publish the request — there's no SUBACK confirmation wired up in
+        // Mqtt yet, so this is a stopgap. If you see missed responses,
+        // this is the first thing to make more robust.
+        thread::sleep(Duration::from_millis(500));
+
+        self.mqtt_client.publish(&request_topic, b"{}")?;
+
+        for _ in 0..30 {
+            if let Some((topic, payload)) = self
+                .mqtt_client
+                .wait_for_job_message(Duration::from_secs(1))
+            {
+                if topic == accepted_topic {
+                    info!(
+                        "Raw job response payload: {}",
+                        String::from_utf8_lossy(&payload)
+                    );
+                    let json: Value = serde_json::from_slice(&payload)
+                        .map_err(|e| anyhow::anyhow!("Failed to parse job response: {e}"))?;
+
+                    return match json.get("execution") {
+                        Some(execution) => {
+                            let job_id = execution
+                                .get("jobId")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow::anyhow!("Missing jobId in job execution"))?
+                                .to_string();
+                            let job_document = execution
+                                .get("jobDocument")
+                                .cloned()
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("Missing jobDocument in job execution")
+                                })?;
+                            Ok(Some((job_id, job_document)))
+                        }
+                        // Empty {} response means: no pending job right now.
+                        None => Ok(None),
+                    };
+                }
+                if topic == rejected_topic {
+                    warn!(
+                        "Job request rejected: {}",
+                        String::from_utf8_lossy(&payload)
+                    );
+                    return Ok(None);
+                }
+                // Message on some other AWS IoT topic — ignore and keep waiting.
+            }
         }
+
+        warn!("Timed out waiting for job response");
+        Ok(None)
     }
 
-    // Creates a new http client
-    /* fn create_https_client(&self) -> Result<HttpClient<EspHttpConnection>> {
-        let config = EspHttpConnection::new(&HttpConfiguration {
-            buffer_size: Some(1024),
-            timeout: Some(Duration::from_secs(60)),
-            crt_bundle_attach: Some(esp_crt_bundle_attach),
-            use_global_ca_store: true,
-            ..Default::default()
-        })?;
-        Ok(HttpClient::wrap(config))
-    }  */
-
-    // Function for requesting the version text file from the server
-    fn get_remote_version(&mut self, url: &str) -> Result<Value> {
-        const MAX_RETRIES: usize = 3;
-        const RETRY_DELAY: Duration = Duration::from_secs(2);
-
-        for attempt in 1..=MAX_RETRIES {
-            info!("Attempt {} to fetch remote version...", attempt);
-
-            // Recreate the HTTP client for each attempt
-            let mut headers = vec![("accept", "application/json")];
-            if let Some((key, value)) = self.build_auth_header() {
-                // Leak strings into static refs (safe in embedded static context)
-                headers.push((
-                    Box::leak(key.into_boxed_str()),
-                    Box::leak(value.into_boxed_str()),
-                ));
-            }
-
-            // Build GET request using existing client
-            let request = match self.client.request(Method::Get, url, &headers) {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!("Failed to build GET request: {:?}", e);
-                    thread::sleep(RETRY_DELAY);
-                    continue;
-                }
-            };
-
-            // Create a new request
-            match request.submit() {
-                Ok(mut response) => {
-                    let status = response.status();
-                    info!("HTTP status: {}", status);
-                    if !(200..300).contains(&status) {
-                        warn!("Non-success HTTP status: {}", status);
-                        thread::sleep(RETRY_DELAY);
-                        continue;
-                    }
-
-                    // Read response in a loop (streaming)
-                    let mut buf = [0u8; 512];
-                    let bytes_read = match response.read(&mut buf) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            warn!("Failed reading body: {:?}", e);
-                            thread::sleep(RETRY_DELAY);
-                            continue;
-                        }
-                    };
-                    info!("Read {} bytes", bytes_read);
-
-                    let body_str = std::str::from_utf8(&buf[..bytes_read])
-                        .map_err(|e| anyhow::anyhow!("UTF-8 decode error: {e}"))?;
-
-                    let json: Value = serde_json::from_str(body_str)
-                        .map_err(|e| anyhow::anyhow!("JSON parse error: {e}"))?;
-
-                    return Ok(json);
-                }
-                Err(e) => {
-                    warn!("Request failed: {:?}", e);
-                    thread::sleep(RETRY_DELAY);
-                }
-            }
-        }
-        Err(anyhow::anyhow!(
-            "Failed to fetch remote version after {} attempts",
-            MAX_RETRIES
-        ))
+    // Reports job execution status back to AWS IoT Jobs so the console and
+    // any rollout/abort configuration can see progress.
+    fn report_job_status(&mut self, job_id: &str, status: &str, reason: Option<&str>) -> Result<()> {
+        let thing_name = self.mqtt_client.thing_name.clone();
+        let topic = format!("$aws/things/{}/jobs/{}/update", thing_name, job_id);
+        let body = match reason {
+            Some(r) => serde_json::json!({ "status": status, "statusDetails": { "reason": r } }),
+            None => serde_json::json!({ "status": status }),
+        };
+        self.mqtt_client.publish(&topic, body.to_string().as_bytes())?;
+        Ok(())
     }
 
     pub fn run_version_compare<T: NvsPartitionId>(&mut self, nvs: &mut EspNvs<T>) -> Result<()> {
-        // Retrieve remote version metadata for this tower.
-        let metadata_url = format!(
-            "https://firmware.jantaus.com/firmware/test2/metadata{}.json",
-            self.device_id
-        );
-        let remote_json = self.get_remote_version(&metadata_url)?;
+        let (job_id, job_document) = match self.get_pending_job()? {
+            Some(v) => v,
+            None => {
+                info!(
+                    "No pending job — firmware already up to date: {}",
+                    self.current_version
+                );
+                return Ok(());
+            }
+        };
 
-        // Extact the "version" field from JSON and verify its not empty
-        let remote_version: Version = remote_json
+        // Extact the "version" field from the job document and verify its not empty
+        let remote_version: Version = job_document
             .get("version")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'version' field in remote JSON"))?
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'version' field in job document"))?
             .trim()
             .parse()?;
 
-        // Extact the "size" field from JSON and verify its not empty
-        let remote_size = remote_json
+        // Extact the "size" field from the job document and verify its not empty
+        let remote_size = job_document
             .get("size")
             .and_then(|s| s.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'size' field in remote JSON"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'size' field in job document"))?;
 
         if remote_size == 0 {
             return Err(anyhow::anyhow!("'size' field is zero"));
         }
 
         // Extract download_url
-        let remote_url = remote_json
+        let remote_url = job_document
             .get("download_url")
             .and_then(|u| u.as_str())
             .ok_or_else(|| {
-                anyhow::anyhow!("Missing or invalid 'download_url' field in remote JSON")
+                anyhow::anyhow!("Missing or invalid 'download_url' field in job document")
             })?
             .trim()
             .to_string();
@@ -195,25 +165,30 @@ impl<'a> OtaUpdater<'a> {
             return Err(anyhow::anyhow!("'download_url' field is empty"));
         }
 
-        // Extract sha256 and validate sha256 length (must be 64 hex chars → 32 bytes)
-        let remote_sha256 = remote_json
+        // "sha256" arrives as "sha256:<hex>" — strip the prefix if present.
+        // Validate sha256 length (must be 64 hex chars → 32 bytes)
+        let remote_checksum_raw = job_document
             .get("sha256")
             .and_then(|h| h.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sha256' field in remote JSON"))?
-            .trim()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sha256' field in job document"))?
+            .trim();
+        let remote_sha256 = remote_checksum_raw
+            .strip_prefix("sha256:")
+            .unwrap_or(remote_checksum_raw)
             .to_string();
 
         if remote_sha256.len() != 64 {
-            return Err(anyhow::anyhow!(
-                "'sha256' must be exactly 64 hex characters"
-            ));
+            return Err(anyhow::anyhow!("'sha256' must decode to 64 hex characters"));
         }
 
         if hex::decode(&remote_sha256).is_err() {
             return Err(anyhow::anyhow!("'sha256' is not valid hex"));
         }
 
-        // TODO: Verify digital signature if present (strongly recommended!)
+        // NOTE: no "sig" field present in this job document — this build is
+        // checksum-only (detects corruption, not tampering). Fine as a
+        // deliberate short-term choice at small fleet scale; add signature
+        // verification here later if you want it.
 
         info!("Here is the current remote version: {remote_version}");
         info!(
@@ -226,67 +201,62 @@ impl<'a> OtaUpdater<'a> {
         info!("Here is the current download size: {remote_size}");
 
         if remote_version > self.current_version {
-            info!("New firmware version detected!");
+            info!("New firmware version detected — starting OTA (job {job_id})");
+            self.report_job_status(&job_id, "IN_PROGRESS", None)?;
 
-            // Run firmware update
             info!("Waiting 5 seconds before running firmware download...");
             thread::sleep(Duration::from_secs(5));
-            let flash_download = self.run_update(
-                remote_url,
-                remote_version.clone(),
-                remote_sha256,
-                remote_size,
-            );
+            let flash_result = self.run_update(remote_url, remote_sha256, remote_size);
 
-            match flash_download {
+            match flash_result {
                 Ok(_) => {
-                    // Stash the version we're leaving so the post-reboot boot
-                    // flow can publish `logs/firmware_update` with both versions.
-                    nvs.set_str("prev_version", &self.current_version.to_string())?;
                     nvs.set_u8("first_boot", 1)?;
 
-                    // Note: no MQTT publish here. The `firmware_update` success
-                    // event is emitted from `main.rs` on the next boot, once the
-                    // new firmware has actually booted and passed validation.
+                    // Don't report SUCCEEDED yet — the new image hasn't
+                    // booted, let alone passed validation. Stash the job id
+                    // so the new firmware can confirm it after boot
+                    // validation passes (see `confirm_pending_job`); if it
+                    // never boots cleanly and rolls back instead, this job
+                    // is left IN_PROGRESS rather than falsely marked as
+                    // succeeded.
+                    nvs.set_str("pending_job_id", &job_id)?;
+
                     info!("Reebooting firmware in 3 seconds...");
                     thread::sleep(Duration::from_secs(3));
                     esp_idf_svc::hal::reset::restart();
                 }
                 Err(e) => {
                     info!("Firmware download failed: {:?}", e);
-                    // Propagate so the caller publishes a single failure event
-                    // via `network::telemetry::publish_json` + `FirmwareUpdateLog`.
+                    self.report_job_status(&job_id, "FAILED", Some(&e.to_string()))?;
                     return Err(anyhow::anyhow!("Firmware download failed: {:?}", e));
                 }
             }
         } else {
-            info!("Firmware already up to date: {}", self.current_version);
+            info!(
+                "Job present but firmware already up to date: {}",
+                self.current_version
+            );
+            // Acknowledge the job so it doesn't stay QUEUED forever against this device.
+            self.report_job_status(&job_id, "SUCCEEDED", Some("already up to date"))?;
         }
+
         Ok(())
     }
 
-    // Function for downloading the binary file
+    // Downloads from a presigned S3 URL, which carries its own SigV4
+    // signature in the query string. Device Basic Auth was part of the old
+    // firmware-host setup and must not be sent here — an Authorization
+    // header alongside the presigned signature makes S3 reject the request
+    // with 400 ("Only one auth mechanism allowed").
     fn run_update(
         &mut self,
         remote_url: String,
-        remote_version: Version,
         remote_sha256: String,
         remote_size: u64,
     ) -> Result<()> {
-        info!(
-            "Attempting to download and installing new version {}",
-            remote_version
-        );
+        info!("Attempting to download and install new firmware...");
 
-        // Stream firmware directly using existing client
-        let mut headers = vec![("accept", "application/octet-stream")];
-        if let Some((key, value)) = self.build_auth_header() {
-            headers.push((
-                Box::leak(key.into_boxed_str()),
-                Box::leak(value.into_boxed_str()),
-            ));
-        }
-
+        let headers = vec![("accept", "application/octet-stream")];
         let request = self.client.request(Method::Get, &remote_url, &headers)?;
         let mut response = request.submit()?;
         let status = response.status();
@@ -296,7 +266,7 @@ impl<'a> OtaUpdater<'a> {
         }
 
         // Gets an instance of OTA
-        let mut ota = EspOta::new()?;
+        let mut ota = EspOta::new().context("Failed to obtain OTA instance")?;
         info!("Obtained OTA instance");
         let mut hasher = Sha256::new(); // Create SHA256 hasher
 
@@ -312,7 +282,10 @@ impl<'a> OtaUpdater<'a> {
         // Initialise ota update
         info!("Waiting for 5 seconds before initiating OTA update");
         thread::sleep(Duration::from_secs(5));
-        let mut update = Some(ota.initiate_update()?);
+        let mut update = Some(
+            ota.initiate_update()
+                .context("Failed to initiate OTA update")?,
+        );
         info!("OTA update has been initialised");
 
         // Read and write chunks to flash
@@ -336,8 +309,6 @@ impl<'a> OtaUpdater<'a> {
                 u.write(&buf[..bytes_read])?; // <-- use as_mut() and unwrap Option
             }
 
-            //update.write(&buf[..bytes_read])?;            GPT SUGGEST1
-
             // Update SHA256
             hasher.update(&buf[..bytes_read]);
 
@@ -359,10 +330,6 @@ impl<'a> OtaUpdater<'a> {
                 u.abort()?; // explicitly end OTA
             }
             return Err(anyhow::anyhow!("SHA256 mismatch"));
-
-            /* error!("SHA256 mismatch, aborting update");
-            update.abort()?; // discard bad image               GPT SUGGEST1
-            return Err(anyhow::anyhow!("SHA256 mismatch")); */
         }
 
         info!("Firmware checksum validated successfully & OTA complete, rebooting...");
@@ -376,5 +343,26 @@ impl<'a> OtaUpdater<'a> {
     }
 }
 
-/* info!("Starting http run...");
-let mut client = Box::new(HttpsClient::new_https(Some("device5"), Some("device5"))?); */
+/// Reports SUCCEEDED for an OTA job that finished flashing on the previous
+/// boot (see the `Ok(_)` branch of `run_version_compare`) but was only
+/// confirmed to AWS IoT Jobs once this boot has actually passed validation.
+/// Call once, right after `EspOta::mark_running_slot_valid()` succeeds.
+/// No-op if there's no pending job recorded.
+pub fn confirm_pending_job<T: NvsPartitionId>(mqtt: &mut Mqtt, nvs: &mut EspNvs<T>) -> Result<()> {
+    let mut buf = [0u8; 64];
+    let Some(job_id) = nvs.get_str("pending_job_id", &mut buf)? else {
+        return Ok(());
+    };
+    let job_id = job_id.trim_end_matches('\0').to_string();
+
+    let thing_name = mqtt.thing_name.clone();
+    let topic = format!("$aws/things/{}/jobs/{}/update", thing_name, job_id);
+    let body =
+        serde_json::json!({ "status": "SUCCEEDED", "statusDetails": { "reason": "boot validated" } });
+    mqtt.publish(&topic, body.to_string().as_bytes())?;
+
+    nvs.remove("pending_job_id")?;
+    info!("Confirmed OTA job {job_id} as SUCCEEDED after boot validation");
+
+    Ok(())
+}

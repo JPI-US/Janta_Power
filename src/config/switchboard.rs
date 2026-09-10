@@ -196,8 +196,6 @@ pub struct Switchboard {
     pub default_tower_latitude: f64,
     pub default_tower_longitude: f64,
     pub default_tower_altitude: f64,
-    pub default_ota_updater: &'static str,
-    pub default_ota_password: &'static str,
 
     // Motor constants
     pub microsteps: f32,
@@ -275,9 +273,6 @@ pub const fn normal() -> Switchboard {
         default_wifi_ssid: crate::config::constants::WIFI_SSID,
         default_wifi_pass: crate::config::constants::WIFI_PASSWORD,
         default_tz_posix: crate::config::constants::TZ_POSIX,
-
-        default_ota_updater: "device1A",
-        default_ota_password: "device1A",
 
         default_tower_latitude: crate::config::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::config::constants::TOWER_LONGITUDE,

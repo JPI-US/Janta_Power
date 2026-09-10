@@ -6,7 +6,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -22,6 +22,15 @@ pub struct Mqtt {
     client: EspMqttClient<'static>,
     connected: Arc<AtomicBool>,
     message_queue: MqttMessageQueue,
+    /// AWS IoT reserved topics (`$aws/...`, e.g. Jobs) are routed into this
+    /// separate queue at ingestion time so a consumer polling for a job
+    /// response (`wait_for_job_message`) can never pop a message meant for
+    /// the device's own command channel (`try_receive`), or vice versa.
+    job_message_queue: MqttMessageQueue,
+    /// AWS IoT job topics are namespaced by Thing Name. In this fleet's setup
+    /// the registered Thing Name equals the MQTT client_id, so this is just
+    /// what was passed in as `client_id`.
+    pub thing_name: String,
 }
 
 const ROOT_CA: &CStr = unsafe {
@@ -84,6 +93,8 @@ impl Mqtt {
         let connected_clone = connected.clone();
         let message_queue = Arc::new(Mutex::new(VecDeque::new()));
         let message_queue_clone = message_queue.clone();
+        let job_message_queue = Arc::new(Mutex::new(VecDeque::new()));
+        let job_message_queue_clone = job_message_queue.clone();
 
         let (client, mut connection) = EspMqttClient::new(broker_url, &mqtt_config)?;
         info!("MQTT client created successfully!");
@@ -106,9 +117,18 @@ impl Mqtt {
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
                     EventPayload::Received { topic, data, .. } => {
                         // Enqueue inbound messages so the main loop can drain them
-                        // via `try_receive()` (e.g. the remote command channel).
+                        // via `try_receive()` (e.g. the remote command channel) or
+                        // `wait_for_job_message()` (AWS IoT Jobs). Routed by topic
+                        // at ingestion time so the two consumers never contend for
+                        // the same message — device topics are all `tower/...`,
+                        // fully disjoint from AWS IoT's reserved `$aws/...` prefix.
                         if let Some(topic) = topic {
-                            if let Ok(mut queue) = message_queue_clone.lock() {
+                            let target = if topic.starts_with("$aws/") {
+                                &job_message_queue_clone
+                            } else {
+                                &message_queue_clone
+                            };
+                            if let Ok(mut queue) = target.lock() {
                                 queue.push_back((topic.to_string(), data.to_vec()));
                             } else {
                                 warn!("Failed to lock MQTT queue for received message");
@@ -127,6 +147,8 @@ impl Mqtt {
             client,
             connected,
             message_queue,
+            job_message_queue,
+            thing_name: client_id.to_string(),
         })
     }
 
@@ -171,6 +193,10 @@ impl Mqtt {
     }
 
     /// Poll for received messages. Returns the next message if available.
+    /// Only ever sees device topics (`tower/...`) — AWS IoT reserved topics
+    /// (`$aws/...`) are routed to the separate job queue at ingestion time,
+    /// so this can never steal a job response out from under
+    /// `wait_for_job_message`.
     pub fn try_receive(&self) -> Option<(String, Vec<u8>)> {
         if let Ok(mut queue) = self.message_queue.lock() {
             let queue_len = queue.len();
@@ -182,5 +208,23 @@ impl Mqtt {
             warn!("Failed to lock MQTT message queue");
             None
         }
+    }
+
+    /// Block (up to `timeout`) waiting for the next incoming AWS IoT Jobs
+    /// message (`$aws/...` topics only — see the job queue routing in
+    /// `new_mqtt`). Unlike `try_receive`, this can never consume a message
+    /// meant for the device command channel, since the two queues are fed
+    /// independently based on topic prefix as messages arrive.
+    pub fn wait_for_job_message(&self, timeout: Duration) -> Option<(String, Vec<u8>)> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Ok(mut queue) = self.job_message_queue.lock() {
+                if let Some(msg) = queue.pop_front() {
+                    return Some(msg);
+                }
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        None
     }
 }

@@ -462,40 +462,11 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for BootValidation 
                 valid_ota.mark_running_slot_valid()?;
                 ctx.nvs.set_u8("first_boot", 0)?;
 
-                let mut prev_ver_buf = [0u8; 32];
-
-                if let Some(prev_str) = ctx.nvs.get_str("prev_version", &mut prev_ver_buf)? {
-                    match prev_str.trim().parse::<Version>() {
-                        Ok(prev_version) => {
-                            let current_time = rtc::timezone::local_time()
-                                .format(network::telemetry::TIME_FORMAT)
-                                .to_string();
-
-                            let payload = network::telemetry::FirmwareUpdateLog {
-                                current_time: &current_time,
-                                message: "Firmware successfully updated",
-                                previous_version: &prev_version.to_string(),
-                                current_version: &current_version.to_string(),
-                                notes: "No errors during update",
-                            };
-
-                            let topic = network::telemetry::topic::logs_firmware_update(
-                                ctx.switchboard.device_id,
-                            );
-
-                            if network::telemetry::publish_json(mqtt, &topic, &payload).is_ok() {
-                                let _ = ctx.nvs.remove("prev_version");
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                "prev_version in NVS is not valid semver ({:?}), clearing: {:?}",
-                                prev_str, e
-                            );
-
-                            let _ = ctx.nvs.remove("prev_version");
-                        }
-                    }
+                // Reports SUCCEEDED to AWS IoT Jobs for the update that just
+                // booted, now that it's actually passed validation. No-op if
+                // this boot wasn't the result of an OTA (no pending job in NVS).
+                if let Err(e) = ota::confirm_pending_job(mqtt, &mut ctx.nvs) {
+                    warn!("Failed to confirm pending OTA job: {:?}", e);
                 }
             } else {
                 error!("Boot validation failed, rolling back firmware");
@@ -570,13 +541,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             warn!("Failed to publish heartbeat: {:?}", e);
         }
 
-        let mut updater = match OtaUpdater::new_ota(
-            current_version.clone(),
-            mqtt,
-            ctx.switchboard.device_id,
-            Some(ctx.switchboard.default_ota_updater),
-            Some(ctx.switchboard.default_ota_password),
-        ) {
+        let mut updater = match OtaUpdater::new_ota(current_version.clone(), mqtt) {
             Ok(updater) => updater,
             Err(e) => {
                 warn!("Failed to create OTA updater: {:?}", e);
