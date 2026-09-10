@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Result;
 use esp_idf_svc::{
-    mqtt::client::{EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
+    mqtt::client::{Details, EspMqttClient, EventPayload, MqttClientConfiguration, QoS},
     tls::X509,
 };
 use log::*;
@@ -83,6 +83,9 @@ impl Mqtt {
 
             keep_alive_interval: Some(Duration::from_secs(60)),
             use_global_ca_store: false,
+
+            // Increased document buffer size
+            buffer_size: 4096,
             ..Default::default()
         }; // New AWS config
 
@@ -100,6 +103,28 @@ impl Mqtt {
         info!("MQTT client created successfully!");
 
         thread::spawn(move || {
+            // Enqueue inbound messages so the main loop can drain them via
+            // `try_receive()` (e.g. the remote command channel) or
+            // `wait_for_job_message()` (AWS IoT Jobs)
+            let enqueue = |topic: String, data: Vec<u8>| {
+                let target = if topic.starts_with("$aws/") {
+                    &job_message_queue_clone
+                } else {
+                    &message_queue_clone
+                };
+                if let Ok(mut queue) = target.lock() {
+                    queue.push_back((topic, data));
+                } else {
+                    warn!("Failed to lock MQTT queue for received message");
+                }
+            };
+
+            // A payload larger than the client's inbound buffer is delivered as
+            // several `Received` events: the first carries the topic plus
+            // `Details::InitialChunk`, every later one carries `topic: None`
+            // and `Details::SubsequentChunk`
+            let mut partial: Option<(String, Vec<u8>, usize)> = None;
+
             while let Ok(event) = connection.next() {
                 match event.payload() {
                     EventPayload::Connected(_) => {
@@ -115,28 +140,63 @@ impl Mqtt {
                         // trigger reconnect
                     }
                     EventPayload::Published(id) => info!("MQTT Publish Message {} confirmed", id),
-                    EventPayload::Received { topic, data, .. } => {
-                        // Enqueue inbound messages so the main loop can drain them
-                        // via `try_receive()` (e.g. the remote command channel) or
-                        // `wait_for_job_message()` (AWS IoT Jobs). Routed by topic
-                        // at ingestion time so the two consumers never contend for
-                        // the same message — device topics are all `tower/...`,
-                        // fully disjoint from AWS IoT's reserved `$aws/...` prefix.
-                        if let Some(topic) = topic {
-                            let target = if topic.starts_with("$aws/") {
-                                &job_message_queue_clone
+                    EventPayload::Received {
+                        topic,
+                        data,
+                        details,
+                        ..
+                    } => match details {
+                        Details::Complete => {
+                            if let Some(topic) = topic {
+                                enqueue(topic.to_string(), data.to_vec());
                             } else {
-                                &message_queue_clone
-                            };
-                            if let Ok(mut queue) = target.lock() {
-                                queue.push_back((topic.to_string(), data.to_vec()));
-                            } else {
-                                warn!("Failed to lock MQTT queue for received message");
+                                warn!("MQTT received message without a topic");
                             }
-                        } else {
-                            warn!("MQTT received message without a topic");
                         }
-                    }
+                        Details::InitialChunk(chunk) => {
+                            let Some(topic) = topic else {
+                                warn!("MQTT received first chunk without a topic");
+                                continue;
+                            };
+                            if partial.is_some() {
+                                warn!("Discarding incomplete MQTT message, a new one started");
+                            }
+                            let mut buf = Vec::with_capacity(chunk.total_data_size);
+                            buf.extend_from_slice(data);
+                            if buf.len() >= chunk.total_data_size {
+                                enqueue(topic.to_string(), buf);
+                            } else {
+                                info!(
+                                    "Reassembling {}-byte MQTT message on {} ({} bytes so far)",
+                                    chunk.total_data_size,
+                                    topic,
+                                    buf.len()
+                                );
+                                partial = Some((topic.to_string(), buf, chunk.total_data_size));
+                            }
+                        }
+                        Details::SubsequentChunk(chunk) => {
+                            let complete = match partial.as_mut() {
+                                Some((_, buf, total)) => {
+                                    buf.extend_from_slice(data);
+                                    buf.len() >= *total
+                                }
+                                None => {
+                                    warn!(
+                                        "Discarding MQTT chunk at offset {} with no message in progress",
+                                        chunk.current_data_offset
+                                    );
+                                    false
+                                }
+                            };
+                            if complete {
+                                if let Some((topic, buf, _)) = partial.take() {
+                                    info!("Reassembled {}-byte MQTT message on {}", buf.len(), topic);
+                                    enqueue(topic, buf);
+                                }
+                            }
+                        }
+                    },
                     EventPayload::Error(e) => error!("MQTT error: {:?}", e),
                     _ => {}
                 }
