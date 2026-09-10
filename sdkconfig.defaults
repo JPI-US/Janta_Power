@@ -18,7 +18,7 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 
 # Pin PROJECT_VER to a short fixed string because git describe can exceed 24 chars and overflow the heapless::String<24> that EspOta::get_running_slot() uses, panicking boot validation.
 CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
-CONFIG_APP_PROJECT_VER="1.1.5"
+CONFIG_APP_PROJECT_VER="1.1.4"
 
 # App rollback support: after an OTA update, the new app boots marked invalid
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
