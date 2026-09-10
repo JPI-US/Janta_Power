@@ -81,10 +81,8 @@ impl<'a> OtaUpdater<'a> {
                                 .and_then(|v| v.as_str())
                                 .ok_or_else(|| anyhow::anyhow!("Missing jobId in job execution"))?
                                 .to_string();
-                            let job_document = execution
-                                .get("jobDocument")
-                                .cloned()
-                                .ok_or_else(|| {
+                            let job_document =
+                                execution.get("jobDocument").cloned().ok_or_else(|| {
                                     anyhow::anyhow!("Missing jobDocument in job execution")
                                 })?;
                             Ok(Some((job_id, job_document)))
@@ -110,14 +108,20 @@ impl<'a> OtaUpdater<'a> {
 
     // Reports job execution status back to AWS IoT Jobs so the console and
     // any rollout/abort configuration can see progress.
-    fn report_job_status(&mut self, job_id: &str, status: &str, reason: Option<&str>) -> Result<()> {
+    fn report_job_status(
+        &mut self,
+        job_id: &str,
+        status: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
         let thing_name = self.mqtt_client.thing_name.clone();
         let topic = format!("$aws/things/{}/jobs/{}/update", thing_name, job_id);
         let body = match reason {
             Some(r) => serde_json::json!({ "status": status, "statusDetails": { "reason": r } }),
             None => serde_json::json!({ "status": status }),
         };
-        self.mqtt_client.publish(&topic, body.to_string().as_bytes())?;
+        self.mqtt_client
+            .publish(&topic, body.to_string().as_bytes())?;
         Ok(())
     }
 
@@ -357,8 +361,7 @@ pub fn confirm_pending_job<T: NvsPartitionId>(mqtt: &mut Mqtt, nvs: &mut EspNvs<
 
     let thing_name = mqtt.thing_name.clone();
     let topic = format!("$aws/things/{}/jobs/{}/update", thing_name, job_id);
-    let body =
-        serde_json::json!({ "status": "SUCCEEDED", "statusDetails": { "reason": "boot validated" } });
+    let body = serde_json::json!({ "status": "SUCCEEDED", "statusDetails": { "reason": "boot validated" } });
     mqtt.publish(&topic, body.to_string().as_bytes())?;
 
     nvs.remove("pending_job_id")?;
