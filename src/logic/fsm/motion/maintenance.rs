@@ -50,6 +50,12 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMaintenanc
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = bulletin.read() {
+            if state.ota_active {
+                return Ok(StateResult::Hold);
+            }
+        }
+
         bulletin.update(|state| {
             state.maintenance_mode = true;
         });

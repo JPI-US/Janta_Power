@@ -16,11 +16,17 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionMoving {
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &Bulletin<FSMState>,
+        bulletin: &Bulletin<FSMState>,
         previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = bulletin.read() {
+            if state.ota_active {
+                return Ok(StateResult::Hold);
+            }
+        }
+
         match ctx.motion.move_by(self.steps) {
             Ok(_) => {}
             Err(e) => {

@@ -26,11 +26,17 @@ impl State<FSMAddress, MotionContext, FSMCommand, FSMState> for MotionInit {
         &mut self,
         ctx: &mut MotionContext,
         _mailbox: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &Bulletin<FSMState>,
+        bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, MotionContext, FSMCommand, FSMState> + Send>,
         >,
     ) -> anyhow::Result<StateResult<FSMAddress, MotionContext, FSMCommand, FSMState>> {
+        if let Some(state) = bulletin.read() {
+            if state.ota_active {
+                return Ok(StateResult::Hold);
+            }
+        }
+
         // Tower location — read directly from `TOWER_LATITUDE` / `TOWER_LONGITUDE`from switchboard
         let latitude: f64 = ctx.switchboard.default_tower_latitude;
         let longitude: f64 = ctx.switchboard.default_tower_longitude;

@@ -191,7 +191,11 @@ impl Mqtt {
                             };
                             if complete {
                                 if let Some((topic, buf, _)) = partial.take() {
-                                    info!("Reassembled {}-byte MQTT message on {}", buf.len(), topic);
+                                    info!(
+                                        "Reassembled {}-byte MQTT message on {}",
+                                        buf.len(),
+                                        topic
+                                    );
                                     enqueue(topic, buf);
                                 }
                             }

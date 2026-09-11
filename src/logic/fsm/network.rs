@@ -492,7 +492,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
         &mut self,
         ctx: &mut NetworkContext,
         _channel: &mut Mailbox<FSMAddress, FSMCommand>,
-        _bulletin: &Bulletin<FSMState>,
+        bulletin: &Bulletin<FSMState>,
         _previous_state: Option<
             Box<dyn State<FSMAddress, NetworkContext, FSMCommand, FSMState> + Send>,
         >,
@@ -500,14 +500,24 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
         if !ctx.switchboard.effects.allow_ota {
             info!("OTA disabled: skipping version compare");
 
+            bulletin.update(|state| {
+                state.ota_active = false;
+            });
             return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
         }
+
+        bulletin.update(|state| {
+            state.ota_active = true;
+        });
 
         let mqtt = match ctx.mqtt.as_mut() {
             Some(mqtt) => mqtt,
             None => {
                 warn!("OTA failed; MQTT is not initialized");
 
+                bulletin.update(|state| {
+                    state.ota_active = false;
+                });
                 return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
             }
         };
@@ -517,6 +527,9 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             None => {
                 error!("OTA failed; current version is not initialized");
 
+                bulletin.update(|state| {
+                    state.ota_active = false;
+                });
                 return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
             }
         };
@@ -526,6 +539,9 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             None => {
                 error!("OTA failed; formatted time is not initialized");
 
+                bulletin.update(|state| {
+                    state.ota_active = false;
+                });
                 return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
             }
         };
@@ -546,6 +562,9 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             Err(e) => {
                 warn!("Failed to create OTA updater: {:?}", e);
 
+                bulletin.update(|state| {
+                    state.ota_active = false;
+                });
                 return Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)));
             }
         };
@@ -580,6 +599,9 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             info!("Version compare succeeded");
         }
 
+        bulletin.update(|state| {
+            state.ota_active = false;
+        });
         Ok(StateResult::Running(Box::new(WifiConnectIfDisconnected)))
     }
 }

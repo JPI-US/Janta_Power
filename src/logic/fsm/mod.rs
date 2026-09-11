@@ -42,4 +42,5 @@ impl Address for FSMAddress {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FSMState {
     maintenance_mode: bool,
+    ota_active: bool,
 }
