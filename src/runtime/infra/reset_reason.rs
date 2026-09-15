@@ -15,7 +15,7 @@ pub enum ResetReason {
     PowerOn,
     /// Reset pin was asserted.
     External,
-    /// Deliberate `esp_restart()` — our OTA path reboots this way.
+    /// Deliberate `esp_restart()` — OTA completion and `exit_install` reboot this way.
     Software,
     /// Firmware panicked: unwrap on `None`, failed allocation, bad memory access.
     Panic,
@@ -73,7 +73,7 @@ impl ResetReason {
     }
 
     /// True when the tower did not restart on purpose. `Software` is excluded
-    /// because that is how our own OTA path reboots.
+    /// because that is how our own OTA path and `exit_install` reboot.
     pub const fn is_unexpected(&self) -> bool {
         matches!(
             self,
@@ -106,7 +106,9 @@ impl ResetReason {
     /// Operator-facing detail: what this reset cause implies about the tower.
     pub const fn boot_notes(&self) -> &'static str {
         match self {
-            Self::Software => "Deliberate restart, e.g. completing an OTA update.",
+            Self::Software => {
+                "Deliberate restart, e.g. completing an OTA update or leaving Install mode."
+            }
             Self::PowerOn => "Supply was removed and restored; site power is the likely cause.",
             Self::Brownout => {
                 "Supply dipped below the brownout threshold; check the tower's power rail under motor load."

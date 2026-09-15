@@ -74,6 +74,14 @@ struct Tower<I2C> {
     previous_motion_mode: MotionMode,
     /// Set when a `StepperOnly` switch needs a re-home before tracking resumes.
     need_rehome: bool,
+    /// Set when boot homing ran and could not find the limit switch. The tower
+    /// stays reachable (Wi-Fi, MQTT, commands) but must not track, because its
+    /// orientation is unknown.
+    tracking_inhibited: bool,
+    /// Whether `actual_heading` is anchored to a real home reference — a homing
+    /// sweep that found the switch, or a trusted encoder snapshot restored from
+    /// NVS. False during installation, where the heading is only a default.
+    heading_trusted: bool,
 }
 
 /// Main-loop steps, factored out of the loop body so the loop reads as a thin
@@ -133,6 +141,12 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// Returns `Ok(true)` when a re-home ran (caller should `continue` the loop).
     /// `intro_log` is logged when the sweep starts.
     fn rehome_if_pending(&mut self, intro_log: &str) -> anyhow::Result<bool> {
+        // Commissioning has no limit switch to home against, and a failed boot
+        // sweep already decided tracking is unsafe. The failure arm below is a
+        // diverging `error_loop` that would take the command channel down with it.
+        if self.sw.install_mode || self.tracking_inhibited {
+            return Ok(false);
+        }
         if !(self.need_rehome && self.motion_mode == MotionMode::StepperOnly) {
             return Ok(false);
         }
@@ -155,6 +169,8 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
                         .save_heading(self.actual_heading);
                 }
                 self.need_rehome = false;
+                // A successful sweep is a home reference, whenever it happens.
+                self.heading_trusted = true;
             }
             false => {
                 error!(
@@ -191,6 +207,12 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     /// Run one encoder-fault probe/recovery tick. Returns `Ok(true)` when a fault
     /// is active (caller should `continue` and skip tracking this iteration).
     fn run_encoder_fault(&mut self) -> anyhow::Result<bool> {
+        // Recovery probes drive the motor and can end in a diverging
+        // `error_loop`; neither belongs on a tower that is still being
+        // installed, or one whose boot homing already failed.
+        if self.sw.install_mode || self.tracking_inhibited {
+            return Ok(false);
+        }
         let cfg = self.encoder_recovery_cfg();
 
         let mut ctx = EncoderTickContext {
@@ -218,6 +240,10 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     fn run_tracking(&mut self, current_datetime: String) {
         if !self.sw.runtime.tracking.enabled {
             info!("Tracking disabled");
+            return;
+        }
+        if self.tracking_inhibited {
+            warn!("Tracking inhibited: boot homing could not locate the limit switch");
             return;
         }
         let cfg = self.encoder_recovery_cfg();
@@ -283,6 +309,11 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
     }
 
     /// Answer at most one queued remote command (gated by the switchboard).
+    ///
+    /// Builds both views of the tower: the read-only [`CmdCtx`] that `get_*`
+    /// commands report from, and the mutable [`MotionCmdCtx`] the installer's
+    /// movement commands need. They take disjoint fields, so both can be live
+    /// while `mqtt` is borrowed for the reply.
     fn process_commands(&mut self) {
         if !self.sw.runtime.commands_enabled {
             return;
@@ -299,16 +330,44 @@ impl<I2C: embedded_hal::i2c::I2c> Tower<I2C> {
             wifi_connected: matches!(self.wifi.state(), WifiState::Connected(_)),
             motion_mode: motion_mode_str,
             current_heading: self.actual_heading,
+            heading_trusted: self.heading_trusted,
+            lmsw_active: self.motion.lmsw_active(),
         };
-        if let Err(e) = diagnostics::transport::process_one(&mut self.mqtt, self.sw.device_id, &ctx)
+
+        let mut reboot_requested = false;
         {
-            warn!("Command processing failed: {:?}", e);
+            let mut motion_ctx = diagnostics::motion_commands::MotionCmdCtx {
+                motion: &mut self.motion,
+                nvs: &mut self.nvs,
+                actual_heading: &mut self.actual_heading,
+                heading_trusted: &mut self.heading_trusted,
+                sw: self.sw,
+                reboot_requested: &mut reboot_requested,
+            };
+
+            if let Err(e) = diagnostics::transport::process_one(
+                &mut self.mqtt,
+                self.sw.device_id,
+                &ctx,
+                Some(&mut motion_ctx),
+            ) {
+                warn!("Command processing failed: {:?}", e);
+            }
+        }
+
+        // `exit_install` sets the latch and asks us to reboot *after* the
+        // ack has been published. Same 3 s pause the OTA path uses so the
+        // MQTT publish can leave the radio before the chip resets.
+        if reboot_requested {
+            info!("exit_install: rebooting in 3 seconds");
+            thread::sleep(Duration::from_secs(3));
+            esp_idf_svc::hal::reset::restart();
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    let sw = switchboard::active(switchboard::Profile::from_env_str(
+    let mut sw = switchboard::active(switchboard::Profile::from_env_str(
         crate::constants::ACTIVE_PROFILE_STR,
     ));
 
@@ -343,12 +402,21 @@ fn main() -> anyhow::Result<()> {
         Err(e) => panic!("Could't get namespace {:?}", e),
     };
 
+    // One-way safety valve. An Install image that has been told it is finished
+    // behaves as Normal from the next boot, with no reflash. There is
+    // deliberately no reverse path: nothing remote can put a producing tower
+    // into Install and stop it tracking. Re-entering Install needs an erase-flash.
+    if sw.install_mode && infra::SnapshotStore::new(&mut nvs, true).load_install_done() {
+        warn!("Install image overridden to Normal: install_done set in NVS");
+        sw = switchboard::normal();
+    }
+
     let last_run_normal =
         infra::SnapshotStore::new(&mut nvs, true).load_last_run_normal_or_init(true);
     let trust_nvs_state = last_run_normal;
     info!(
-        "Last run normal={} -> trust_nvs_state={} (active_mode=Normal)",
-        last_run_normal, trust_nvs_state
+        "Last run normal={} -> trust_nvs_state={} (install_mode={})",
+        last_run_normal, trust_nvs_state, sw.install_mode
     );
 
     let peripherals = Peripherals::take().unwrap();
@@ -767,6 +835,15 @@ fn main() -> anyhow::Result<()> {
         infra::SnapshotStore::new(&mut nvs, PERSIST_NVS).load_encoder_daily_mode();
     encoder_fault.set_mode_switched_daily(encoder_daily_mode);
 
+    // Set by a boot homing sweep that finds no limit switch; carried into the
+    // Tower so the loop keeps serving commands but never tracks.
+    let mut tracking_inhibited = false;
+
+    // Set by whichever branch below establishes a real home reference. Starts
+    // false so that every path which *fails* to establish one — a failed sweep,
+    // or homing disabled during installation — reports an untrusted heading.
+    let mut heading_trusted = false;
+
     // Homing policy:
     // - StepperOnly: always home
     // - EncoderGuarded: home when snapshot restore is unavailable/untrusted
@@ -799,51 +876,86 @@ fn main() -> anyhow::Result<()> {
             Direction::Ccw => motion.find_limit_switch_ccw(),
         };
         match limit_sw_status {
-            true => log::info!(
-                "Homing OK (dir={}): limit switch found",
-                HOMING_DIRECTION.as_str()
-            ),
+            true => {
+                log::info!(
+                    "Homing OK (dir={}): limit switch found",
+                    HOMING_DIRECTION.as_str()
+                );
+                // Align RAM and NVS with home heading after homing. Only valid
+                // on success — the sweep is what proves the tower is at home.
+                heading_trusted = true;
+                actual_heading = sw.home_heading_deg;
+                if PERSIST_NVS {
+                    infra::SnapshotStore::new(&mut nvs, true).save_heading(sw.home_heading_deg);
+                    if motion_mode == MotionMode::EncoderGuarded {
+                        infra::SnapshotStore::new(&mut nvs, true)
+                            .save_encoder_snapshot(motion.encoder_ticks_adjusted());
+                    }
+                }
+                thread::sleep(Duration::from_secs(5));
+            }
             false => {
                 log::error!(
                     "Homing FAILED (dir={}): limit switch could not be found",
                     HOMING_DIRECTION.as_str()
                 );
-                infra::error_loop(
+                // Report once and carry on with tracking inhibited, rather than
+                // wedging in a diverging `error_loop`: a tower that still has
+                // Wi-Fi, MQTT and a command channel is worth keeping reachable.
+                // Deliberately does NOT align the heading or persist anything —
+                // the failed sweep proved only that the orientation is unknown.
+                tracking_inhibited = true;
+                infra::publish_error_once(
                     sw.device_id,
                     &mut mqtt,
                     network::telemetry::Component::LimitSwitch,
                     "Limit switch not found during boot homing",
-                    "Boot-time homing sweep completed without detecting the limit switch; tower orientation unknown.",
+                    "Boot-time homing sweep completed without detecting the limit switch; tower orientation unknown. Tracking is inhibited until the tower is re-homed.",
                 );
             }
         }
-        // Align RAM and NVS with home heading after homing.
-        actual_heading = sw.home_heading_deg;
-        if PERSIST_NVS {
-            infra::SnapshotStore::new(&mut nvs, true).save_heading(sw.home_heading_deg);
-            if motion_mode == MotionMode::EncoderGuarded {
-                infra::SnapshotStore::new(&mut nvs, true)
-                    .save_encoder_snapshot(motion.encoder_ticks_adjusted());
-            }
-        }
-        thread::sleep(Duration::from_secs(5));
     } else if should_home_by_mode {
         log::warn!("Homing skipped: HOMING_ENABLED=false");
-        if !trust_nvs_state {
-            infra::error_loop(
+        if sw.install_mode {
+            // Expected on a commissioning image: there is no switch to home
+            // against yet. Heading stays untrusted.
+        } else if !trust_nvs_state {
+            // Same non-diverging treatment as a failed sweep: report once and
+            // keep the command channel up. `save_last_run_normal(false)` on an
+            // Install run makes this reachable on the next boot of any image
+            // that also has homing off (Admin).
+            tracking_inhibited = true;
+            infra::publish_error_once(
                 sw.device_id,
                 &mut mqtt,
                 network::telemetry::Component::System,
                 "Homing disabled with untrusted NVS state",
-                "HOMING_ENABLED=false but persisted heading could not be trusted; manual intervention required.",
+                "HOMING_ENABLED=false but persisted heading could not be trusted; tracking is inhibited until the tower is re-homed.",
             );
         }
     } else {
         log::info!("Skipping homing: restored heading+encoder snapshot from NVS");
+        // A trusted snapshot is a real home reference: it was written by a boot
+        // that did find the switch.
+        heading_trusted = true;
     }
 
-    // Mark this boot as Normal so next boot can trust NVS.
-    infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(true);
+    // Mark this boot as Normal so the next boot can trust NVS. A commissioning
+    // run is explicitly not normal: it leaves NVS describing a tower with no
+    // home reference, so the next boot must re-establish home rather than
+    // trust it.
+    infra::SnapshotStore::new(&mut nvs, true).save_last_run_normal(!sw.install_mode);
+
+    if sw.install_mode {
+        diagnostics::transport::announce_install_ready(
+            &mut mqtt,
+            sw.device_id,
+            heading_trusted,
+            motion.lmsw_active(),
+            sw.install_max_step_deg,
+            tracking_inhibited,
+        );
+    }
 
     // PHASE 8: MAIN TRACKING LOOP ---------------------------------------------
     // Gather the long-lived state into the Tower context; the loop drives it.
@@ -862,6 +974,8 @@ fn main() -> anyhow::Result<()> {
         allow_ota,
         previous_motion_mode: motion_mode,
         need_rehome: false,
+        tracking_inhibited,
+        heading_trusted,
     };
 
     loop {
@@ -915,7 +1029,21 @@ fn main() -> anyhow::Result<()> {
         tower.process_commands();
 
         const LOOP_SLEEP_SECS: u64 = 300;
-        std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
+        const CMD_SLICE_SECS: u64 = 1;
+
+        if tower.sw.install_mode {
+            // Commissioning: an installer is standing at the tower waiting on
+            // each jog, so answer commands every second. Only the *wait* is
+            // sliced — the iteration is still 300 s, so the heartbeat and
+            // temperature publishes above keep their normal cadence instead of
+            // firing 300x more often.
+            for _ in 0..(LOOP_SLEEP_SECS / CMD_SLICE_SECS) {
+                std::thread::sleep(Duration::from_secs(CMD_SLICE_SECS));
+                tower.process_commands();
+            }
+        } else {
+            std::thread::sleep(Duration::from_secs(LOOP_SLEEP_SECS));
+        }
     }
 }
 

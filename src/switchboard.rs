@@ -14,6 +14,7 @@ pub enum Profile {
     Normal,
     Admin,
     Custom,
+    Install,
 }
 
 impl Profile {
@@ -23,6 +24,7 @@ impl Profile {
         match s {
             "Admin" => Profile::Admin,
             "Custom" => Profile::Custom,
+            "Install" => Profile::Install,
             _ => Profile::Normal,
         }
     }
@@ -217,6 +219,24 @@ pub struct Switchboard {
     pub default_ota_updater: &'static str,
     pub default_ota_password: &'static str,
 
+    // Commissioning (see `install()`)
+    /// True only on the `Install` profile. Gates the installer command set and
+    /// the sliced command wait; never true on a production image.
+    pub install_mode: bool,
+    /// Largest single `move_by` accepted while the heading is untrusted, in
+    /// degrees.
+    ///
+    /// Soft limits cannot be applied before homing — they are positions, and
+    /// the untrusted heading is sitting at its `home_heading_deg` default, which
+    /// *is* `soft_limit_min_deg` — so this is the only bound on an install move.
+    /// Sized to cover the usable travel band (`soft_limit_max - soft_limit_min`,
+    /// 250°) with room to spare, because an installer eyeballs the offset rather
+    /// than computing it: the heading they can read is a default, not a bearing.
+    /// It is a typo guard, not a travel policy — it exists so `5000` (≈ 9.7 h of
+    /// slewing) is refused, while any physically meaningful move is allowed.
+    /// Note ~7 s/degree, so a move this size blocks the main loop for ~23 min.
+    pub install_max_step_deg: f32,
+
     // Nested (Phase 0: present for parity; unused until later phases)
     pub boot: BootSwitches,
     pub runtime: RuntimeSwitches,
@@ -262,6 +282,9 @@ pub const fn normal() -> Switchboard {
 
         default_tower_latitude: crate::constants::TOWER_LATITUDE,
         default_tower_longitude: crate::constants::TOWER_LONGITUDE,
+
+        install_mode: false,
+        install_max_step_deg: 200.0,
 
         boot: BootSwitches {
             recovery: RecoverySwitches {
@@ -334,6 +357,27 @@ pub fn admin() -> Switchboard {
     sw
 }
 
+/// Commissioning image, flashed before the limit switch is mounted.
+///
+/// Built on [`admin`], which already turns boot homing, tracking and OTA
+/// **off** and leaves the command channel **on** — exactly what installing a
+/// tower needs:
+///
+/// * boot homing would sweep ~350° looking for a switch that is not there yet,
+///   and then wedge (see the homing-failure path in `runtime::main`),
+/// * tracking would slew toward the sun and leave the pose the installer just
+///   set,
+/// * an OTA mid-install is an unnecessary reboot.
+///
+/// The separate profile name is deliberate: a field technician is told to flash
+/// "Install", not "Admin". `install_mode` is what the installer command set and
+/// the sliced command wait key off.
+pub fn install() -> Switchboard {
+    let mut sw = admin();
+    sw.install_mode = true;
+    sw
+}
+
 /// Hook for site-specific images; identical to [`normal`] until customized here.
 pub const fn custom() -> Switchboard {
     normal()
@@ -344,5 +388,6 @@ pub fn active(profile: Profile) -> Switchboard {
         Profile::Normal => normal(),
         Profile::Admin => admin(),
         Profile::Custom => custom(),
+        Profile::Install => install(),
     }
 }

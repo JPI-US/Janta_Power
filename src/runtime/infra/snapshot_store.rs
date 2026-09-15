@@ -11,6 +11,8 @@ pub const NVS_KEY_ENC_TICKS_ADJ: &str = "enc_ticks_adj";
 
 // Tracks which run mode last wrote stateful values.
 pub const NVS_KEY_LAST_RUN_NORMAL: &str = "last_run_normal";
+// One-way Install → Normal latch. 12 bytes; ESP-IDF NVS keys max out at 15.
+pub const NVS_KEY_INSTALL_DONE: &str = "install_done";
 
 // ESP-IDF NVS key names are limited to 15 bytes.
 pub const NVS_KEY_ENCODER_MODE_RESET_DATE: &str = "enc_rst_date";
@@ -83,6 +85,43 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                 }
                 default
             }
+        }
+    }
+
+    /// Whether a previous Install image was told it is finished.
+    ///
+    /// Missing key is `false` — do not seed this on first boot, or a fresh
+    /// erase-flash would skip commissioning.
+    pub fn load_install_done(&mut self) -> bool {
+        match self.nvs.get_u8(NVS_KEY_INSTALL_DONE).ok().flatten() {
+            Some(1) => true,
+            Some(0) => false,
+            Some(other) => {
+                warn!(
+                    "Invalid {}={} in NVS; treating as not done",
+                    NVS_KEY_INSTALL_DONE, other
+                );
+                false
+            }
+            None => false,
+        }
+    }
+
+    pub fn save_install_done(&mut self, done: bool) {
+        if !self.persist_enabled {
+            warn!(
+                "NVS persist disabled: skipping save_install_done({})",
+                done
+            );
+            return;
+        }
+        if let Err(e) = self
+            .nvs
+            .set_u8(NVS_KEY_INSTALL_DONE, if done { 1 } else { 0 })
+        {
+            warn!("Failed to store {} in NVS: {:?}", NVS_KEY_INSTALL_DONE, e);
+        } else {
+            info!("Stored {} in NVS: {}", NVS_KEY_INSTALL_DONE, done);
         }
     }
 
@@ -177,6 +216,28 @@ impl<'a, T: NvsPartitionId> SnapshotStore<'a, T> {
                 "Failed to store encoder ticks in NVS ({}): {:?}",
                 NVS_KEY_ENC_TICKS_ADJ, e
             ),
+        }
+    }
+
+    /// Drop any persisted encoder snapshot, forcing the next boot to home.
+    ///
+    /// Called after an operator-commanded move. `should_home_by_mode` in
+    /// `runtime::main` skips the homing sweep entirely when it finds a restorable
+    /// snapshot, so leaving a stale one behind would let the tower boot trusting
+    /// an encoder zero measured from a home it is no longer at. Clearing the
+    /// version key alone is enough — [`Self::load_encoder_snapshot`] reads it
+    /// first — but both keys are removed so nothing misleading is left in NVS.
+    pub fn clear_encoder_snapshot(&mut self) {
+        if !self.persist_enabled {
+            warn!("NVS persist disabled: skipping clear_encoder_snapshot()");
+            return;
+        }
+        for key in [NVS_KEY_ENC_SNAPSHOT_VERSION, NVS_KEY_ENC_TICKS_ADJ] {
+            match self.nvs.remove(key) {
+                // `false` just means the key was not there; nothing to undo.
+                Ok(_) => info!("Cleared encoder snapshot key in NVS: {}", key),
+                Err(e) => warn!("Failed to clear {} in NVS: {:?}", key, e),
+            }
         }
     }
 

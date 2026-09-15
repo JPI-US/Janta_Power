@@ -27,3 +27,22 @@ pub fn error_loop(
         std::thread::sleep(CRITICAL_REPUBLISH_INTERVAL);
     }
 }
+
+/// Publish a structured `ErrorLog` to `tower/{id}/logs/error` exactly once, then
+/// return.
+///
+/// The non-diverging counterpart to [`error_loop`], for failures the tower can
+/// report and then keep running through. A boot homing sweep that finds no limit
+/// switch leaves a device that still has Wi-Fi, MQTT and a command channel — far
+/// more useful reachable and refusing to track than wedged emitting the same
+/// error every fifteen minutes.
+pub fn publish_error_once(
+    device_id: &str,
+    mqtt: &mut Mqtt,
+    component: Component,
+    message: &str,
+    notes: &str,
+) {
+    let now = rtc::timezone::local_time().format(TIME_FORMAT).to_string();
+    let _ = publish_error(mqtt, device_id, &now, component, message, notes);
+}

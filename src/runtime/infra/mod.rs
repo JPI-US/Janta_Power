@@ -5,4 +5,4 @@ pub mod temperature;
 
 pub use reset_reason::ResetReason;
 pub use snapshot_store::SnapshotStore;
-pub use telemetry::error_loop;
+pub use telemetry::{error_loop, publish_error_once};

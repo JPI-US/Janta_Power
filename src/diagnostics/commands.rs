@@ -22,6 +22,14 @@ pub struct CmdCtx<'a> {
     pub wifi_connected: bool,
     pub motion_mode: &'a str,
     pub current_heading: f32,
+    /// Whether `current_heading` means anything. False until the tower has a
+    /// home reference — during installation, or after a homing sweep that found
+    /// no limit switch, the heading is only a default.
+    pub heading_trusted: bool,
+    /// Live limit-switch reading. During installation this is how the operator
+    /// confirms the switch is wired, has the polarity `LIMIT_SWITCH_ACTIVE_HIGH`
+    /// claims, and is actually pressed before committing it as home.
+    pub lmsw_active: bool,
 }
 
 /// Route a command name to its handler.
@@ -46,5 +54,7 @@ fn get_status(ctx: &CmdCtx) -> Value {
         "wifi_connected": ctx.wifi_connected,
         "motion_mode": ctx.motion_mode,
         "current_heading": ctx.current_heading,
+        "heading_trusted": ctx.heading_trusted,
+        "lmsw_active": ctx.lmsw_active,
     })
 }

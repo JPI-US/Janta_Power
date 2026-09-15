@@ -145,12 +145,15 @@ These are the parts most worth understanding before you change anything.
 File: [`src/switchboard.rs`](src/switchboard.rs)
 
 A single struct of feature flags (tracking on/off, OTA on/off, boot homing,
-command channel, guardrails, soft limits…) plus three **profiles**:
+command channel, guardrails, soft limits…) plus four **profiles**:
 
 - **`Normal`** — production. Its values match what's running on the fleet today.
 - **`Admin`** — a **diagnostics sandbox**: tracking, boot homing, and OTA are
   turned **off** so the tower stays put and nothing competes with the feature
   under test; the command channel stays **on**.
+- **`Install`** — commissioning: same as `Admin`, plus `move_by` / `set_home_here`
+  / `exit_install` so a field tech can jog the array to home, mount the limit
+  switch, and return the image to Normal without a reflash.
 - **`Custom`** — a hook for site-specific images; identical to `Normal` until
   customized.
 
@@ -170,7 +173,8 @@ values mirror the fleet, so flipping the profile is the *only* behavior change.
 ### 4.2 Command channel — *"talk to a tower"*
 
 Files: [`src/diagnostics/transport.rs`](src/diagnostics/transport.rs),
-[`src/diagnostics/commands.rs`](src/diagnostics/commands.rs)
+[`src/diagnostics/commands.rs`](src/diagnostics/commands.rs),
+[`src/diagnostics/motion_commands.rs`](src/diagnostics/motion_commands.rs)
 
 Request/response over MQTT. The cloud publishes a command; the tower replies on
 an ack topic.
@@ -190,7 +194,10 @@ an ack topic.
 - `transport.rs` = the plumbing (subscribe, parse, route, reply). **It does not
   change when you add a command.** Malformed input still gets an error reply, so
   a bad payload can't wedge the queue.
-- `commands.rs` = the catalog. The single place to answer "what can a tower do?"
+- `commands.rs` = the read-only catalog (`get_status`).
+- `motion_commands.rs` = the actuating catalog (`move_by`, `set_home_here`,
+  `exit_install`), used on an `Install` image. Separate so a `get_*` handler
+  cannot gain `&mut Motion` by accident.
 
 **To add a command** (3 steps, all in `commands.rs`):
 1. write a handler `fn get_xxx(ctx: &CmdCtx) -> Value`
