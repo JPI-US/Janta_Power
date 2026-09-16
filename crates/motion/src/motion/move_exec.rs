@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
-    INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
+    ENC_TICKS_PER_DEG, GEAR_REDUCTION, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
+    SLEW_BEARING,
 };
 
 impl Motion<'_> {
@@ -112,6 +113,8 @@ impl Motion<'_> {
 
     pub fn run(&mut self) -> MoveOutcome {
         let mut t0 = Instant::now();
+        // Baseline for the encoder-derived speed readout in the periodic log.
+        let mut last_log_ticks = self.encoder_ticks_adjusted();
         loop {
             if self.motor.is_running() {
                 let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
@@ -252,12 +255,35 @@ impl Motion<'_> {
                     let position = self.encoder_ticks_adjusted();
                     let step_pos = self.motor.current_position();
                     let step_rem = self.motor.distance_to_go();
+
+                    // Encoder-derived motion. `deg` is measured from the encoder
+                    // zero (the limit switch), so it restarts at 0 whenever homing
+                    // re-zeros. rpm = (deg/s) / 6 -- 360 deg per rev, 60 s per min.
+                    // Tower RPM is the output shaft; motor RPM is before the
+                    // GEAR_REDUCTION * SLEW_BEARING reduction.
+                    let dt_s = t0.elapsed().as_secs_f32();
+                    let d_ticks = (position - last_log_ticks) as f32;
+                    let deg = position as f32 / ENC_TICKS_PER_DEG;
+                    let deg_per_s = if dt_s > 0.0 {
+                        d_ticks / ENC_TICKS_PER_DEG / dt_s
+                    } else {
+                        0.0
+                    };
+                    let tower_rpm = deg_per_s / 6.0;
+                    let motor_rpm = tower_rpm * (GEAR_REDUCTION * SLEW_BEARING) as f32;
+
                     log::info!(
-                        "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}",
+                        "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}, Deg: {:.3}, Deg/s: {:.3}, Tower RPM: {:.4}, Motor RPM: {:.1}",
                         position,
                         step_pos,
-                        step_rem
+                        step_rem,
+                        deg,
+                        deg_per_s,
+                        tower_rpm,
+                        motor_rpm
                     );
+
+                    last_log_ticks = position;
                     t0 = Instant::now();
                 }
             } else {
