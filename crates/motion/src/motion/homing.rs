@@ -50,7 +50,6 @@ impl Motion<'_> {
 
     // Called from `run()` while moving: edge-detect, debounce, and zero on press.
     pub(crate) fn poll_limit_switch_zeroing(&mut self) {
-        // Switch is active-low.
         let pressed = self.lmsw_active();
         let now = Instant::now();
         if pressed != self.lmsw_last_state_pressed {

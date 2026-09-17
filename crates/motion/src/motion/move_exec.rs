@@ -255,7 +255,7 @@ impl Motion<'_> {
                     return MoveOutcome::Completed;
                 }
 
-                if t0.elapsed() >= Duration::from_millis(250) {
+                if t0.elapsed() >= Duration::from_millis(100) {
                     let enc = self.encoder_ticks_adjusted();
                     let step_pos = self.motor.current_position();
                     let dt_s = t0.elapsed().as_secs_f64().max(1e-6);

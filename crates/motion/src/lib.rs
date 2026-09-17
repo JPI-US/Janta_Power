@@ -159,6 +159,21 @@ pub mod motion {
                     .unwrap_or_default(),
             }
 
+            // Seed debounce from the *actual* pin. If we always start at
+            // "released", the first `move_by` while sitting on the home cam
+            // looks like a brand-new press and re-zeros the encoder.
+            let lmsw_pressed = match limit_switch_active_level {
+                ActiveLevel::ActiveHigh => lmsw.is_high(),
+                ActiveLevel::ActiveLow => lmsw.is_low(),
+            };
+            log::info!(
+                target: "lmsw",
+                "init polarity={:?} raw_high={} pressed={}",
+                limit_switch_active_level,
+                lmsw.is_high(),
+                lmsw_pressed
+            );
+
             let encoder = IncrementalEncoder::<Rotary, _, _, QuadStep>::new(encoder_a, encoder_b);
 
             let now = Instant::now();
@@ -175,9 +190,9 @@ pub mod motion {
                 lmsw,
                 encoder,
                 encoder_zero_offset: 0,
-                lmsw_last_state_pressed: false,
+                lmsw_last_state_pressed: lmsw_pressed,
                 lmsw_last_change: now,
-                lmsw_zeroed_this_press: false,
+                lmsw_zeroed_this_press: lmsw_pressed,
                 last_home_error_ticks: None,
 
                 motor_power_on: true,
