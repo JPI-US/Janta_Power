@@ -69,13 +69,23 @@ impl Motion<'_> {
             && !self.lmsw_zeroed_this_press
             && self.lmsw_last_change.elapsed() >= Duration::from_millis(30)
         {
+            self.lmsw_zeroed_this_press = true;
+            if !self.is_homing {
+                // Install jogs and tracking moves: log the cam, do not wipe the
+                // encoder zero. Re-zeroing here used to make overshoot compare
+                // a new 0 against the pre-zero start and abort a good move.
+                log::info!(
+                    target: "lmsw",
+                    "limit switch pressed during move (not homing; encoder not zeroed)"
+                );
+                return;
+            }
             // 1. Read drift relative to the previous zero reference.
             let home_error = self.encoder_ticks_adjusted();
             // 2. Stash it for the publish site to consume later.
             self.last_home_error_ticks = Some(home_error);
             // 3. Re-zero: adjusted ticks now read 0 at the switch.
             self.encoder_zero_offset = self.encoder.position();
-            self.lmsw_zeroed_this_press = true;
             log::info!(
                 "Limit switch pressed: home_error_ticks={}, encoder zeroed (offset={})",
                 home_error,

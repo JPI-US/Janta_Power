@@ -31,13 +31,14 @@ impl Motion<'_> {
         let now = Instant::now();
         self.stall_last_check = now;
         self.stall_step_pos_at_last_enc_change = self.motor.current_position();
-        self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
+        // Raw ticks: a mid-move encoder zero must not look like a 50° leap.
+        self.stall_last_enc_ticks_seen = self.encoder_ticks_raw();
         self.stall_reported = false;
         self.stall_consecutive = 0;
 
         // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
-            self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
+            self.stall_check_start_encoder_ticks = self.encoder_ticks_raw();
             self.stall_check_start_step_pos = self.motor.current_position();
             self.stall_check_last_interval_step = self.motor.current_position();
         }
@@ -45,7 +46,7 @@ impl Motion<'_> {
         // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
             use super::{ENC_TICKS_PER_REV, STEPS_PER_REV};
-            self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
+            self.overshoot_enc_start = Some(self.encoder_ticks_raw());
             let expected_ticks =
                 ((location.abs() as f64 / STEPS_PER_REV) * ENC_TICKS_PER_REV as f64) as i64;
             self.overshoot_expected_ticks = Some(expected_ticks);
@@ -78,20 +79,20 @@ impl Motion<'_> {
         let now = Instant::now();
         self.stall_last_check = now;
         self.stall_step_pos_at_last_enc_change = self.motor.current_position();
-        self.stall_last_enc_ticks_seen = self.encoder_ticks_adjusted();
+        self.stall_last_enc_ticks_seen = self.encoder_ticks_raw();
         self.stall_reported = false;
         self.stall_consecutive = 0;
 
         // Initialize ratio-based stall state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
-            self.stall_check_start_encoder_ticks = self.encoder_ticks_adjusted();
+            self.stall_check_start_encoder_ticks = self.encoder_ticks_raw();
             self.stall_check_start_step_pos = self.motor.current_position();
             self.stall_check_last_interval_step = self.motor.current_position();
         }
 
         // Initialize overshoot state (EncoderGuarded only).
         if self.motion_mode == MotionMode::EncoderGuarded {
-            self.overshoot_enc_start = Some(self.encoder_ticks_adjusted());
+            self.overshoot_enc_start = Some(self.encoder_ticks_raw());
             self.overshoot_expected_ticks = Some(location.abs());
         } else {
             self.overshoot_enc_start = None;
@@ -139,7 +140,7 @@ impl Motion<'_> {
                     && self.stall_last_check.elapsed() >= Duration::from_millis(250)
                 {
                     let step_pos = self.motor.current_position();
-                    let enc_pos = self.encoder_ticks_adjusted();
+                    let enc_pos = self.encoder_ticks_raw();
 
                     if enc_pos != self.stall_last_enc_ticks_seen {
                         self.stall_last_enc_ticks_seen = enc_pos;
@@ -178,7 +179,7 @@ impl Motion<'_> {
                 // Ratio stall detector: every interval must produce minimum tick movement.
                 if self.motion_mode == MotionMode::EncoderGuarded && self.stall_detection_enabled {
                     let current_step_pos = self.motor.current_position();
-                    let current_encoder_ticks = self.encoder_ticks_adjusted();
+                    let current_encoder_ticks = self.encoder_ticks_raw();
 
                     let total_steps_moved =
                         (current_step_pos - self.stall_check_start_step_pos).abs();
@@ -219,7 +220,7 @@ impl Motion<'_> {
                 {
                     use super::ENCODER_OVERSHOOT_TOLERANCE_TICKS;
                     let enc_start = self.overshoot_enc_start.unwrap();
-                    let enc_current = self.encoder_ticks_adjusted();
+                    let enc_current = self.encoder_ticks_raw();
                     let enc_delta = (enc_current - enc_start).abs() as i64;
                     let expected = self.overshoot_expected_ticks.unwrap();
                     let tolerance = ENCODER_OVERSHOOT_TOLERANCE_TICKS;
@@ -286,6 +287,29 @@ impl Motion<'_> {
             } else {
                 break;
             }
+        }
+        if let (Some(start), Some(expected)) =
+            (self.overshoot_enc_start, self.overshoot_expected_ticks)
+        {
+            let enc_delta = (self.encoder_ticks_raw() - start).abs() as f64;
+            let enc_deg = enc_delta / ENC_TICKS_PER_DEG as f64;
+            let cmd_deg = expected as f64 / ENC_TICKS_PER_DEG as f64;
+            let err = enc_deg - cmd_deg;
+            let tag = if err.abs() < 0.05 {
+                "ok"
+            } else if err < 0.0 {
+                "undershoot"
+            } else {
+                "overshoot"
+            };
+            log::info!(
+                target: "move",
+                "done commanded={:.2}° encoder={:.2}° {} {:+.2}°",
+                cmd_deg,
+                enc_deg,
+                tag,
+                err
+            );
         }
         // Clear overshoot state on normal completion.
         self.overshoot_enc_start = None;
