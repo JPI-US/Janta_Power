@@ -4,9 +4,12 @@ use std::time::{Duration, Instant};
 
 use super::{
     Motion, MotionMode, MoveOutcome, ENCODER_STALL_CHECK_INTERVAL_STEPS, ENCODER_STALL_MIN_TICKS,
-    ENC_TICKS_PER_DEG, GEAR_REDUCTION, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE,
-    SLEW_BEARING,
+    ENC_TICKS_PER_DEG, INVERT_MOTOR_DIRECTION, MAX_STEPS_WITHOUT_ENC_CHANGE, STEPS_PER_REV,
 };
+
+/// LYJW-SE14 slewing-drive **output** (tower) rated speed. Motor-shaft RPM is
+/// not this number — that is this times the worm + gearbox reduction.
+const RATED_TOWER_RPM: f64 = 0.018;
 
 impl Motion<'_> {
     pub fn init(&mut self) {
@@ -22,7 +25,7 @@ impl Motion<'_> {
     pub fn move_by(&mut self, location: i64) -> MoveOutcome {
         // Start move.
         self.relay_on();
-        log::info!("Relay ON - Starting motor movement");
+        log::info!(target: "move", "relay on");
 
         // Reset stall baselines for this move.
         let now = Instant::now();
@@ -61,7 +64,7 @@ impl Motion<'_> {
 
         // End move.
         self.relay_off();
-        log::info!("Relay OFF - Motor movement finished: {:?}", outcome);
+        log::info!(target: "move", "relay off ({:?})", outcome);
 
         self.last_move_outcome = Some(outcome);
         outcome
@@ -70,7 +73,7 @@ impl Motion<'_> {
     pub fn move_by_ticks(&mut self, location: i64) -> MoveOutcome {
         // Start move in tick space.
         self.relay_on();
-        log::info!("Relay ON - Starting motor movement (ticks)");
+        log::info!(target: "move", "relay on (ticks)");
 
         let now = Instant::now();
         self.stall_last_check = now;
@@ -105,7 +108,7 @@ impl Motion<'_> {
 
         // End move.
         self.relay_off();
-        log::info!("Relay OFF - Motor movement finished (ticks): {:?}", outcome);
+        log::info!(target: "move", "relay off (ticks, {:?})", outcome);
 
         self.last_move_outcome = Some(outcome);
         outcome
@@ -113,8 +116,9 @@ impl Motion<'_> {
 
     pub fn run(&mut self) -> MoveOutcome {
         let mut t0 = Instant::now();
-        // Baseline for the encoder-derived speed readout in the periodic log.
-        let mut last_log_ticks = self.encoder_ticks_adjusted();
+        // Speed is taken from *steps* over ~1 s. Encoder ticks only give ~60
+        // counts/s, so a 100 ms window was ±1 tick of noise (~40% RPM swing).
+        let mut last_log_steps = self.motor.current_position();
         loop {
             if self.motor.is_running() {
                 let _ = self.motor.poll(&mut self.motor_device, &self.motor_clock);
@@ -251,39 +255,32 @@ impl Motion<'_> {
                     return MoveOutcome::Completed;
                 }
 
-                if t0.elapsed() >= Duration::from_millis(100) {
-                    let position = self.encoder_ticks_adjusted();
+                if t0.elapsed() >= Duration::from_secs(1) {
+                    let enc = self.encoder_ticks_adjusted();
                     let step_pos = self.motor.current_position();
-                    let step_rem = self.motor.distance_to_go();
-
-                    // Encoder-derived motion. `deg` is measured from the encoder
-                    // zero (the limit switch), so it restarts at 0 whenever homing
-                    // re-zeros. rpm = (deg/s) / 6 -- 360 deg per rev, 60 s per min.
-                    // Tower RPM is the output shaft; motor RPM is before the
-                    // GEAR_REDUCTION * SLEW_BEARING reduction.
-                    let dt_s = t0.elapsed().as_secs_f32();
-                    let d_ticks = (position - last_log_ticks) as f32;
-                    let deg = position as f32 / ENC_TICKS_PER_DEG;
-                    let deg_per_s = if dt_s > 0.0 {
-                        d_ticks / ENC_TICKS_PER_DEG / dt_s
-                    } else {
-                        0.0
-                    };
-                    let tower_rpm = deg_per_s / 6.0;
-                    let motor_rpm = tower_rpm * (GEAR_REDUCTION * SLEW_BEARING) as f32;
+                    let dt_s = t0.elapsed().as_secs_f64().max(1e-6);
+                    let d_steps = (step_pos - last_log_steps).abs() as f64;
+                    let deg = enc as f64 / ENC_TICKS_PER_DEG as f64;
+                    // Tower (slew output) RPM from the step kinematic model,
+                    // same reduction used to command the move.
+                    let tower_rpm = (d_steps / STEPS_PER_REV) / dt_s * 60.0;
+                    let rated_pct = (tower_rpm / RATED_TOWER_RPM) * 100.0;
+                    let left_deg =
+                        self.motor.distance_to_go().abs() as f64 / STEPS_PER_REV * 360.0;
 
                     log::info!(
-                        "Encoder Ticks: {}, Step Position: {}, Step Remaining: {}, Deg: {:.3}, Deg/s: {:.3}, Tower RPM: {:.4}, Motor RPM: {:.1}",
-                        position,
+                        target: "move",
+                        "Encoder Ticks: {}, Step Position: {}, Deg: {:.2}, RPM: {:.4} ({:.0}% of {:.3}), Left: {:.1}°",
+                        enc,
                         step_pos,
-                        step_rem,
                         deg,
-                        deg_per_s,
                         tower_rpm,
-                        motor_rpm
+                        rated_pct,
+                        RATED_TOWER_RPM,
+                        left_deg
                     );
 
-                    last_log_ticks = position;
+                    last_log_steps = step_pos;
                     t0 = Instant::now();
                 }
             } else {
