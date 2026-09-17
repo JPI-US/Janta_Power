@@ -70,14 +70,14 @@ impl Motion<'_> {
             && self.lmsw_last_change.elapsed() >= Duration::from_millis(30)
         {
             self.lmsw_zeroed_this_press = true;
+            // Re-read: a 30 ms debounce can still latch a glitch. Only treat
+            // this as a press if the pin still reads pressed right now.
+            if !self.lmsw_active() {
+                self.lmsw_zeroed_this_press = false;
+                return;
+            }
             if !self.is_homing {
-                // Install jogs and tracking moves: log the cam, do not wipe the
-                // encoder zero. Re-zeroing here used to make overshoot compare
-                // a new 0 against the pre-zero start and abort a good move.
-                log::info!(
-                    target: "lmsw",
-                    "limit switch pressed during move (not homing; encoder not zeroed)"
-                );
+                // Install / tracking jogs: do not wipe the encoder zero.
                 return;
             }
             // 1. Read drift relative to the previous zero reference.

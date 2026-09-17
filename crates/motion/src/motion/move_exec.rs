@@ -271,14 +271,15 @@ impl Motion<'_> {
 
                     log::info!(
                         target: "move",
-                        "Encoder Ticks: {}, Step Position: {}, Deg: {:.2}, RPM: {:.4} ({:.0}% of {:.3}), Left: {:.1}°",
+                        "Encoder Ticks: {}, Step Position: {}, Deg: {:.2}, RPM: {:.4} ({:.0}% of {:.3}), Left: {:.1}°, lmsw={}",
                         enc,
                         step_pos,
                         deg,
                         tower_rpm,
                         rated_pct,
                         RATED_TOWER_RPM,
-                        left_deg
+                        left_deg,
+                        if self.lmsw_active() { "pressed" } else { "open" }
                     );
 
                     last_log_steps = step_pos;
