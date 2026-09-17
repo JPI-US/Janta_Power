@@ -468,6 +468,33 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for BootValidation 
                 if let Err(e) = ota::confirm_pending_job(mqtt, &mut ctx.nvs) {
                     warn!("Failed to confirm pending OTA job: {:?}", e);
                 }
+
+                let current_time = rtc::timezone::local_time()
+                    .format(network::telemetry::TIME_FORMAT)
+                    .to_string();
+
+                let current_version_str = current_version.to_string();
+
+                let mut prev_version_buf = [0u8; 32];
+                let previous_version = match ctx.nvs.get_str("previous_version", &mut prev_version_buf) {
+                    Ok(Some(v)) => v.trim_end_matches('\0').to_string(),
+                    _ => current_version_str.clone(),
+                };
+                let _ = ctx.nvs.remove("previous_version");
+
+                let payload = network::telemetry::FirmwareUpdateLog {
+                    current_time: &current_time,
+                    message: "Firmware update successful",
+                    previous_version: &previous_version,
+                    current_version: &current_version_str,
+                    notes: "Boot validation passed",
+                };
+
+                let topic = network::telemetry::topic::logs_firmware_update(ctx.switchboard.device_id);
+
+                if let Err(e) = network::telemetry::publish_json(mqtt, &topic, &payload) {
+                    warn!("Failed to publish OTA success log: {:?}", e);
+                }
             } else {
                 error!("Boot validation failed, rolling back firmware");
 
@@ -585,7 +612,7 @@ impl State<FSMAddress, NetworkContext, FSMCommand, FSMState> for Ota {
             let payload = network::telemetry::FirmwareUpdateLog {
                 current_time: &current_time,
                 message: "Firmware update unsuccessful",
-                previous_version: &version_str,
+                previous_version: "N/A",
                 current_version: &version_str,
                 notes: "Did not update due to failures",
             };

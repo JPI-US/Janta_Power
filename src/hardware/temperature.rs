@@ -3,7 +3,8 @@ use hdc1080::Hdc1080;
 use network::{
     mqtt::Mqtt,
     telemetry::{
-        publish_component_status, publish_info, publish_json, topic, Component, ErrorLog, Severity,
+        publish_component_status, publish_info, publish_json, topic, Component, ErrorLog,
+        Humidity, Severity, Temperature,
     },
 };
 
@@ -78,6 +79,19 @@ pub fn report_system_temperature<I2C, D>(
     };
 
     let temp_f = temp_c * 9.0 / 5.0 + 32.0;
+
+    let temp_payload = Temperature {
+        current_time,
+        temperature_f: temp_f as f64,
+    };
+    let _ = publish_json(mqtt, &topic::data_temperature(device_id), &temp_payload);
+
+    let humidity_payload = Humidity {
+        current_time,
+        humidity_pct: rh as f64,
+    };
+    let _ = publish_json(mqtt, &topic::data_humidity(device_id), &humidity_payload);
+
     let tier = TempTier::classify(temp_f);
     let notes = tier.notes();
 

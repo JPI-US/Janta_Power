@@ -225,6 +225,11 @@ impl<'a> OtaUpdater<'a> {
                     // succeeded.
                     nvs.set_str("pending_job_id", &job_id)?;
 
+                    // Stash the pre-update version so the firmware-update
+                    // success log published after boot validation can report
+                    // an accurate previous_version -> current_version change.
+                    nvs.set_str("previous_version", &self.current_version.to_string())?;
+
                     info!("Reebooting firmware in 3 seconds...");
                     thread::sleep(Duration::from_secs(3));
                     esp_idf_svc::hal::reset::restart();

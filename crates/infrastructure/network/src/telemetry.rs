@@ -49,6 +49,14 @@ pub mod topic {
         format!("tower/{device_id}/data/angle")
     }
 
+    pub fn data_temperature(device_id: &str) -> String {
+        format!("tower/{device_id}/data/temperature")
+    }
+
+    pub fn data_humidity(device_id: &str) -> String {
+        format!("tower/{device_id}/data/humidity")
+    }
+
     pub fn data_encoder_error_ticks(device_id: &str) -> String {
         format!("tower/{device_id}/data/encoder_error_ticks")
     }
@@ -186,6 +194,20 @@ pub struct InfoLog<'a> {
 pub struct Angle<'a> {
     pub current_time: &'a str,
     pub tower_angle: f64,
+}
+
+/// `tower/{id}/data/temperature` — periodic board temperature reading.
+#[derive(Serialize)]
+pub struct Temperature<'a> {
+    pub current_time: &'a str,
+    pub temperature_f: f64,
+}
+
+/// `tower/{id}/data/humidity` — periodic board humidity reading.
+#[derive(Serialize)]
+pub struct Humidity<'a> {
+    pub current_time: &'a str,
+    pub humidity_pct: f64,
 }
 
 /// `tower/{id}/data/encoder_error_ticks` — encoder drift captured at the
