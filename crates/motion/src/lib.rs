@@ -60,6 +60,16 @@ pub mod motion {
         ActiveHigh,
     }
 
+    /// Limit-switch contact, wired between 3.3V and GPIO14 (pull-down on the pin).
+    ///
+    /// - `Nc`: closed at rest → pin sits at 3.3V; press *opens* and the pin drops.
+    /// - `No`: open at rest → pin sits at 0V; press *closes* and the pin goes 3.3V.
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    pub enum LimitSwitchKind {
+        Nc,
+        No,
+    }
+
     pub fn calculate_steps(offset_deg: f32) -> i64 {
         ((offset_deg as f64 / 360.0) * STEPS_PER_REV) as i64
     }
@@ -86,7 +96,7 @@ pub mod motion {
         >,
         // Encoder zero is a software offset: adjusted = raw - offset.
         encoder_zero_offset: i32,
-        // Limit-switch debounce state (active-low switch).
+        // Limit-switch debounce state.
         lmsw_last_state_pressed: bool,
         lmsw_last_change: Instant,
         lmsw_zeroed_this_press: bool,
@@ -123,7 +133,7 @@ pub mod motion {
         is_homing: bool,
 
         relay_active_level: ActiveLevel,
-        limit_switch_active_level: ActiveLevel,
+        limit_switch: LimitSwitchKind,
     }
 
     // Direction and step wiring notes:
@@ -138,7 +148,7 @@ pub mod motion {
             encoder_a_pin: Gpio10,
             encoder_b_pin: Gpio11,
             relay_active_level: ActiveLevel,
-            limit_switch_active_level: ActiveLevel,
+            limit_switch: LimitSwitchKind,
         ) -> Motion<'a> {
             let step = PinDriver::output(step_pin).unwrap();
             let direction = PinDriver::output(direction_pin).unwrap();
@@ -150,26 +160,19 @@ pub mod motion {
             let encoder_b = PinDriver::input(encoder_b_pin).unwrap();
 
             let mut lmsw = PinDriver::input(limit_switch_pin).unwrap();
-            match limit_switch_active_level {
-                ActiveLevel::ActiveHigh => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Down)
-                    .unwrap_or_default(),
-                ActiveLevel::ActiveLow => lmsw
-                    .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
-                    .unwrap_or_default(),
-            }
+            // Both contact types sit on a 3.3V feed; pull-down so an open
+            // contact reads low instead of floating.
+            lmsw.set_pull(esp_idf_svc::hal::gpio::Pull::Down)
+                .unwrap_or_default();
 
-            // Seed debounce from the *actual* pin. If we always start at
-            // "released", the first `move_by` while sitting on the home cam
-            // looks like a brand-new press and re-zeros the encoder.
-            let lmsw_pressed = match limit_switch_active_level {
-                ActiveLevel::ActiveHigh => lmsw.is_high(),
-                ActiveLevel::ActiveLow => lmsw.is_low(),
+            let lmsw_pressed = match limit_switch {
+                LimitSwitchKind::Nc => lmsw.is_low(),
+                LimitSwitchKind::No => lmsw.is_high(),
             };
             log::info!(
                 target: "lmsw",
-                "init polarity={:?} raw_high={} pressed={}",
-                limit_switch_active_level,
+                "init contact={:?} raw_high={} pressed={}",
+                limit_switch,
                 lmsw.is_high(),
                 lmsw_pressed
             );
@@ -219,7 +222,7 @@ pub mod motion {
                 is_homing: false,
 
                 relay_active_level,
-                limit_switch_active_level,
+                limit_switch,
             }
         }
 
@@ -286,9 +289,9 @@ pub mod motion {
         }
 
         pub fn lmsw_active(&self) -> bool {
-            match self.limit_switch_active_level {
-                ActiveLevel::ActiveHigh => self.lmsw.is_high(),
-                ActiveLevel::ActiveLow => self.lmsw.is_low(),
+            match self.limit_switch {
+                LimitSwitchKind::Nc => self.lmsw.is_low(),
+                LimitSwitchKind::No => self.lmsw.is_high(),
             }
         }
 
@@ -628,4 +631,6 @@ pub mod motion {
     }
 }
 
-pub use motion::{calculate_steps, Motion, MotionMode, MoveOutcome};
+pub use motion::{
+    calculate_steps, ActiveLevel, LimitSwitchKind, Motion, MotionMode, MoveOutcome,
+};

@@ -48,7 +48,21 @@ fn generate_constants() {
     constants.push_str(&get_env("DEFAULT_ACCEL_STEPS_PER_S2", "200", "u16"));
     constants.push_str(&get_env("INVERT_MOTOR_DIRECTION", "true", "bool"));
     constants.push_str(&get_env("RELAY_ACTIVE_HIGH", "true", "bool"));
-    constants.push_str(&get_env("LIMIT_SWITCH_ACTIVE_HIGH", "false", "bool"));
+    // NC / NO — not active-high/low. NC: rest=3.3V, press drops. NO: rest=0V, press=3.3V.
+    {
+        let raw = std::env::var("LIMIT_SWITCH").unwrap_or_else(|_| "NC".to_string());
+        let nc = match raw.trim().to_ascii_uppercase().as_str() {
+            "NC" => true,
+            "NO" => false,
+            other => panic!(
+                "LIMIT_SWITCH must be NC or NO (got {:?}). \
+                 NC = closed at rest (pin 3.3V, press drops). \
+                 NO = open at rest (pin 0V, press goes 3.3V).",
+                other
+            ),
+        };
+        constants.push_str(&format!("pub const LIMIT_SWITCH_NC: bool = {};\n", nc));
+    }
     constants.push('\n');
 
     // Encoder Constants

@@ -27,8 +27,8 @@ pub struct CmdCtx<'a> {
     /// no limit switch, the heading is only a default.
     pub heading_trusted: bool,
     /// Live limit-switch reading. During installation this is how the operator
-    /// confirms the switch is wired, has the polarity `LIMIT_SWITCH_ACTIVE_HIGH`
-    /// claims, and is actually pressed before committing it as home.
+    /// confirms the switch is wired (`LIMIT_SWITCH=NC` or `NO`) and is
+    /// actually pressed before committing it as home.
     pub lmsw_active: bool,
 }
 

@@ -453,7 +453,7 @@ fn main() -> anyhow::Result<()> {
         encoder_a,
         encoder_b,
         sw.runtime.relay_polarity,
-        sw.runtime.limit_switch_polarity,
+        sw.runtime.limit_switch,
     );
 
     motion.init();
