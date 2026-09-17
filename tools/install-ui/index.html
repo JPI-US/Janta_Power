@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tower install</title>
+  <style>
+    :root {
+      --ink: #1b1814;
+      --paper: #f4efe4;
+      --card: #fffdf8;
+      --line: #d9d0c0;
+      --muted: #6f675c;
+      --accent: #c45c12;
+      --accent-dark: #9a4308;
+      --ok: #2f6b3a;
+      --bad: #9b1c1c;
+      --shadow: 0 18px 40px rgba(40, 28, 12, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #ffe3c2 0%, transparent 50%),
+        var(--paper);
+      color: var(--ink);
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 28px 18px 48px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    h1 {
+      font-size: 1.55rem;
+      letter-spacing: -0.03em;
+      margin: 0 0 4px;
+    }
+    .sub { color: var(--muted); font-size: 0.92rem; }
+    .pill {
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border: 1px solid var(--line);
+      background: var(--card);
+    }
+    .pill.on { color: var(--ok); border-color: #b7d4b8; background: #eef7ef; }
+    .pill.off { color: var(--bad); border-color: #ebc4c4; background: #fbeeee; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    input[type="number"] {
+      width: 100%;
+      font-size: 2rem;
+      font-variant-numeric: tabular-nums;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    .preview {
+      margin: 14px 0 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #f7f1e6;
+      color: var(--ink);
+      font-size: 0.98rem;
+    }
+    .preview strong { color: var(--accent-dark); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .primary {
+      background: var(--accent);
+      color: white;
+      font-size: 1.05rem;
+      flex: 1 1 180px;
+    }
+    .primary:hover:not(:disabled) { background: var(--accent-dark); }
+    .ghost {
+      background: #efe8db;
+      color: var(--ink);
+    }
+    .danger { background: #f3d6d6; color: var(--bad); }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0 4px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+    .log {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.78rem;
+      max-height: 320px;
+      overflow: auto;
+      background: #1c1915;
+      color: #efe7d6;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .log .ack { color: #c8e6c0; }
+    .log .sent { color: #f0c48a; }
+    .log .error { color: #f3a0a0; }
+    .log .info { color: #c9d6e6; }
+    .flags { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    @media (max-width: 560px) {
+      .row { grid-template-columns: 1fr; }
+      header { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Tower install</h1>
+        <div class="sub">Type the heading you see. Move sends <code>move_by</code> for (target − current) to home at 50°.</div>
+      </div>
+      <div id="conn" class="pill off">MQTT down</div>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <div>
+          <label for="current">Current heading (what you see)</label>
+          <input id="current" type="number" step="0.1" value="50" />
+        </div>
+        <div>
+          <label for="target">Move to</label>
+          <input id="target" type="number" step="0.1" />
+        </div>
+      </div>
+      <div id="preview" class="preview">Enter a current heading.</div>
+      <label class="check">
+        <input id="ignore" type="checkbox" />
+        Encoder not wired (ignore stall / overshoot)
+      </label>
+      <div class="actions">
+        <button class="primary" id="move">Move tower</button>
+        <button class="ghost" id="status">Get status</button>
+        <button class="ghost" id="home">Set home here</button>
+        <button class="danger" id="exit">Exit install</button>
+        <button class="ghost" id="clear" hidden>Stop waiting</button>
+      </div>
+      <div class="meta">
+        <span id="device"></span>
+        <span id="topics"></span>
+      </div>
+      <p id="hint" class="sub" style="margin:12px 0 0;"></p>
+    </section>
+
+    <section class="card">
+      <div class="flags">
+        <div id="trusted" class="pill off">heading untrusted</div>
+        <div id="lmsw" class="pill off">switch open</div>
+      </div>
+      <label>Command log</label>
+      <div id="log" class="log">Waiting for AWS IoT…</div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      home: 50,
+      maxStep: 200,
+      // True while the tower owes us an ack. A move blocks its main loop for
+      // ~7 s per degree, so everything stays locked until it answers.
+      busy: false,
+      // request_id of the last move ack already folded into the Current field,
+      // so the 800 ms poll does not re-apply it forever.
+      appliedAck: null,
+    };
+
+    function fmt(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "—";
+      return (Math.round(v * 10) / 10).toString();
+    }
+
+    function delta() {
+      const current = Number($("current").value);
+      const target = Number($("target").value);
+      return target - current;
+    }
+
+    function updatePreview() {
+      const d = delta();
+      const current = Number($("current").value);
+      const target = Number($("target").value);
+
+      if (state.busy) {
+        // Preview text is owned by the pending banner in render() while a
+        // command is in flight; just keep every actuating control locked.
+        setBusyControls(true);
+        return;
+      }
+      setBusyControls(false);
+
+      if (!Number.isFinite(d) || !Number.isFinite(current) || !Number.isFinite(target)) {
+        $("preview").innerHTML = "Enter numeric headings.";
+        $("move").disabled = true;
+        return;
+      }
+      if (d === 0) {
+        $("preview").innerHTML = "Already at the target heading.";
+        $("move").disabled = true;
+        return;
+      }
+      if (Math.abs(d) > state.maxStep) {
+        $("preview").innerHTML =
+          `<strong>${fmt(d)}°</strong> is past the firmware cap of ±${fmt(state.maxStep)}°. ` +
+          `Move in steps — set Move-to nearer, then repeat.`;
+        $("move").disabled = true;
+        return;
+      }
+      const dir = d > 0 ? "clockwise" : "counter-clockwise";
+      const mins = Math.abs(d) * 7 / 60;
+      $("preview").innerHTML =
+        `Will send <strong>move_by ${fmt(d)}°</strong> (${dir}, ~${mins.toFixed(1)} min).`;
+      $("move").disabled = false;
+    }
+
+    function setBusyControls(busy) {
+      $("move").disabled = busy;
+      $("home").disabled = busy;
+      $("exit").disabled = busy;
+      $("status").disabled = busy;
+      $("clear").hidden = !busy;
+    }
+
+    function renderFlags(body) {
+      if (!body || typeof body !== "object") return;
+      const data = body.data || body;
+      if ("heading_trusted" in data) {
+        $("trusted").textContent = data.heading_trusted ? "heading trusted" : "heading untrusted";
+        $("trusted").className = "pill " + (data.heading_trusted ? "on" : "off");
+      }
+      if ("lmsw_active" in data) {
+        $("lmsw").textContent = data.lmsw_active ? "switch pressed" : "switch open";
+        $("lmsw").className = "pill " + (data.lmsw_active ? "on" : "off");
+      }
+    }
+
+    // Fold a finished move back into the Current field, so the operator's next
+    // delta starts from where the tower actually ended up. Only a *completed*
+    // move counts — an aborted one left the tower somewhere unknown, and
+    // pretending otherwise would silently corrupt every later calculation.
+    function applyMoveAck(s) {
+      const ack = (s.events || []).find(
+        (ev) => ev.kind === "ack" && ev.body && ev.body.cmd === "move_by"
+      );
+      if (!ack) return;
+      const id = ack.body.request_id;
+      if (!id || id === state.appliedAck) return;
+      state.appliedAck = id;
+
+      const data = ack.body.data || {};
+      if (ack.body.status === "ok" && data.outcome === "completed" &&
+          Number.isFinite(Number(data.to_heading))) {
+        $("current").value = fmt(data.to_heading);
+      } else if (ack.body.status === "ok") {
+        alert(
+          `Move did not complete: ${data.outcome}.\n\n` +
+          `The tower stopped partway, so its heading is unknown. Look at the ` +
+          `array and type what you actually see into Current.`
+        );
+      }
+    }
+
+    function render(s) {
+      $("conn").textContent = s.connected ? "MQTT up" : "MQTT down";
+      $("conn").className = "pill " + (s.connected ? "on" : "off");
+      $("device").textContent = "tower_" + s.device_id;
+      $("topics").textContent = s.cmd_topic;
+      if (Number.isFinite(Number(s.max_step_deg))) state.maxStep = Number(s.max_step_deg);
+
+      state.busy = !!s.pending;
+      applyMoveAck(s);
+
+      if (s.pending) {
+        const secs = Math.round(s.pending.elapsed || 0);
+        const mins = Math.floor(secs / 60);
+        const rest = String(secs % 60).padStart(2, "0");
+        $("preview").innerHTML =
+          `Waiting on <strong>${s.pending.cmd}</strong> — ${mins}:${rest} elapsed. ` +
+          `The tower answers a move only once the motor has stopped.`;
+      }
+      if (s.connected) {
+        $("hint").textContent = "";
+      } else if (s.auth_mode === "iam") {
+        $("hint").textContent =
+          "AWS IoT is dropping this connection. Signing in as your IAM identity (" + s.client_id +
+          "), so this is not the device-cert policy. Check that credentials resolve " +
+          "(`aws sts get-caller-identity`) and that your IAM user may iot:Connect / " +
+          "iot:Publish / iot:Subscribe / iot:Receive on tower/" + s.device_id + "/cmd/diagnostics and .../ack.";
+      } else {
+        $("hint").textContent =
+          "AWS IoT is dropping this connection. The tower cert’s policy must allow iot:Connect for client " +
+          s.client_id + " (in addition to tower_" + s.device_id + "), and publish/subscribe on tower/" +
+          s.device_id + "/cmd/diagnostics and .../ack. Or switch to IAM auth: unset INSTALL_UI_AUTH.";
+      }
+      if (document.activeElement !== $("target") && !$("target").value) {
+        $("target").value = s.home_heading;
+        state.home = s.home_heading;
+      }
+      // Only the newest ack sets the pills. Events are newest-first, so doing
+      // this inside the map below would let the *oldest* entry win and leave
+      // the flags showing stale state.
+      const newestAck = (s.events || []).find((ev) => ev.kind === "ack" && ev.body);
+      if (newestAck) renderFlags(newestAck.body);
+
+      const lines = (s.events || []).map((ev) => {
+        const klass = ev.kind;
+        const payload = ev.body ? JSON.stringify(ev.body) : (ev.message || "");
+        const rep = ev.repeat > 1 ? ` <em>×${ev.repeat}</em>` : "";
+        return `<div class="${klass}">[${ev.ts}] ${ev.kind.toUpperCase()} ${payload}${rep}</div>`;
+      });
+      $("log").innerHTML = lines.join("") || "Waiting for AWS IoT…";
+      updatePreview();
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch("/api/state");
+        render(await res.json());
+      } catch (err) {
+        $("conn").textContent = "UI offline";
+        $("conn").className = "pill off";
+      }
+    }
+
+    async function post(url, payload) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    $("current").addEventListener("input", updatePreview);
+    $("target").addEventListener("input", updatePreview);
+
+    $("move").addEventListener("click", async () => {
+      const current = Number($("current").value);
+      const target = Number($("target").value);
+      setBusyControls(true);
+      try {
+        await post("/api/move", {
+          current,
+          target,
+          ignore_encoder: $("ignore").checked,
+        });
+        // Current is NOT advanced here. The command has only been published —
+        // the move takes minutes and may abort. `applyMoveAck` updates it when
+        // the tower confirms it actually arrived.
+      } catch (err) {
+        alert(err.message);
+        state.busy = false;
+      }
+      updatePreview();
+      poll();
+    });
+
+    $("clear").addEventListener("click", async () => {
+      if (!confirm("Stop waiting for the tower's reply?\n\nOnly do this if the tower is unreachable — the move itself keeps running.")) return;
+      try {
+        await post("/api/clear", {});
+      } catch (err) {
+        alert(err.message);
+      }
+      poll();
+    });
+
+    $("status").addEventListener("click", () => post("/api/command", { cmd: "get_status" }).then(poll).catch((e) => alert(e.message)));
+    $("home").addEventListener("click", () => {
+      if (!confirm("Limit switch must be pressed at this pose. Commit as home?")) return;
+      post("/api/command", { cmd: "set_home_here" }).then(poll).catch((e) => alert(e.message));
+    });
+    $("exit").addEventListener("click", () => {
+      if (!confirm("Reboot this image as Normal (no reflash)?")) return;
+      post("/api/command", { cmd: "exit_install" }).then(poll).catch((e) => alert(e.message));
+    });
+
+    setInterval(poll, 800);
+    poll();
+  </script>
+</body>
+</html>

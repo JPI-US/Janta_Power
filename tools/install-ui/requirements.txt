@@ -1,0 +1,4 @@
+paho-mqtt>=2.0.0
+# INSTALL_UI_AUTH=iam (default): SigV4 over WebSocket, authorized by your IAM
+# policy, so the device cert IoT policy needs no change.
+boto3>=1.34.0

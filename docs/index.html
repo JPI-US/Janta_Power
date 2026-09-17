@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How the ESP32-S3 tower authenticates to AWS IoT Core, what moves over MQTT, and how OTA runs through AWS IoT Jobs on the repositioning branch.">
+<style>
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Tower Firmware Teardown</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<style>
+  :root {
+    --ground:      #F6F8F7;
+    --surface:     #FFFFFF;
+    --surface-2:   #EDF1F0;
+    --ink:         #141E1C;
+    --mute:        #576865;
+    --faint:       #7C8B88;
+    --rule:        #D7DFDD;
+    --rule-soft:   #E6ECEA;
+    --accent:      #A9500E;
+    --accent-soft: #F3E4D6;
+    --teal:        #0E6B65;
+    --teal-soft:   #DCEBE9;
+    --crit:        #A62A21;
+    --crit-soft:   #F6E2E0;
+    --warn:        #855D00;
+    --warn-soft:   #F5EBD4;
+    --note:        #4A5C59;
+    --note-soft:   #E6ECEA;
+    --shadow:      0 1px 2px rgba(20, 30, 28, .05);
+
+    --f-head: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --f-body: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0D1312;
+      --surface:     #141B1A;
+      --surface-2:   #1B2423;
+      --ink:         #E7EDEB;
+      --mute:        #9AA9A5;
+      --faint:       #7E8D8A;
+      --rule:        #263130;
+      --rule-soft:   #1E2827;
+      --accent:      #E8933F;
+      --accent-soft: #33220F;
+      --teal:        #4CC3B8;
+      --teal-soft:   #11302E;
+      --crit:        #F0837A;
+      --crit-soft:   #341B19;
+      --warn:        #D9A833;
+      --warn-soft:   #2D2413;
+      --note:        #9AA9A5;
+      --note-soft:   #1E2827;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .3);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0D1312;
+    --surface:     #141B1A;
+    --surface-2:   #1B2423;
+    --ink:         #E7EDEB;
+    --mute:        #9AA9A5;
+    --faint:       #7E8D8A;
+    --rule:        #263130;
+    --rule-soft:   #1E2827;
+    --accent:      #E8933F;
+    --accent-soft: #33220F;
+    --teal:        #4CC3B8;
+    --teal-soft:   #11302E;
+    --crit:        #F0837A;
+    --crit-soft:   #341B19;
+    --warn:        #D9A833;
+    --warn-soft:   #2D2413;
+    --note:        #9AA9A5;
+    --note-soft:   #1E2827;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78rem;
+    margin-inline: auto;
+    padding-inline: clamp(16px, 4vw, 44px);
+  }
+
+  /* ---------- masthead ---------- */
+
+  .mast { padding-block: clamp(40px, 7vw, 76px) 28px; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: var(--f-head);
+    font-weight: 700;
+    font-size: clamp(2.3rem, 6.2vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 18px;
+    max-width: 18ch;
+  }
+
+  .standfirst {
+    max-width: 62ch;
+    font-size: 1.1rem;
+    color: var(--mute);
+    margin: 0;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    margin-top: 34px;
+    overflow: hidden;
+  }
+  .fact { background: var(--surface); padding: 13px 15px; }
+  .fact dt {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 5px;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: var(--f-mono);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--ink);
+    word-break: break-word;
+  }
+
+  /* ---------- nav ---------- */
+
+  .toc {
+    border-block: 1px solid var(--rule);
+    padding-block: 14px;
+    margin-bottom: clamp(36px, 6vw, 60px);
+  }
+  .toc ol {
+    list-style: none;
+    margin: 0; padding: 0;
+    display: flex; flex-wrap: wrap;
+    gap: 6px 22px;
+    counter-reset: toc;
+  }
+  .toc a {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    color: var(--mute);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+  .toc a::before {
+    counter-increment: toc;
+    content: counter(toc, decimal-leading-zero) " ";
+    color: var(--faint);
+  }
+  .toc a:hover, .toc a:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ---------- sections ---------- */
+
+  section { padding-block: 0 clamp(40px, 6vw, 64px); scroll-margin-top: 20px; }
+
+  h2 {
+    font-family: var(--f-head);
+    font-weight: 600;
+    font-size: clamp(1.5rem, 3.2vw, 2rem);
+    line-height: 1.15;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  h2 .num {
+    font-family: var(--f-mono);
+    font-size: .58em;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: .06em;
+    flex: none;
+  }
+  h2 + .deck {
+    max-width: 66ch;
+    color: var(--mute);
+    margin: 0 0 24px;
+    font-size: .98rem;
+  }
+
+  h3 {
+    font-family: var(--f-head);
+    font-weight: 600;
+    font-size: 1.11rem;
+    letter-spacing: .005em;
+    margin: 30px 0 8px;
+    color: var(--ink);
+  }
+
+  .prose { max-width: 66ch; }
+  .prose p { margin: 0 0 15px; }
+  .prose ul { margin: 0 0 15px; padding-left: 1.15em; }
+  .prose li { margin-bottom: 7px; }
+  .prose li::marker { color: var(--faint); }
+
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  code {
+    font-family: var(--f-mono);
+    font-size: .855em;
+    background: var(--surface-2);
+    border-radius: 2px;
+    padding: .12em .34em;
+    word-break: break-word;
+  }
+
+  pre {
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--accent);
+    border-radius: 2px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0 0 18px;
+    color: var(--ink);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .cm { color: var(--faint); }
+  .kw { color: var(--accent); font-weight: 500; }
+  .tl { color: var(--teal); }
+
+  /* ---------- tables ---------- */
+
+  .scroller { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  thead th {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.m, th.m { font-family: var(--f-mono); font-size: 12.5px; white-space: nowrap; }
+  td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  td.desc { font-family: var(--f-body); font-size: 14px; color: var(--mute); min-width: 200px; }
+
+  /* ---------- figures ---------- */
+
+  figure { margin: 0 0 24px; }
+  figure svg { display: block; width: 100%; max-width: 100%; height: auto; color: var(--ink); }
+  .figframe {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: clamp(14px, 3vw, 24px);
+    overflow-x: auto;
+  }
+  figcaption {
+    font-size: 13px;
+    color: var(--mute);
+    margin-top: 10px;
+    max-width: 68ch;
+  }
+  figcaption b { font-family: var(--f-head); font-weight: 600; color: var(--ink); }
+
+  /* svg primitives */
+  .n-box { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  .n-box-a { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+  .n-box-t { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 1.2; }
+  .n-t { font-family: var(--f-head); font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .n-s { font-family: var(--f-mono); font-size: 10.5px; fill: var(--mute); }
+  .n-lab { font-family: var(--f-mono); font-size: 10.5px; fill: var(--mute); }
+  .n-lab-a { font-family: var(--f-mono); font-size: 10.5px; fill: var(--accent); font-weight: 500; }
+  .edge { stroke: currentColor; stroke-width: 1.3; fill: none; opacity: .55; }
+  .edge-a { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  .edge-dead { stroke: var(--crit); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  .life { stroke: currentColor; stroke-width: 1; opacity: .28; stroke-dasharray: 3 4; }
+
+  /* ---------- partition bar ---------- */
+
+  .partbar {
+    display: flex;
+    height: 62px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 12px;
+    background: var(--surface);
+  }
+  .seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--mute);
+    overflow: hidden;
+    white-space: nowrap;
+    padding-inline: 2px;
+  }
+  .seg:last-child { border-right: none; }
+  .seg-app { background: var(--surface-2); }
+  .seg-ota { background: var(--accent-soft); color: var(--accent); }
+  .seg-sys { background: var(--teal-soft); color: var(--teal); }
+  .seg-fs  { background: var(--surface-2); }
+
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .legend div { background: var(--surface); padding: 9px 12px; font-family: var(--f-mono); font-size: 11.5px; }
+  .legend span { display: block; color: var(--faint); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 3px; }
+
+  /* ---------- callout ---------- */
+
+  .call {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--teal);
+    background: var(--surface);
+    border-radius: 2px;
+    padding: 15px 18px;
+    margin: 0 0 20px;
+    max-width: 70ch;
+    font-size: 15px;
+  }
+  .call p { margin: 0; }
+  .call .tag {
+    display: block;
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin-bottom: 6px;
+  }
+
+  /* ---------- diff pair ---------- */
+
+  .diff {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-bottom: 22px;
+  }
+  .diff > div {
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface);
+    padding: 15px 17px;
+  }
+  .diff h4 {
+    font-family: var(--f-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+    color: var(--faint);
+  }
+  .diff .then h4 { color: var(--faint); }
+  .diff .now { border-left: 3px solid var(--accent); }
+  .diff .now h4 { color: var(--accent); }
+  .diff ul { margin: 0; padding-left: 1.05em; font-size: 14px; }
+  .diff li { margin-bottom: 6px; color: var(--mute); }
+  .diff li::marker { color: var(--faint); }
+
+  /* ---------- findings ---------- */
+
+  .finds { display: flex; flex-direction: column; gap: 14px; }
+  .find {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 16px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 16px 18px;
+  }
+  .find .sev {
+    grid-row: 1 / span 3;
+    width: 4px;
+    border-radius: 2px;
+    align-self: stretch;
+  }
+  .find h3 {
+    margin: 0 0 3px;
+    font-size: 1.04rem;
+    font-family: var(--f-head);
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .find .chip {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    margin-bottom: 8px;
+    display: inline-block;
+  }
+  .find p { margin: 0 0 9px; font-size: 14.5px; color: var(--mute); max-width: 72ch; }
+  .find p:last-child { margin-bottom: 0; }
+  .find code { font-size: .84em; }
+
+  .sev-crit { background: var(--crit); }
+  .chip-crit { background: var(--crit-soft); color: var(--crit); }
+  .sev-warn { background: var(--warn); }
+  .chip-warn { background: var(--warn-soft); color: var(--warn); }
+  .sev-note { background: var(--note); }
+  .chip-note { background: var(--note-soft); color: var(--note); }
+
+  .minor { margin-top: 20px; }
+  .minor ul { max-width: 72ch; padding-left: 1.15em; font-size: 14.5px; color: var(--mute); }
+  .minor li { margin-bottom: 7px; }
+
+  /* ---------- foot ---------- */
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-block: 26px 52px;
+    font-family: var(--f-mono);
+    font-size: 11.5px;
+    color: var(--faint);
+    line-height: 1.8;
+  }
+
+  a { color: var(--accent); }
+  a:focus-visible, .toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">Branch teardown &middot; repositioning &rarr; master</p>
+    <h1>Tower Firmware Teardown</h1>
+    <p class="standfirst">How the ESP32-S3 tower boots, authenticates to AWS IoT Core, streams telemetry over MQTT, and updates itself through IoT Jobs &mdash; and the four places that behaviour diverges from what the code looks like it does.</p>
+
+    <dl class="facts">
+      <div class="fact"><dt>Branch</dt><dd>repositioning</dd></div>
+      <div class="fact"><dt>Ahead of master</dt><dd>5 commits</dd></div>
+      <div class="fact"><dt>Firmware version</dt><dd>1.1.4</dd></div>
+      <div class="fact"><dt>Device / Thing</dt><dd>tower_9001</dd></div>
+      <div class="fact"><dt>Region</dt><dd>us-east-1</dd></div>
+      <div class="fact"><dt>Flash</dt><dd>8&nbsp;MB &middot; 2&times;OTA</dd></div>
+    </dl>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <ol>
+      <li><a href="#arch">Four FSMs, three threads</a></li>
+      <li><a href="#identity">Identity chain</a></li>
+      <li><a href="#mqtt">MQTT layer</a></li>
+      <li><a href="#topics">Topic map</a></li>
+      <li><a href="#ota">OTA over IoT Jobs</a></li>
+      <li><a href="#boot">Boot sequence</a></li>
+      <li><a href="#flash">Flash &amp; build config</a></li>
+      <li><a href="#freeze">Motion freeze</a></li>
+      <li><a href="#findings">Findings</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ 1 ============ -->
+  <section id="arch">
+    <h2><span class="num">01</span> Four FSMs, three threads</h2>
+    <p class="deck">The single largest change against <code>master</code>: <code>src/runtime/main.rs</code> &mdash; 848 lines of sequential boot phases followed by one enormous <code>loop {}</code> &mdash; is gone.</p>
+
+    <div class="prose">
+      <p>In its place, <code>src/main.rs</code> is 105 lines of pure wiring. Four cooperative state machines run on three threads, each owning its own context and communicating only through a mailbox and a shared bulletin board.</p>
+    </div>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Machine</th><th>Thread</th><th class="m">Tick</th><th>Entry state</th><th class="desc">Owns</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="m">Motion</td><td>dedicated, 8&nbsp;KB</td><td class="m">100&nbsp;ms</td><td class="m">MotionInit</td><td class="desc">stepper, encoder, relay, limit switch, homing, sun tracking</td></tr>
+          <tr><td class="m">Network</td><td>dedicated, 8&nbsp;KB</td><td class="m">10&nbsp;ms</td><td class="m">WifiInitialize</td><td class="desc">Wi-Fi, RTC/SNTP, MQTT, boot validation, OTA, telemetry</td></tr>
+          <tr><td class="m">Buttons</td><td rowspan="2">shared &ldquo;Auxiliary&rdquo; group, 8&nbsp;KB</td><td class="m">100&nbsp;ms</td><td class="m">ButtonsCheckPressed</td><td class="desc">maintenance / CW / CCW edge detection</td></tr>
+          <tr><td class="m">LED</td><td class="m">100&nbsp;ms</td><td class="m">LEDCheck</td><td class="desc">RGB status indicator</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <h3>The two messaging primitives</h3>
+      <p><strong>Mailbox</strong> is point-to-point: unbounded <code>crossbeam</code> channels indexed by <code>FSMAddress</code>, carrying <code>FSMCommand</code>. Motion pushes serialized telemetry to Network this way; Buttons pushes press events to Motion.</p>
+      <p><strong>Bulletin</strong> is broadcast: one <code>Mutex&lt;Option&lt;FSMState&gt;&gt;</code> every machine holds an <code>Arc</code> to. <code>FSMState</code> is deliberately tiny &mdash; two booleans, <code>maintenance_mode</code> and <code>ota_active</code>. That second flag is the whole mechanism behind &sect;08.</p>
+      <p>The engine itself is 400 lines in <code>crates/infrastructure/fsm/</code>. Each step calls <code>State::process(ctx, mailbox, bulletin, previous_state)</code> and gets back <code>Running(next)</code>, <code>Hold</code>, or <code>Stopped</code>. A <code>Group</code> round-robins machines on one thread and drops any that stop; when the group empties, the thread exits.</p>
+    </div>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section id="identity">
+    <h2><span class="num">02</span> One env var becomes the fleet identity</h2>
+    <p class="deck">Everything that reaches AWS &mdash; topic prefix, TLS client certificate, MQTT client ID, Jobs namespace &mdash; is derived at <em>compile time</em> from a single line in <code>.env</code>.</p>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 760 236" role="img" aria-label="DEVICE_ID from the .env file fans out at build time into three consumers: the topic prefix, the embedded TLS certificate filenames, and the MQTT client ID which doubles as the AWS IoT Thing name.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+            </marker>
+            <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="var(--accent)"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="n-box-a" x="14" y="86" width="176" height="64" rx="3"></rect>
+          <text class="n-t" x="102" y="112" text-anchor="middle">.env</text>
+          <text class="n-s" x="102" y="131" text-anchor="middle" fill="var(--accent)">DEVICE_ID=9001</text>
+
+          <g class="edge-a" marker-end="url(#ar-a)">
+            <path d="M190 118 C 250 118, 250 44, 300 44"></path>
+            <path d="M190 118 L 300 118"></path>
+            <path d="M190 118 C 250 118, 250 192, 300 192"></path>
+          </g>
+
+          <rect class="n-box" x="306" y="18" width="440" height="52" rx="3"></rect>
+          <text class="n-s" x="322" y="38" fill="var(--faint)">build.rs &rarr; constants::DEVICE_ID</text>
+          <text class="n-s" x="322" y="56" fill="var(--teal)">tower/9001/status &middot; /logs/* &middot; /data/* &middot; /cmd/*</text>
+
+          <rect class="n-box" x="306" y="92" width="440" height="52" rx="3"></rect>
+          <text class="n-s" x="322" y="112" fill="var(--faint)">network/build.rs &rarr; cargo:rustc-env &rarr; include_str!</text>
+          <text class="n-s" x="322" y="130" fill="var(--teal)">certs/tower_9001-certificate.pem.crt + -private.pem.key</text>
+
+          <rect class="n-box" x="306" y="166" width="440" height="52" rx="3"></rect>
+          <text class="n-s" x="322" y="186" fill="var(--faint)">network.rs &rarr; client_id == Mqtt::thing_name</text>
+          <text class="n-s" x="322" y="204" fill="var(--teal)">tower_9001 &rarr; $aws/things/tower_9001/jobs/&hellip;</text>
+        </svg>
+      </div>
+      <figcaption><b>One value, three compile-time consumers.</b> Because the certificate filenames are built with <code>include_str!(concat!("../../../../certs/tower_", env!("DEVICE_ID"), &hellip;))</code>, changing <code>DEVICE_ID</code> without dropping the matching certificate pair into <code>certs/</code> is a build failure rather than a silent runtime auth error. That is deliberate.</figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>The third branch is new on this branch and is the reason the Jobs migration works at all. <code>Mqtt</code> now carries a public <code>thing_name</code> field, because <strong>AWS IoT Jobs topics are namespaced by Thing name</strong>. This fleet sets Thing name equal to MQTT client ID, so <code>tower_9001</code> must exist as a registered Thing in <code>us-east-1</code> with that certificate attached.</p>
+      <p>Transport is mutual TLS with no username or password: Amazon root CA, device certificate and private key are all baked into the binary as <code>CStr</code> constants. Endpoint, hardcoded in one place:</p>
+      <pre><code>mqttS://a2exykcl6t998u-ats.iot.us-east-1.amazonaws.com:8883</code></pre>
+    </div>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section id="mqtt">
+    <h2><span class="num">03</span> The MQTT layer grew a receive path</h2>
+    <p class="deck"><code>crates/infrastructure/network/src/mqtt.rs</code> went from 162 to 294 lines across three commits. Three substantive changes, one of which fixed a silent dead end.</p>
+
+    <div class="prose">
+      <h3>The inbound queue was never fed</h3>
+      <p>On <code>master</code>, <code>message_queue</code> was allocated and <code>try_receive()</code> was public &mdash; but the event thread handled <code>Connected</code>, <code>Disconnected</code>, <code>Published</code> and <code>Error</code>, and never <code>Received</code>. Nothing was ever enqueued. The entire remote command channel was dead code that returned <code>None</code> forever.</p>
+
+      <h3>Two queues, split by topic prefix</h3>
+      <p>Both consumers run on the same Network thread, so a single queue would let the command handler swallow a job response mid-OTA. Ingestion now routes on prefix:</p>
+    </div>
+
+    <pre><code><span class="cm">// mqtt.rs — inside the connection event thread</span>
+<span class="kw">let</span> target = <span class="kw">if</span> topic.starts_with(<span class="tl">"$aws/"</span>) {
+    &amp;job_message_queue     <span class="cm">// drained by wait_for_job_message(timeout)</span>
+} <span class="kw">else</span> {
+    &amp;message_queue         <span class="cm">// drained by try_receive()</span>
+};</code></pre>
+
+    <div class="prose">
+      <h3>Chunked reassembly, because job documents exceed the buffer</h3>
+      <p>A payload larger than the 4&nbsp;KB inbound buffer is delivered as <code>Details::InitialChunk</code> (carries the topic and <code>total_data_size</code>) followed by N&nbsp;&times;&nbsp;<code>Details::SubsequentChunk</code> (<code>topic: None</code>). The thread accumulates into <code>partial: Option&lt;(String, Vec&lt;u8&gt;, usize)&gt;</code> and only enqueues once complete. This exists specifically because an IoT job document carrying a presigned S3 URL does not fit in one frame. Only one message can be in flight &mdash; a new <code>InitialChunk</code> discards an incomplete predecessor with a warning.</p>
+    </div>
+
+    <div class="call">
+      <span class="tag">Worth knowing</span>
+      <p>Publishes are QoS&nbsp;1, subscriptions are QoS&nbsp;0, keep-alive is 60&nbsp;s. <code>publish()</code> returns <code>Err</code> immediately when disconnected &mdash; it does <em>not</em> buffer, despite the log line reading &ldquo;will queue messages temporarily&rdquo;. Nothing retries a dropped telemetry publish.</p>
+    </div>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section id="topics">
+    <h2><span class="num">04</span> Topic map</h2>
+    <p class="deck">Every topic string in the firmware is built in exactly one module &mdash; <code>network::telemetry::topic</code> &mdash; so the dashboard and the device cannot drift apart.</p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Topic</th><th>Dir</th><th>Payload</th><th class="desc">Cadence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="m">tower/{id}/status</td><td class="m">out</td><td class="m">Heartbeat</td><td class="desc">every 15 min, plus once when OTA starts</td></tr>
+          <tr><td class="m">tower/{id}/logs/boot</td><td class="m">out</td><td class="m">BootLog</td><td class="desc">once per boot, carries <code>reset_reason</code></td></tr>
+          <tr><td class="m">tower/{id}/logs/firmware_update</td><td class="m">out</td><td class="m">FirmwareUpdateLog</td><td class="desc">on OTA <em>failure</em> only &mdash; success moved to Jobs</td></tr>
+          <tr><td class="m">tower/{id}/logs/error</td><td class="m">out</td><td class="m">ErrorLog</td><td class="desc">faults; republished every 15 min while wedged</td></tr>
+          <tr><td class="m">tower/{id}/logs/warning</td><td class="m">out</td><td class="m">WarningLog</td><td class="desc">event-driven</td></tr>
+          <tr><td class="m">tower/{id}/logs/info</td><td class="m">out</td><td class="m">InfoLog</td><td class="desc">normal-range temperature reports</td></tr>
+          <tr><td class="m">tower/{id}/data/angle</td><td class="m">out</td><td class="m">Angle</td><td class="desc">after each completed tracking move</td></tr>
+          <tr><td class="m">tower/{id}/data/encoder_error_ticks</td><td class="m">out</td><td class="m">EncoderErrorTicks</td><td class="desc">drift captured when the limit switch fires at sunset</td></tr>
+          <tr><td class="m">tower/{id}/component/{c}/status</td><td class="m">out</td><td class="m">ComponentStatus</td><td class="desc">per-component health, five component types</td></tr>
+          <tr><td class="m">tower/{id}/cmd/diagnostics</td><td class="m">in</td><td class="m">{ cmd, request_id }</td><td class="desc">subscribed at boot validation</td></tr>
+          <tr><td class="m">tower/{id}/cmd/diagnostics/ack</td><td class="m">out</td><td class="m">reply envelope</td><td class="desc">correlated by echoed <code>request_id</code></td></tr>
+          <tr><td class="m">$aws/things/{thing}/jobs/$next/get</td><td class="m">out</td><td class="m">{}</td><td class="desc">once per boot &mdash; see finding 01</td></tr>
+          <tr><td class="m">$aws/&hellip;/jobs/$next/get/accepted</td><td class="m">in</td><td class="m">execution envelope</td><td class="desc">job ID + job document</td></tr>
+          <tr><td class="m">$aws/&hellip;/jobs/$next/get/rejected</td><td class="m">in</td><td class="m">error</td><td class="desc">logged, treated as &ldquo;no job&rdquo;</td></tr>
+          <tr><td class="m">$aws/&hellip;/jobs/{jobId}/update</td><td class="m">out</td><td class="m">{ status, statusDetails }</td><td class="desc">IN_PROGRESS &rarr; FAILED, or SUCCEEDED after reboot</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p>The command catalogue in <code>src/services/commands.rs</code> currently answers exactly one command, <code>get_status</code>, returning device ID, firmware version, MQTT and Wi-Fi connectivity, motion mode and current heading. Adding another is three lines in that one file; <code>transport.rs</code> does not change.</p>
+    </div>
+  </section>
+
+  <!-- ============ 5 ============ -->
+  <section id="ota">
+    <h2><span class="num">05</span> OTA over AWS IoT Jobs</h2>
+    <p class="deck">The headline change of this branch. The entire HTTP-metadata-polling design &mdash; a Basic-auth JSON endpoint on <code>firmware.jantaus.com</code> &mdash; has been removed.</p>
+
+    <div class="diff">
+      <div class="then">
+        <h4>master &mdash; pull from a web host</h4>
+        <ul>
+          <li><code>GET firmware.jantaus.com/firmware/test2/metadata{id}.json</code> with <code>Authorization: Basic</code></li>
+          <li>Credentials <code>device1A</code> / <code>device1A</code> hardcoded in the switchboard</li>
+          <li>Same Basic auth reused for the firmware download</li>
+          <li>NVS carried <code>version</code>, <code>prev_version</code>, <code>first_boot</code></li>
+          <li>Success reported by publishing <code>logs/firmware_update</code> on the next boot</li>
+          <li>Polled every 2 hours during the nighttime sleep loop</li>
+        </ul>
+      </div>
+      <div class="now">
+        <h4>repositioning &mdash; AWS IoT Jobs</h4>
+        <ul>
+          <li>Job requested over MQTT on the device's own reserved topic</li>
+          <li>No credentials in the firmware at all &mdash; mTLS is the auth</li>
+          <li>Download URL is presigned S3; <strong>no</strong> auth header is sent</li>
+          <li>NVS carries <code>first_boot</code> and <code>pending_job_id</code></li>
+          <li>Success reported to the Jobs API only after boot validation passes</li>
+          <li>Checked once per boot &mdash; see finding 01</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>The handshake</h3>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 764 518" role="img" aria-label="Sequence diagram: the tower subscribes to the jobs next-get response topics, requests the next job, receives a job document, reports IN_PROGRESS, downloads firmware from a presigned S3 URL, verifies SHA-256, stores the job id in NVS and reboots. Only after the rebooted image passes boot validation does it report SUCCEEDED.">
+          <defs>
+            <marker id="s-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+            </marker>
+            <marker id="s-ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="var(--accent)"></polygon>
+            </marker>
+          </defs>
+
+          <!-- lifeline heads -->
+          <rect class="n-box-a" x="34" y="10" width="172" height="32" rx="3"></rect>
+          <text class="n-t" x="120" y="31" text-anchor="middle">tower_9001</text>
+
+          <rect class="n-box-t" x="334" y="10" width="172" height="32" rx="3"></rect>
+          <text class="n-t" x="420" y="31" text-anchor="middle">AWS IoT Jobs</text>
+
+          <rect class="n-box" x="596" y="10" width="140" height="32" rx="3"></rect>
+          <text class="n-t" x="666" y="31" text-anchor="middle">S3</text>
+
+          <line class="life" x1="120" y1="46" x2="120" y2="500"></line>
+          <line class="life" x1="420" y1="46" x2="420" y2="500"></line>
+          <line class="life" x1="666" y1="46" x2="666" y2="500"></line>
+
+          <!-- 1 -->
+          <text class="n-lab" x="270" y="76" text-anchor="middle">SUB  $next/get/accepted &middot; /rejected</text>
+          <line class="edge" x1="120" y1="84" x2="420" y2="84" marker-end="url(#s-ar)"></line>
+          <text class="n-lab" x="126" y="102" fill="var(--crit)">sleep 500 ms &mdash; no SUBACK wait</text>
+
+          <!-- 2 -->
+          <text class="n-lab" x="270" y="132" text-anchor="middle">PUB  $next/get   { }</text>
+          <line class="edge" x1="120" y1="140" x2="420" y2="140" marker-end="url(#s-ar)"></line>
+
+          <!-- 3 -->
+          <text class="n-lab-a" x="270" y="172" text-anchor="middle">accepted: { jobId, jobDocument }</text>
+          <line class="edge-a" x1="420" y1="180" x2="120" y2="180" marker-end="url(#s-ar-a)"></line>
+          <text class="n-lab" x="126" y="198" fill="var(--faint)">poll 30 &times; 1 s, else give up</text>
+
+          <!-- decision -->
+          <rect class="n-box" x="30" y="214" width="180" height="30" rx="3"></rect>
+          <text class="n-s" x="120" y="233" text-anchor="middle">remote &gt; current version?</text>
+
+          <!-- 4 -->
+          <text class="n-lab" x="270" y="272" text-anchor="middle">PUB  jobs/{id}/update  IN_PROGRESS</text>
+          <line class="edge" x1="120" y1="280" x2="420" y2="280" marker-end="url(#s-ar)"></line>
+
+          <!-- 5 -->
+          <text class="n-lab" x="393" y="312" text-anchor="middle">GET  download_url &mdash; no auth header</text>
+          <line class="edge" x1="120" y1="320" x2="666" y2="320" marker-end="url(#s-ar)"></line>
+
+          <!-- 6 -->
+          <text class="n-lab" x="393" y="348" text-anchor="middle">200  image, streamed 4 KB at a time</text>
+          <line class="edge" x1="666" y1="356" x2="120" y2="356" marker-end="url(#s-ar)"></line>
+
+          <rect class="n-box" x="22" y="372" width="196" height="30" rx="3"></rect>
+          <text class="n-s" x="120" y="391" text-anchor="middle">SHA-256 ok &rarr; complete() &rarr; NVS</text>
+
+          <!-- reboot divider -->
+          <line x1="14" y1="420" x2="750" y2="420" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="6 5"></line>
+          <rect x="298" y="408" width="168" height="24" rx="3" fill="var(--ground)"></rect>
+          <text class="n-lab-a" x="382" y="425" text-anchor="middle">REBOOT into new slot</text>
+
+          <!-- 7 -->
+          <text class="n-lab-a" x="270" y="460" text-anchor="middle">PUB  jobs/{id}/update  SUCCEEDED</text>
+          <line class="edge-a" x1="120" y1="468" x2="420" y2="468" marker-end="url(#s-ar-a)"></line>
+          <text class="n-lab" x="126" y="490" fill="var(--faint)">only after mark_running_slot_valid()</text>
+        </svg>
+      </div>
+      <figcaption><b>Success is reported across a reboot boundary, not before it.</b> The flashing device stashes <code>pending_job_id</code> in NVS and restarts. The <em>new</em> image publishes SUCCEEDED once it has passed boot validation. If it never boots cleanly and the bootloader rolls back, the job is left IN_PROGRESS rather than falsely marked succeeded &mdash; which is exactly what a rollout or abort configuration needs to see.</figcaption>
+    </figure>
+
+    <div class="prose">
+      <h3>Job document schema</h3>
+      <p>This is a custom document, not the standard AWS OTA shape. The cloud-side job template must emit all four fields or the device rejects it:</p>
+    </div>
+
+    <pre><code>{
+  <span class="tl">"version"</span>:      <span class="kw">"1.1.5"</span>,          <span class="cm">// semver, strict &gt; comparison</span>
+  <span class="tl">"size"</span>:         <span class="kw">1399984</span>,          <span class="cm">// bytes, must be non-zero</span>
+  <span class="tl">"download_url"</span>: <span class="kw">"https://&hellip;s3&hellip;"</span>, <span class="cm">// presigned; long, hence buffer_size_tx 4096</span>
+  <span class="tl">"sha256"</span>:       <span class="kw">"sha256:&lt;64 hex&gt;"</span>  <span class="cm">// prefix optional, length + hex validated</span>
+}</code></pre>
+
+    <div class="call">
+      <span class="tag">The one that bit them</span>
+      <p>No <code>Authorization</code> header is sent on the download. A presigned S3 URL already carries its SigV4 signature in the query string, and adding a second mechanism makes S3 reject the request with <code>400 &mdash; Only one auth mechanism allowed</code>. The code comments call this out explicitly so nobody reinstates the old Basic-auth header.</p>
+    </div>
+
+    <div class="prose">
+      <p>There is no signature field. The build is checksum-only &mdash; it detects corruption, not tampering &mdash; and the source says so in a comment as a deliberate small-fleet trade-off. Adding signature verification is a single insertion point in <code>run_version_compare</code>.</p>
+    </div>
+  </section>
+
+  <!-- ============ 6 ============ -->
+  <section id="boot">
+    <h2><span class="num">06</span> Boot sequence</h2>
+    <p class="deck">The Network FSM ticks every 10&nbsp;ms, so these transitions happen back to back. This is a genuine ordering &mdash; each step depends on the one before it.</p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th class="m" style="width:1%">#</th><th>State</th><th class="desc">What it does, and what can go wrong</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="m">1</td><td class="m">WifiInitialize</td>
+            <td class="desc">If <code>RESET_NVS_CREDENTIALS</code> is true, force <code>wifi_ssid</code> / <code>wifi_pass</code> / <code>tz_posix</code> back to the <code>.env</code> values. Otherwise seed only the keys that are missing, so flash-time provisioning survives. Then bring up the Wi-Fi driver.</td>
+          </tr>
+          <tr>
+            <td class="m">2</td><td class="m">InitNetworkServices</td>
+            <td class="desc">Set the POSIX <code>TZ</code> and call <code>tzset</code>, read the DS3231; if the year is outside 2024&ndash;2100 fall back to SNTP with a 60&nbsp;s budget and write the corrected UTC back to the RTC. Then construct the MQTT client. On failure it holds and retries indefinitely rather than panicking.</td>
+          </tr>
+          <tr>
+            <td class="m">3</td><td class="m">BootValidation</td>
+            <td class="desc">Version now comes from <code>env!("CARGO_PKG_VERSION")</code>, not the old NVS <code>version</code> key. Publishes <code>logs/boot</code> with the hardware reset reason. If <code>first_boot == 1</code>: factory slot skips marking; a passing diagnostic calls <code>mark_running_slot_valid()</code> and confirms the pending job; a failing one calls <code>mark_running_slot_invalid_and_reboot()</code> &mdash; a rollback. Subscribes to the command topic.</td>
+          </tr>
+          <tr>
+            <td class="m">4</td><td class="m">Ota</td>
+            <td class="desc">Raises <code>ota_active</code> on the bulletin, publishes a heartbeat, sleeps 3&nbsp;s, runs the Jobs handshake, lowers the flag. Reached from exactly one place, exactly once.</td>
+          </tr>
+          <tr>
+            <td class="m">5</td><td class="m">WifiConnectIfDisconnected</td>
+            <td class="desc">Steady state for the life of the device. Reconnects Wi-Fi (30&nbsp;s wait, errors swallowed so a flaky AP cannot kill the thread), drains one internal FSM command per tick, and branches to the heartbeat every 15 minutes.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 900 272" role="img" aria-label="Network FSM state graph. The chain runs WifiInitialize to WifiConnectIfDisconnected to InitNetworkServices to BootValidation to Ota, and Ota returns to WifiConnectIfDisconnected. The edge that would carry a later OTA request back from the steady state to Ota is drawn broken, because the PerformOTA command is never handled.">
+          <defs>
+            <marker id="f-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="currentColor"></polygon>
+            </marker>
+            <marker id="f-ar-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="var(--crit)"></polygon>
+            </marker>
+            <marker id="f-ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,1 10,5 0,9" fill="var(--accent)"></polygon>
+            </marker>
+          </defs>
+
+          <!-- dead edge -->
+          <path class="edge-dead" d="M280 110 L280 66 L800 66 L800 110" marker-end="url(#f-ar-c)"></path>
+          <text class="n-lab" x="540" y="56" text-anchor="middle" fill="var(--crit)">FSMCommand::PerformOTA &mdash; never sent, never handled</text>
+          <g stroke="var(--crit)" stroke-width="1.8">
+            <line x1="533" y1="60" x2="547" y2="74"></line>
+            <line x1="547" y1="60" x2="533" y2="74"></line>
+          </g>
+
+          <!-- nodes -->
+          <rect class="n-box" x="16" y="110" width="148" height="52" rx="3"></rect>
+          <text class="n-s" x="90" y="134" text-anchor="middle">WifiInitialize</text>
+          <text class="n-s" x="90" y="150" text-anchor="middle" fill="var(--faint)">NVS creds</text>
+
+          <rect class="n-box-t" x="192" y="110" width="176" height="52" rx="3"></rect>
+          <text class="n-s" x="280" y="134" text-anchor="middle" fill="var(--teal)">WifiConnect&hellip;</text>
+          <text class="n-s" x="280" y="150" text-anchor="middle" fill="var(--teal)">steady state</text>
+
+          <rect class="n-box" x="396" y="110" width="156" height="52" rx="3"></rect>
+          <text class="n-s" x="474" y="134" text-anchor="middle">InitNetworkSvcs</text>
+          <text class="n-s" x="474" y="150" text-anchor="middle" fill="var(--faint)">RTC + MQTT</text>
+
+          <rect class="n-box" x="580" y="110" width="140" height="52" rx="3"></rect>
+          <text class="n-s" x="650" y="134" text-anchor="middle">BootValidation</text>
+          <text class="n-s" x="650" y="150" text-anchor="middle" fill="var(--faint)">rollback gate</text>
+
+          <rect class="n-box-a" x="748" y="110" width="136" height="52" rx="3"></rect>
+          <text class="n-s" x="816" y="134" text-anchor="middle" fill="var(--accent)">Ota</text>
+          <text class="n-s" x="816" y="150" text-anchor="middle" fill="var(--accent)">once per boot</text>
+
+          <!-- forward edges -->
+          <g class="edge" marker-end="url(#f-ar)">
+            <line x1="164" y1="136" x2="188" y2="136"></line>
+            <line x1="368" y1="136" x2="392" y2="136"></line>
+            <line x1="552" y1="136" x2="576" y2="136"></line>
+            <line x1="720" y1="136" x2="744" y2="136"></line>
+          </g>
+
+          <!-- return edge -->
+          <path class="edge-a" d="M816 162 L816 226 L280 226 L280 166" marker-end="url(#f-ar-a)"></path>
+          <text class="n-lab-a" x="548" y="244" text-anchor="middle">returns and never comes back</text>
+        </svg>
+      </div>
+      <figcaption><b>The <code>Ota</code> node is a one-way door.</b> <code>InitNetworkServices</code> clears its own entry flag after the first successful MQTT connect, so the path through <code>BootValidation</code> to <code>Ota</code> can only be walked once per power cycle. The broken edge is where a runtime OTA trigger was meant to go.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 7 ============ -->
+  <section id="flash">
+    <h2><span class="num">07</span> Flash layout and the three lines that make OTA work</h2>
+    <p class="deck">8&nbsp;MB, two OTA slots plus a factory image. Each app slot is 2&nbsp;MB against a current binary of roughly 1.4&nbsp;MB.</p>
+
+    <div class="partbar" role="img" aria-label="Flash map: bootloader, NVS and OTA data occupy the first 128 KB; factory, ota_0 and ota_1 take two megabytes each; littlefs takes 1.8 megabytes; coredump takes 64 kilobytes.">
+      <div class="seg seg-sys" style="flex: 1.5625 1 0; min-width: 62px;">sys</div>
+      <div class="seg seg-app" style="flex: 25 1 0; min-width: 60px;">factory</div>
+      <div class="seg seg-ota" style="flex: 25 1 0; min-width: 60px;">ota_0</div>
+      <div class="seg seg-ota" style="flex: 25 1 0; min-width: 60px;">ota_1</div>
+      <div class="seg seg-fs" style="flex: 22.66 1 0; min-width: 56px;">littlefs</div>
+      <div class="seg seg-sys" style="flex: .78 1 0; min-width: 30px;">cd</div>
+    </div>
+
+    <div class="legend">
+      <div><span>sys &middot; 128 KB</span>bootloader, nvs, phy_init, otadata</div>
+      <div><span>factory &middot; 2 MB</span>0x020000 &rarr; 0x220000</div>
+      <div><span>ota_0 &middot; 2 MB</span>0x220000 &rarr; 0x420000</div>
+      <div><span>ota_1 &middot; 2 MB</span>0x420000 &rarr; 0x620000</div>
+      <div><span>littlefs &middot; 1.8 MB</span>0x620000 &rarr; 0x7F0000</div>
+      <div><span>coredump &middot; 64 KB</span>0x7F0000 &rarr; 0x800000</div>
+    </div>
+
+    <div class="prose">
+      <h3>sdkconfig.defaults</h3>
+      <p>Three entries carry the OTA behaviour, two of them added on this branch:</p>
+      <ul>
+        <li><code>CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y</code> &mdash; a freshly flashed image boots <code>PENDING_VERIFY</code> and the bootloader reverts it unless the firmware explicitly validates itself. This is what makes step 3 of the boot sequence load-bearing.</li>
+        <li><code>CONFIG_APP_PROJECT_VER_FROM_CONFIG=y</code> with a pinned <code>"1.1.4"</code> &mdash; the comment explains why: <code>git describe</code> output can exceed 24 characters and overflow the <code>heapless::String&lt;24&gt;</code> inside <code>EspOta::get_running_slot()</code>, <em>panicking boot validation</em>.</li>
+        <li><code>CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y</code> plus <code>--flash-size 8mb</code> on the espflash runner &mdash; without both, the partition table does not fit.</li>
+      </ul>
+      <p>Also relevant: the task watchdog is configured with a 1800&nbsp;s timeout and <code>PANIC=y</code>, and the file still carries a <code>TODO: CHANGE WDT_TIMEOUT</code>.</p>
+    </div>
+  </section>
+
+  <!-- ============ 8 ============ -->
+  <section id="freeze">
+    <h2><span class="num">08</span> Freezing the motor while OTA runs</h2>
+    <p class="deck">Commit <code>d86d759</code>. A 2&nbsp;MB download over Wi-Fi while a stepper is mid-travel is not a combination anyone wants in the field.</p>
+
+    <div class="prose">
+      <p>The Network FSM raises <code>ota_active</code> on the shared bulletin before the Jobs handshake and lowers it on every exit path. Six Motion states read it as their first statement and return <code>Hold</code>:</p>
+      <p><code>MotionInit</code> &middot; <code>MotionBeginHoming</code> &middot; <code>MotionMoving</code> &middot; <code>MotionTracking</code> &middot; <code>MotionMaintenance</code> &middot; <code>MotionErrorLoop</code></p>
+      <p>Because the Motion FSM ticks at 100&nbsp;ms, the tower parks within about a tick of the next state boundary. The gating is <em>cooperative and entry-only</em>: <code>Motion::move_by()</code> blocks until the stepper reaches its target or aborts on stall, overshoot or power loss, so a move already in flight runs to completion rather than being abandoned with the relay energised. That is the right trade-off.</p>
+      <p>The mechanism has one sharp edge, documented as finding 02 below.</p>
+    </div>
+  </section>
+
+  <!-- ============ 9 ============ -->
+  <section id="findings">
+    <h2><span class="num">09</span> Findings</h2>
+    <p class="deck">Ordered by what I would act on first. Severity encodes blast radius on a deployed tower, not effort to fix.</p>
+
+    <div class="finds">
+
+      <article class="find">
+        <div class="sev sev-crit"></div>
+        <div>
+          <span class="chip chip-crit">Critical &middot; 01</span>
+          <h3>The 2-hour periodic OTA check was lost in the FSM refactor</h3>
+          <p>On <code>master</code>, the nighttime sleep loop inside <code>motion/src/lib.rs</code> polled for an update every two hours while waiting for sunrise. On this branch that loop is gone, and its intended replacement never wired up:</p>
+          <p><code>MotionEvent::CheckForOTA</code> is defined but <strong>never constructed anywhere</strong> &mdash; <code>tracking.rs</code> only matches on it. And <code>FSMCommand::PerformOTA</code> is <strong>never handled</strong> &mdash; the steady-state match arm drops it in <code>_ =&gt; {}</code>. The <code>Ota</code> state is reachable only from <code>BootValidation</code>, which runs once.</p>
+          <p><strong>Net effect: a deployed tower requests a job exactly once, at boot, and never again.</strong> Queue a job against a running tower and nothing happens until it reboots for an unrelated reason. Since fleet rollout is the entire point of the Jobs migration, this probably wants fixing before the branch ships.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-warn"></div>
+        <div>
+          <span class="chip chip-warn">High &middot; 02</span>
+          <h3>Pausing for OTA loses <code>MotionMoving</code>'s return state</h3>
+          <p><code>Fsm::step()</code> calls <code>self.previous_state.take()</code> <em>before</em> invoking <code>process</code>, and on <code>Hold</code> it is not restored &mdash; the trait docs state this explicitly. <code>MotionMoving</code> resumes its caller through that <code>previous_state</code>, so when it hits the <code>ota_active</code> guard and returns <code>Hold</code>, the <code>Option</code> is dropped on the floor.</p>
+          <p>The next tick after OTA clears logs <em>&ldquo;No previous state found after motion movement; re-initializing&rdquo;</em> and falls back to <code>MotionInit</code>. If the OTA window overlaps a homing sweep &mdash; likely, since homing starts while the Network FSM is still doing Wi-Fi, SNTP and MQTT &mdash; the tower restarts motion init mid-sweep instead of resuming.</p>
+          <p><code>MotionMaintenance</code> is immune because it stores <code>return_to</code> in <code>self</code>. Same fix applies here.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-warn"></div>
+        <div>
+          <span class="chip chip-warn">High &middot; 03</span>
+          <h3>Remote commands drain at most once every 15 minutes</h3>
+          <p><code>transport::process_one()</code> is called from exactly one place: <code>WifiPublishHeartbeat</code>, which only runs when <code>last_heartbeat_instant.elapsed() &gt; 15 min</code>. It handles <strong>one</strong> message per visit.</p>
+          <p>So a <code>get_status</code> can sit unanswered for a quarter of an hour, and N queued commands take N&nbsp;&times;&nbsp;15&nbsp;min to drain, while the inbound <code>VecDeque</code> grows without bound. <code>WifiConnectIfDisconnected</code> already runs every 10&nbsp;ms and is the natural place to drain it.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-note"></div>
+        <div>
+          <span class="chip chip-note">Medium &middot; 04</span>
+          <h3><code>pending_job_id</code> is read into a 64-byte buffer</h3>
+          <p>AWS IoT job IDs may be up to 64 characters, and <code>EspNvs::get_str</code> needs room for the trailing NUL. A maximum-length job ID fails to read back, so a perfectly good OTA never gets confirmed SUCCEEDED and the job sits IN_PROGRESS until it times out. Eighty bytes is free insurance.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-note"></div>
+        <div>
+          <span class="chip chip-note">Medium &middot; 05</span>
+          <h3>Transient network trouble triggers a firmware rollback</h3>
+          <p><code>boot_diagnostic()</code> returns false if Wi-Fi is down or three MQTT publish attempts fail, roughly 36&nbsp;s of trying. On an OTA boot that calls <code>mark_running_slot_invalid_and_reboot()</code> &mdash; so a good new image gets reverted because the access point was flaky for a minute. Worth deciding deliberately whether reachability should be the rollback criterion, or whether it should be paired with something local.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-note"></div>
+        <div>
+          <span class="chip chip-note">Medium &middot; 06</span>
+          <h3>Version metadata disagrees with itself</h3>
+          <p><code>Cargo.toml</code>, <code>CONFIG_APP_PROJECT_VER</code> and <code>switchboard.default_version</code> all say <strong>1.1.4</strong>. But <code>CHANGELOG.md</code> lists <strong>1.1.5</strong> as released and the tracking loop logs <em>&ldquo;Tracking loop duration (v1.1.5)&rdquo;</em>. Commit <code>862ccb2</code> reverted 1.1.5 back to 1.1.4 under the message &ldquo;version fix&rdquo;, presumably to make an OTA to 1.1.5 testable. Because the comparison is a strict <code>&gt;</code>, a device can never be told to re-flash its own version or to downgrade &mdash; worth knowing before someone tries to push a hotfix that way.</p>
+        </div>
+      </article>
+
+      <article class="find">
+        <div class="sev sev-note"></div>
+        <div>
+          <span class="chip chip-note">Low &middot; 07</span>
+          <h3>The top-level README describes the old certificate layout</h3>
+          <p>It says to drop certificates into <code>crates/infrastructure/network</code> and names them <code>[DEVICE_ID]-certificate.pem.crt</code>. Both are wrong now: they belong in <code>certs/</code> as <code>tower_{DEVICE_ID}-certificate.pem.crt</code>. <code>certs/README.md</code> is correct; the top-level one will send a new teammate into a build error they cannot explain.</p>
+        </div>
+      </article>
+
+    </div>
+
+    <div class="minor prose">
+      <h3>Smaller things, noted not urged</h3>
+      <ul>
+        <li>No SUBACK wait before publishing the <code>$next/get</code> request &mdash; a 500&nbsp;ms sleep stands in, self-documented as a stopgap and the first thing to harden if job responses start going missing.</li>
+        <li>The request sends <code>{}</code> with no <code>clientToken</code>, so responses cannot be correlated. Safe only because there is exactly one requester and the <code>$aws/</code> queue is dedicated.</li>
+        <li><code>crates/motion</code> still declares <code>ota.workspace = true</code> but no longer uses it.</li>
+        <li><code>src/logic/watchdog.rs</code> is a complete, well-documented ESP-IDF task-watchdog wrapper marked <code>#![allow(dead_code)]</code> &mdash; no FSM instantiates or feeds it. The infrastructure exists; nothing uses it.</li>
+        <li>Telemetry publishes are fire-and-forget. A publish that fails while Wi-Fi is down is logged and dropped, never retried.</li>
+        <li>No CI workflows exist on any branch, despite the changelog claiming GitHub Actions were added. The <code>hooks/pre-commit</code> script (fmt, build, clippy) is the only automated gate, and it has to be installed manually.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    Read against commit d86d759 &middot; repositioning, 5 commits ahead of master &middot; 189 files changed, +7,841 / &minus;17,205<br>
+    Source of truth for topics and payloads: crates/infrastructure/network/src/telemetry.rs
+  </footer>
+
+</div>
+</body>
+</html>
